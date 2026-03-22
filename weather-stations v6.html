@@ -1,0 +1,1995 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════════════════╗
+  ║  WX.MAP — Weather Station Finder                                            ║
+  ║  A Progressive Web App for exploring NOAA weather observation stations.     ║
+  ║                                                                             ║
+  ║  Architecture overview                                                      ║
+  ║  ─────────────────────                                                      ║
+  ║  • Single HTML file — no build step, no bundler, no framework.              ║
+  ║  • Leaflet.js (CDN) — interactive map tiles from OpenStreetMap.             ║
+  ║  • NOAA Weather.gov public API — station list + live observations.          ║
+  ║  • Nominatim (OSM) — free ZIP→coordinates geocoding.                        ║
+  ║  • Geocodio API — street address geocoding (API key required, stored        ║
+  ║    in a browser cookie so the user is only prompted once).                  ║
+  ║  • Service Worker (inline, registered at runtime) — offline caching for     ║
+  ║    the shell so it loads even without a network connection.                 ║
+  ║  • Web App Manifest (inline <script type="application/json">) — allows      ║
+  ║    the browser's "Add to Home Screen" / "Install App" prompt.               ║
+  ╚══════════════════════════════════════════════════════════════════════════════╝
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Real-time NOAA weather station map. Search by ZIP, address, or coordinates. Live observations updated every minute.">
+<meta name="theme-color" content="#0a0e17">
+
+<!-- PWA: Web App Manifest (served as a data-URI so no extra file is needed) -->
+<link rel="manifest" href="data:application/manifest+json,{
+  %22name%22:%22WX.MAP%20Weather%20Station%20Finder%22,
+  %22short_name%22:%22WX.MAP%22,
+  %22description%22:%22Real-time%20NOAA%20weather%20station%20map%22,
+  %22start_url%22:%22.%22,
+  %22display%22:%22standalone%22,
+  %22background_color%22:%22%230a0e17%22,
+  %22theme_color%22:%22%230a0e17%22,
+  %22icons%22:[{%22src%22:%22data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20512%20512'%3E%3Crect%20width='512'%20height='512'%20fill='%230a0e17'/%3E%3Ctext%20x='256'%20y='340'%20font-size='320'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E%22,%22sizes%22:%22512x512%22,%22type%22:%22image/svg+xml%22}]
+}">
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<title>WX.MAP — Weather Station Finder</title>
+<style>
+  /* ════════════════════════════════════════════════════════════════════════════
+     DESIGN TOKENS
+     All colours, radii, and spacing constants are defined here as CSS custom
+     properties so they can be referenced consistently throughout the stylesheet.
+     ════════════════════════════════════════════════════════════════════════════ */
+  :root {
+    --bg:        #0a0e17;   /* darkest background — map canvas, inputs */
+    --surface:   #111827;   /* header, popup panel background          */
+    --surface2:  #1a2438;   /* popup header, code-chip backgrounds     */
+    --border:    #1e3a5f;   /* all borders and dividers                */
+    --accent:    #00d4ff;   /* primary highlight (cyan)                */
+    --accent2:   #ff6b35;   /* secondary highlight (orange) for pins   */
+    --text:      #e2eaf6;   /* primary readable text                   */
+    --text-muted:#5a7a9a;   /* secondary / label text                  */
+    --green:     #00ff9d;   /* OK / live status                        */
+    --yellow:    #ffd700;   /* loading / refreshing state              */
+    --red:       #ff4757;   /* error state, close hover                */
+    --radius:    4px;        /* standard border-radius                 */
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Space Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     HEADER
+     ════════════════════════════════════════════════════════════════════════════ */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    z-index: 1000;
+    flex-shrink: 0;
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 1.1rem;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--accent2); }
+
+  /* ── Search bar (input + drag-pin + FIND button) ── */
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    max-width: 480px;
+  }
+
+  .search-bar input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 14px;
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.8rem;
+    outline: none;
+    transition: border-color 0.2s;
+    letter-spacing: 0.05em;
+  }
+  .search-bar input:focus   { border-color: var(--accent); }
+  .search-bar input::placeholder { color: var(--text-muted); }
+
+  /* FIND button */
+  #search-btn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: var(--radius);
+    padding: 8px 18px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    font-size: 0.78rem;
+    cursor: pointer;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: opacity 0.2s, transform 0.1s;
+    white-space: nowrap;
+  }
+  #search-btn:hover  { opacity: 0.85; }
+  #search-btn:active { transform: scale(0.97); }
+
+  /* ── Drag-to-map pin button ── */
+  #drag-pin {
+    width: 34px; height: 34px;
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 20px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--accent2);
+    transition: border-color 0.15s, transform 0.15s;
+    user-select: none;
+    outline: none;
+    padding: 0;
+    line-height: 1;
+  }
+  #drag-pin:hover  { border-color: var(--accent2); transform: scale(1.1); }
+  #drag-pin:focus  { border-color: var(--accent); }
+  #drag-pin:active { cursor: grabbing; }
+
+  /*
+   * Ghost pin element — absolutely positioned, follows the mouse cursor
+   * while the user is dragging the pin button over the map.  Hidden by default,
+   * shown via JS when a drag starts.
+   */
+  #pin-ghost {
+    position: fixed;
+    pointer-events: none;
+    z-index: 9999;
+    display: none;
+    font-size: 30px;
+    transform: translate(-50%, -100%);
+    filter: drop-shadow(0 3px 8px rgba(0,0,0,0.8));
+  }
+
+  /* ── Status bar (right side of header) ── */
+  .status-bar {
+    margin-left: auto;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .status-bar .dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    margin-right: 6px;
+    vertical-align: middle;
+    transition: background 0.3s;
+  }
+  .status-bar.loading .dot { background: var(--yellow); animation: pulse 1s infinite; }
+  .status-bar.ok      .dot { background: var(--green); }
+  .status-bar.error   .dot { background: var(--red); }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     MAP AREA
+     ════════════════════════════════════════════════════════════════════════════ */
+  main { flex: 1; position: relative; overflow: hidden; }
+  #map  { width: 100%; height: 100%; background: var(--bg); }
+
+  /* Dark-mode tile filter — desaturate + hue-rotate to match the UI palette */
+  .leaflet-tile-pane { filter: brightness(0.7) saturate(0.6) hue-rotate(190deg); }
+
+  /* Override Leaflet control colours */
+  .leaflet-control-zoom a {
+    background: var(--surface) !important;
+    color: var(--accent) !important;
+    border-color: var(--border) !important;
+    font-family: 'Space Mono', monospace !important;
+  }
+  .leaflet-control-attribution {
+    background: rgba(10,14,23,0.85) !important;
+    color: var(--text-muted) !important;
+    font-size: 9px !important;
+  }
+  .leaflet-control-attribution a { color: var(--accent) !important; }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     MAP MARKERS
+     ════════════════════════════════════════════════════════════════════════════ */
+
+  /* Station identifier badge (circular, cyan border) */
+  .station-marker {
+    width: 28px; height: 28px;
+    background: var(--surface);
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Syne', sans-serif;
+    font-size: 7px; font-weight: 800;
+    color: var(--accent);
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 0 10px rgba(0,212,255,0.3);
+    letter-spacing: 0.03em;
+    text-align: center; line-height: 1.1;
+  }
+  .station-marker:hover,
+  .station-marker.active {
+    background: var(--accent); color: var(--bg);
+    box-shadow: 0 0 20px rgba(0,212,255,0.6);
+    transform: scale(1.15);
+  }
+
+  /*
+   * Dropped / draggable pin marker.
+   * Consists of a coordinate label (above) and the pin emoji (below),
+   * vertically stacked inside a flex column.
+   */
+  .dropped-pin-wrap {
+    display: flex; flex-direction: column; align-items: center;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.7));
+  }
+  .dropped-pin-coords {
+    background: var(--surface2);
+    border: 1px solid var(--accent2);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 9px; padding: 2px 6px;
+    border-radius: 3px; white-space: nowrap; margin-bottom: 2px;
+    pointer-events: none;   /* pass clicks through to the Leaflet marker */
+  }
+  .dropped-pin-icon { font-size: 26px; line-height: 1; }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     WEATHER STATION INFO POPUP PANEL
+     Slides in from the right; remains on top of the map.
+     ════════════════════════════════════════════════════════════════════════════ */
+  #popup-panel {
+    position: absolute; top: 16px; right: 16px;
+    width: 314px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    z-index: 1000; overflow: hidden; display: none;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,212,255,0.1);
+    animation: slideIn 0.25s ease;
+  }
+  @keyframes slideIn {
+    from { opacity:0; transform: translateX(20px); }
+    to   { opacity:1; transform: translateX(0); }
+  }
+
+  /* Header row: station ID + full name on the left, close button on the right */
+  .popup-header {
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px;
+    display: flex; align-items: flex-start;
+    justify-content: space-between; gap: 8px;
+  }
+  .popup-station-id {
+    font-family: 'Syne', sans-serif; font-weight: 800;
+    font-size: 1rem; color: var(--accent); letter-spacing: 0.08em;
+  }
+  .popup-station-name {
+    font-size: 0.65rem; color: var(--text-muted); margin-top: 2px; line-height: 1.4;
+  }
+  .popup-close {
+    background: none; border: 1px solid var(--border); color: var(--text-muted);
+    width: 24px; height: 24px; border-radius: var(--radius);
+    cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: all 0.15s; line-height: 1;
+  }
+  .popup-close:hover { border-color: var(--red); color: var(--red); }
+
+  .popup-body { padding: 14px; }
+
+  /* ── Temperature display row ── */
+  .weather-main {
+    display: flex; align-items: flex-start; gap: 14px;
+    margin-bottom: 14px; padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .temp-col { flex: 1; }
+  .temp-row { display: flex; align-items: baseline; }
+
+  /* Large Fahrenheit number */
+  .weather-temp {
+    font-family: 'Syne', sans-serif; font-weight: 800;
+    font-size: 2.4rem; color: var(--text); line-height: 1;
+  }
+  .weather-temp sup { font-size: 0.8rem; color: var(--text-muted); font-weight: 400; }
+
+  /*
+   * Celsius companion — separated by a left border.
+   * Intentionally smaller and muted so it doesn't compete with the °F reading.
+   */
+  .temp-celsius-wrap {
+    display: flex; align-items: baseline;
+    margin-left: 10px; padding-left: 10px;
+    border-left: 1px solid var(--border);
+  }
+  .temp-celsius {
+    font-family: 'Syne', sans-serif; font-weight: 600;
+    font-size: 1.15rem; color: var(--text-muted); line-height: 1;
+  }
+  .temp-celsius sup { font-size: 0.6rem; font-weight: 400; }
+
+  .weather-desc {
+    font-size: 0.72rem; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.08em; margin-top: 5px;
+  }
+
+  /* ── 2-column metric grid ── */
+  .weather-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .weather-item {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 8px 10px;
+  }
+  .weather-item.full { grid-column: 1 / -1; }   /* spans both columns */
+  .weather-item-label {
+    font-size: 0.58rem; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 3px;
+  }
+  .weather-item-value {
+    font-family: 'Syne', sans-serif; font-weight: 600;
+    font-size: 0.85rem; color: var(--accent);
+  }
+  .weather-item-value.na { color: var(--text-muted); font-size: 0.75rem; }
+  .feels-c { font-size: 0.7rem; color: var(--text-muted); font-weight: 400; }
+
+  /* Precipitation likelihood progress bar */
+  .precip-bar-wrap {
+    margin-top: 5px; height: 4px;
+    background: var(--border); border-radius: 2px; overflow: hidden;
+  }
+  .precip-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--green));
+    border-radius: 2px; transition: width 0.4s ease;
+  }
+
+  /* ── Popup footer: observation timestamp (left) + live refresh indicator (right) ── */
+  .popup-footer {
+    padding: 8px 14px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .update-time { font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; }
+  .update-indicator { display: flex; align-items: center; gap: 5px; }
+  .update-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--green); flex-shrink: 0;
+  }
+  .update-dot.refreshing { animation: pulse 0.8s infinite; background: var(--yellow); }
+
+  /* Editable refresh interval — inline number input */
+  .interval-wrap {
+    display: flex; align-items: center; gap: 3px;
+    font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em;
+  }
+  #interval-input {
+    width: 36px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 2px; color: var(--accent);
+    font-family: 'Space Mono', monospace; font-size: 0.58rem;
+    text-align: center; padding: 1px 3px; outline: none;
+    transition: border-color 0.15s;
+    -moz-appearance: textfield;   /* hide Firefox number arrows */
+  }
+  #interval-input::-webkit-outer-spin-button,
+  #interval-input::-webkit-inner-spin-button { -webkit-appearance: none; }
+  #interval-input:focus { border-color: var(--accent); }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     FLOATING ACTION BUTTON — "Locate Me"
+     Positioned bottom-right, above the map attribution bar.
+     ════════════════════════════════════════════════════════════════════════════ */
+  #fab-locate {
+    position: absolute;
+    bottom: 32px; right: 16px;
+    z-index: 1000;
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    box-shadow: 0 4px 20px rgba(0,212,255,0.4);
+    transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+    outline: none;
+  }
+  #fab-locate:hover  {
+    transform: scale(1.1);
+    box-shadow: 0 6px 28px rgba(0,212,255,0.6);
+  }
+  #fab-locate:active { transform: scale(0.96); }
+  #fab-locate.locating {
+    background: var(--yellow);
+    animation: pulse 0.8s infinite;
+    cursor: wait;
+  }
+  #fab-locate:focus  { box-shadow: 0 0 0 3px rgba(0,212,255,0.35); }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     MODAL DIALOG — used for the Geocodio API key prompt
+     ════════════════════════════════════════════════════════════════════════════ */
+  #modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.72);
+    z-index: 2000;
+    display: none; align-items: center; justify-content: center;
+  }
+  #modal-overlay.visible { display: flex; }
+
+  #modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    width: 340px;
+    max-width: calc(100vw - 32px);
+    box-shadow: 0 12px 48px rgba(0,0,0,0.7);
+    animation: slideIn 0.2s ease;
+  }
+  #modal-box h2 {
+    font-family: 'Syne', sans-serif; font-weight: 800;
+    font-size: 1rem; color: var(--accent);
+    letter-spacing: 0.06em; margin-bottom: 10px;
+  }
+  #modal-box p {
+    font-size: 0.72rem; color: var(--text-muted);
+    line-height: 1.6; margin-bottom: 14px;
+  }
+  #modal-box input[type="text"] {
+    width: 100%;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text);
+    font-family: 'Space Mono', monospace; font-size: 0.8rem;
+    padding: 8px 12px; outline: none;
+    transition: border-color 0.2s; margin-bottom: 14px;
+  }
+  #modal-box input[type="text"]:focus { border-color: var(--accent); }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .modal-actions button {
+    border-radius: var(--radius); padding: 7px 16px;
+    font-family: 'Syne', sans-serif; font-weight: 600;
+    font-size: 0.75rem; cursor: pointer;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    transition: opacity 0.15s;
+  }
+  #modal-cancel { background: none; border: 1px solid var(--border); color: var(--text-muted); }
+  #modal-cancel:hover { border-color: var(--text-muted); }
+  #modal-confirm { background: var(--accent); border: none; color: var(--bg); }
+  #modal-confirm:hover { opacity: 0.85; }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     LOADING OVERLAY (full-map spinner)
+     ════════════════════════════════════════════════════════════════════════════ */
+  #map-overlay {
+    position: absolute; inset: 0;
+    background: rgba(10,14,23,0.75);
+    display: none; align-items: center; justify-content: center;
+    z-index: 999; flex-direction: column; gap: 12px;
+  }
+  #map-overlay.visible { display: flex; }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .overlay-text {
+    font-size: 0.7rem; color: var(--text-muted);
+    letter-spacing: 0.1em; text-transform: uppercase;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     TOAST NOTIFICATION (bottom-centre, slides up)
+     ════════════════════════════════════════════════════════════════════════════ */
+  #toast {
+    position: absolute; bottom: 20px; left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--surface); border: 1px solid var(--red);
+    color: var(--text); padding: 10px 20px;
+    border-radius: var(--radius); font-size: 0.72rem;
+    z-index: 1001; transition: transform 0.3s ease;
+    white-space: nowrap; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  #toast.visible { transform: translateX(-50%) translateY(0); }
+
+  /* Custom scrollbar (webkit only) */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════
+     HEADER: logo + search bar (input / drag-pin / FIND button)
+     ════════════════════════════════════════════════════════════════ -->
+<header>
+  <div class="logo">WX<span>.</span>MAP</div>
+
+  <div class="search-bar">
+    <!--
+      Unified input — accepts:
+        • A 5-digit ZIP code  (e.g. "78201")
+        • Lat/lon pair        (e.g. "29.4241, -98.4936")
+        • Street address      (e.g. "1109 N Highland St, Arlington, VA")
+      Input type is detected automatically by detectInputType().
+    -->
+    <input
+      type="text"
+      id="zip-input"
+      placeholder="ZIP, lat/lon, or address…"
+      maxlength="120"
+      autocomplete="off"
+      aria-label="Location search"
+    />
+
+    <!--
+      Draggable pin — drag this emoji onto the map to place a search pin
+      at any arbitrary location.  Double-clicking the dropped pin or pressing
+      Delete while this button is focused removes the pin.
+    -->
+    <button
+      id="drag-pin"
+      draggable="true"
+      title="Drag onto map to search by location"
+      aria-label="Drag pin onto map"
+    >📍</button>
+
+    <button id="search-btn" aria-label="Search">FIND</button>
+  </div>
+
+  <!-- Status indicator: dot + text, driven by setStatus() -->
+  <div class="status-bar" id="status-bar" role="status" aria-live="polite">
+    <span class="dot"></span><span id="status-text">READY</span>
+  </div>
+</header>
+
+<!-- Ghost pin that follows the mouse cursor during a drag operation -->
+<div id="pin-ghost" aria-hidden="true">📍</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     MAIN MAP AREA
+     ════════════════════════════════════════════════════════════════ -->
+<main>
+  <div id="map" role="application" aria-label="Interactive weather station map"></div>
+
+  <!-- Full-map loading overlay shown during async operations -->
+  <div id="map-overlay" role="status" aria-live="polite">
+    <div class="spinner"></div>
+    <div class="overlay-text" id="overlay-text">Loading…</div>
+  </div>
+
+  <!-- ── Weather station info popup ── -->
+  <div id="popup-panel" role="dialog" aria-label="Weather station details">
+    <div class="popup-header">
+      <div>
+        <div class="popup-station-id" id="popup-id">—</div>
+        <div class="popup-station-name" id="popup-name">—</div>
+      </div>
+      <button class="popup-close" id="popup-close" aria-label="Close">✕</button>
+    </div>
+    <div class="popup-body" id="popup-body">
+      <div style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
+        Loading weather data…
+      </div>
+    </div>
+    <div class="popup-footer">
+      <div class="update-time" id="update-time">—</div>
+      <div class="update-indicator">
+        <div class="update-dot" id="update-dot"></div>
+        <!--
+          Interval input: the user can change the auto-refresh period.
+          Minimum is enforced at 10 seconds to avoid hammering the API.
+        -->
+        <div class="interval-wrap">
+          LIVE ·
+          <input
+            type="number"
+            id="interval-input"
+            value="60"
+            min="10"
+            title="Refresh interval in seconds (minimum 10 s)"
+            aria-label="Refresh interval in seconds"
+          />
+          S
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    Floating Action Button — requests the device's GPS location and
+    pans the map to it, placing a search pin automatically.
+    Icon: ⊕ navigation crosshair (rendered as Unicode).
+  -->
+  <button
+    id="fab-locate"
+    title="Use my current location"
+    aria-label="Locate me"
+  >
+    <!-- Crosshair / navigation SVG icon -->
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <line x1="12" y1="2"  x2="12" y2="6"/>
+      <line x1="12" y1="18" x2="12" y2="22"/>
+      <line x1="2"  y1="12" x2="6"  y2="12"/>
+      <line x1="18" y1="12" x2="22" y2="12"/>
+    </svg>
+  </button>
+</main>
+
+<!-- Toast notification (error / info messages) -->
+<div id="toast" role="alert" aria-live="assertive"></div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     GEOCODIO API KEY MODAL
+     Shown once when the user first performs an address search.
+     The key is persisted in a browser cookie so subsequent searches
+     skip this prompt.
+     ════════════════════════════════════════════════════════════════ -->
+<div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div id="modal-box">
+    <h2 id="modal-title">Geocodio API Key Required</h2>
+    <p>
+      To look up street addresses, WX.MAP uses the
+      <strong style="color:var(--text)">Geocodio geocoding API</strong>.
+      Please enter your API key below.<br><br>
+      Your key will be stored <em>only in this browser</em> as a cookie and
+      will never be sent anywhere except directly to Geocodio.
+      You can get a free key at
+      <a href="https://www.geocod.io/" target="_blank"
+         style="color:var(--accent)">geocod.io</a>.
+    </p>
+    <input
+      type="text"
+      id="modal-api-key"
+      placeholder="Paste your Geocodio API key here…"
+      autocomplete="off"
+    />
+    <div class="modal-actions">
+      <button id="modal-cancel">Cancel</button>
+      <button id="modal-confirm">Save &amp; Continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- Leaflet JS (must precede the inline script that references L) -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+/*
+ * ════════════════════════════════════════════════════════════════════════════
+ *  WX.MAP — Main Application Script
+ *
+ *  Entry point: DOMContentLoaded listener at the bottom.
+ *
+ *  Module-level outline
+ *  ─────────────────────
+ *  1.  Map initialisation
+ *  2.  Application state
+ *  3.  UI helpers (setStatus, showToast, showOverlay…)
+ *  4.  Refresh-interval editor
+ *  5.  Input-type detection & coordinate parsing
+ *  6.  Geocoding helpers (ZIP via Nominatim, address via Geocodio)
+ *  7.  Cookie helpers
+ *  8.  Geocodio API-key prompt (modal dialog)
+ *  9.  Weather API helpers (station list, latest observation)
+ * 10.  Unit-conversion helpers
+ * 11.  Weather popup renderer
+ * 12.  Station refresh loop
+ * 13.  Station panel open / close
+ * 14.  Map marker management
+ * 15.  Post-geocode pipeline (loadStationsAt)
+ * 16.  URL query-string helpers
+ * 17.  Main search dispatcher (doSearch)
+ * 18.  Draggable-pin feature
+ * 19.  Floating action button — "Locate Me" (Geolocation API)
+ * 20.  URL query-parameter auto-trigger (runs on page load)
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+document.addEventListener('DOMContentLoaded', function () {
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   1. MAP INITIALISATION
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Leaflet map centred on the contiguous United States at zoom 4.
+ * Tile layer: OpenStreetMap standard (free, no API key required).
+ */
+const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxZoom: 18
+}).addTo(map);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   2. APPLICATION STATE
+   ─────────────────────────────────────────────────────────────────────────────
+   All mutable state is declared here in one place so it is easy to audit and
+   reason about what can change during the app's lifetime.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Geocodio API key.  Not declared as a constant because it may be populated
+ * at runtime from a browser cookie or from the key-entry modal dialog.
+ * @type {string}
+ */
+let geocodioApiKey = '';
+
+/**
+ * Array of currently plotted Leaflet marker objects for weather stations.
+ * Cleared and rebuilt each time loadStationsAt() is called.
+ * @type {L.Marker[]}
+ */
+let stationMarkers = [];
+
+/**
+ * ICAO identifier of the currently open station panel, or null if none.
+ * Used as a guard in doStationRefresh() to discard stale responses.
+ * @type {string|null}
+ */
+let activeStationId = null;
+
+/**
+ * setInterval handle for the live-refresh loop, or null when no loop is active.
+ * @type {number|null}
+ */
+let refreshTimer = null;
+
+/**
+ * The DOM element (.station-marker div) for the currently highlighted marker.
+ * Kept so it can be toggled to/from the .active CSS class.
+ * @type {HTMLElement|null}
+ */
+let activeMarkerEl = null;
+
+/**
+ * Auto-refresh period in milliseconds.  Driven by #interval-input.
+ * Minimum enforced value: 10 000 ms (10 s).
+ * @type {number}
+ */
+let refreshInterval = 60_000;
+
+/**
+ * The Leaflet Marker for the user-placed search pin, or null if no pin exists.
+ * @type {L.Marker|null}
+ */
+let droppedPinMarker = null;
+
+/* Cached DOM references — gathered once to avoid repeated getElementById calls */
+const zipInput      = document.getElementById('zip-input');
+const searchBtn     = document.getElementById('search-btn');
+const statusBar     = document.getElementById('status-bar');
+const statusText    = document.getElementById('status-text');
+const mapOverlay    = document.getElementById('map-overlay');
+const overlayText   = document.getElementById('overlay-text');
+const popupPanel    = document.getElementById('popup-panel');
+const toast         = document.getElementById('toast');
+const intervalInput = document.getElementById('interval-input');
+const dragPinBtn    = document.getElementById('drag-pin');
+const pinGhost      = document.getElementById('pin-ghost');
+const fabLocate     = document.getElementById('fab-locate');
+const modalOverlay  = document.getElementById('modal-overlay');
+const modalApiKey   = document.getElementById('modal-api-key');
+const modalConfirm  = document.getElementById('modal-confirm');
+const modalCancel   = document.getElementById('modal-cancel');
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   3. UI HELPERS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Update the header status badge.
+ * @param {'loading'|'ok'|'error'|''} state  - CSS class applied to .status-bar
+ * @param {string}                    msg    - Text shown next to the dot
+ */
+function setStatus(state, msg) {
+  statusBar.className = 'status-bar ' + state;
+  statusText.textContent = msg;
+}
+
+/**
+ * Show a brief error/info toast that auto-dismisses after 3.5 s.
+ * @param {string} msg
+ */
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('visible');
+  setTimeout(() => toast.classList.remove('visible'), 3500);
+}
+
+/**
+ * Show the full-map loading overlay with a custom message.
+ * @param {string} msg
+ */
+function showOverlay(msg) {
+  overlayText.textContent = msg;
+  mapOverlay.classList.add('visible');
+}
+
+/** Hide the full-map loading overlay. */
+function hideOverlay() {
+  mapOverlay.classList.remove('visible');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   4. REFRESH-INTERVAL EDITOR
+   ─────────────────────────────────────────────────────────────────────────────
+   The user can change the auto-refresh cadence by editing the number input
+   in the popup footer.  The change takes effect immediately if a station
+   panel is already open.
+   ───────────────────────────────────────────────────────────────────────────── */
+intervalInput.addEventListener('change', () => {
+  let seconds = parseInt(intervalInput.value, 10);
+  if (isNaN(seconds) || seconds < 10) {
+    seconds = 10;
+    intervalInput.value = 10;
+  }
+  refreshInterval = seconds * 1000;
+
+  // If a station is currently active, restart the timer immediately at the
+  // new interval so the change takes effect without waiting for the next tick.
+  if (activeStationId && refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(() => doStationRefresh(activeStationId), refreshInterval);
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   5. INPUT-TYPE DETECTION & COORDINATE PARSING
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Classify free-form user input so the correct geocoding path is chosen.
+ *
+ * Rules (evaluated in order):
+ *  • Two comma-separated numbers → 'coords'  (e.g. "29.42, -98.49")
+ *  • Five digits (optionally plus "-NNNN")   → 'zip'
+ *  • Anything else                           → 'address'
+ *
+ * @param   {string} raw  - Raw value from the search input
+ * @returns {'coords'|'zip'|'address'}
+ */
+function detectInputType(raw) {
+  const s = raw.trim();
+  if (/^(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)$/.test(s)) return 'coords';
+  if (/^\d{5}(-\d{4})?$/.test(s))                         return 'zip';
+  return 'address';
+}
+
+/**
+ * Parse a "lat, lon" string into a numeric {lat, lon} object.
+ * No validation — call after detectInputType returns 'coords'.
+ *
+ * @param   {string} raw
+ * @returns {{ lat: number, lon: number }}
+ */
+function parseCoords(raw) {
+  const parts = raw.trim().split(',');
+  return { lat: parseFloat(parts[0]), lon: parseFloat(parts[1]) };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   6. GEOCODING HELPERS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Convert a US ZIP code to geographic coordinates using the Nominatim API
+ * (OpenStreetMap's free geocoding service — no key required).
+ *
+ * @param   {string} zip  - 5-digit ZIP code
+ * @returns {Promise<{ lat: number, lon: number }>}
+ * @throws  {Error} if the ZIP is not found or the request fails
+ */
+async function zipToCoords(zip) {
+  const url = `https://nominatim.openstreetmap.org/search`
+            + `?postalcode=${encodeURIComponent(zip)}&country=US&format=json&limit=1`;
+  const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+  if (!res.ok) throw new Error('ZIP geocoding request failed');
+  const data = await res.json();
+  if (!data.length) throw new Error(`ZIP code "${zip}" not found`);
+  return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+}
+
+/**
+ * Convert a street address to geographic coordinates using the Geocodio API.
+ *
+ * Before making the request this function:
+ *   1. Checks whether geocodioApiKey is set.
+ *   2. If not, reads the cookie "wxmap_geocodio_key".
+ *   3. If still empty, prompts the user via the modal dialog, persists the key
+ *      in a cookie, then continues.
+ *
+ * @param   {string} address  - Free-form address string
+ * @returns {Promise<{ lat: number, lon: number }>}
+ * @throws  {Error} if the address is not found, the key is rejected, or the
+ *                  user cancels the prompt
+ */
+async function addressToCoords(address) {
+  // ── Ensure we have an API key (cookie → prompt fallback) ──
+  await ensureGeocodioApiKey();
+
+  const url = `https://api.geocod.io/v1.7/geocode`
+            + `?q=${encodeURIComponent(address)}&api_key=${geocodioApiKey}&limit=1`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Geocodio API error (HTTP ${res.status})`);
+  const data = await res.json();
+  if (!data.results?.length) throw new Error(`Address "${address}" not found`);
+  const loc = data.results[0].location;
+  return { lat: loc.lat, lon: loc.lng };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   7. COOKIE HELPERS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** Name of the cookie used to persist the Geocodio API key. */
+const GEOCODIO_COOKIE_NAME = 'wxmap_geocodio_key';
+
+/**
+ * Read a single cookie value by name.
+ *
+ * @param   {string}      name
+ * @returns {string|null}       Decoded cookie value, or null if absent
+ */
+function getCookie(name) {
+  const match = document.cookie
+    .split('; ')
+    .find(row => row.startsWith(name + '='));
+  return match ? decodeURIComponent(match.split('=')[1]) : null;
+}
+
+/**
+ * Write a cookie.  Defaults to a 1-year expiry, SameSite=Strict.
+ * Not HttpOnly (must be JS-readable) and not Secure (may run on file://).
+ *
+ * @param {string} name
+ * @param {string} value
+ * @param {number} [daysToExpire=365]
+ */
+function setCookie(name, value, daysToExpire = 365) {
+  const expires = new Date(Date.now() + daysToExpire * 86_400_000).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires};path=/;SameSite=Strict`;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   8. GEOCODIO API-KEY PROMPT (MODAL)
+   ─────────────────────────────────────────────────────────────────────────────
+   ensureGeocodioApiKey() is called every time addressToCoords() is invoked.
+   It resolves immediately if a key is already available; otherwise it shows
+   the modal and waits for the user to submit or cancel.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Ensure geocodioApiKey is populated, prompting the user if necessary.
+ *
+ * Resolution order:
+ *   1. geocodioApiKey already set in memory → resolve immediately.
+ *   2. Cookie exists → read key, update geocodioApiKey, resolve.
+ *   3. Neither → show the modal dialog and wait.
+ *      • Confirm: save key to cookie + geocodioApiKey, resolve.
+ *      • Cancel:  reject with a user-visible error.
+ *
+ * @returns {Promise<void>}
+ */
+function ensureGeocodioApiKey() {
+  // Fast path — key already in memory
+  if (geocodioApiKey) return Promise.resolve();
+
+  // Cookie fallback
+  const fromCookie = getCookie(GEOCODIO_COOKIE_NAME);
+  if (fromCookie) {
+    geocodioApiKey = fromCookie;
+    return Promise.resolve();
+  }
+
+  // Prompt the user via the modal
+  return new Promise((resolve, reject) => {
+    modalApiKey.value = '';
+    modalOverlay.classList.add('visible');
+    modalApiKey.focus();
+
+    function onConfirm() {
+      const key = modalApiKey.value.trim();
+      if (!key) {
+        modalApiKey.style.borderColor = 'var(--red)';
+        return;
+      }
+      modalApiKey.style.borderColor = '';
+      geocodioApiKey = key;
+      setCookie(GEOCODIO_COOKIE_NAME, key);
+      cleanup();
+      resolve();
+    }
+
+    function onCancel() {
+      cleanup();
+      reject(new Error('Address lookup requires a Geocodio API key. Cancelled.'));
+    }
+
+    function onKeydown(e) {
+      if (e.key === 'Enter')  onConfirm();
+      if (e.key === 'Escape') onCancel();
+    }
+
+    function cleanup() {
+      modalOverlay.classList.remove('visible');
+      modalConfirm.removeEventListener('click',   onConfirm);
+      modalCancel .removeEventListener('click',   onCancel);
+      modalApiKey .removeEventListener('keydown', onKeydown);
+    }
+
+    modalConfirm.addEventListener('click',   onConfirm);
+    modalCancel .addEventListener('click',   onCancel);
+    modalApiKey .addEventListener('keydown', onKeydown);
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   9. WEATHER API HELPERS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Fetch the list of NOAA observation stations nearest to a coordinate pair.
+ * Endpoint: GET https://api.weather.gov/points/{lat},{lon}/stations
+ *
+ * @param   {number} lat  - Latitude (4 decimal places precision)
+ * @param   {number} lon  - Longitude
+ * @returns {Promise<Object>} GeoJSON FeatureCollection of stations
+ * @throws  {Error} on non-2xx response
+ */
+async function fetchStations(lat, lon) {
+  const url = `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}/stations`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'WXMap/1.0' } });
+  if (!res.ok) throw new Error(`NOAA stations API returned HTTP ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Fetch the most recent observation from a specific NOAA station.
+ * Endpoint: GET https://api.weather.gov/stations/{stationId}/observations/latest
+ *
+ * @param   {string} stationId  - ICAO station identifier (e.g. "KSAT")
+ * @returns {Promise<Object>}   GeoJSON Feature with observation properties
+ * @throws  {Error} on non-2xx response
+ */
+async function fetchObservations(stationId) {
+  const url = `https://api.weather.gov/stations/${stationId}/observations/latest`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'WXMap/1.0' } });
+  if (!res.ok) throw new Error(`NOAA observations API returned HTTP ${res.status}`);
+  return res.json();
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   10. UNIT-CONVERSION HELPERS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** Celsius → Fahrenheit (string, 1 decimal place). Returns null if input is null. */
+const cToF = c => c != null ? ((c * 9/5) + 32).toFixed(1) : null;
+
+/** Fahrenheit string → Celsius string (1 decimal place). */
+const fToC = f => f != null ? (((parseFloat(f) - 32) * 5) / 9).toFixed(1) : null;
+
+/** km/h → mph (1 decimal place). */
+const kmhToMph = k => k != null ? (k * 0.621371).toFixed(1) : null;
+
+/** Metres → miles (1 decimal place). */
+const mToMi = m => m != null ? (m / 1609.344).toFixed(1) : null;
+
+/** Metres → feet (nearest integer). */
+const mToFt = m => m != null ? Math.round(m * 3.28084) : null;
+
+/** Pascals → inches of mercury (2 decimal places). */
+const paToInHg = pa => pa != null ? (pa / 3386.389).toFixed(2) : null;
+
+/**
+ * Format an ISO-8601 timestamp as a locale-aware time string.
+ * @param   {string|null} ts
+ * @returns {string}
+ */
+function formatTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleTimeString('en-US', {
+    hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
+  });
+}
+
+/**
+ * Safely render a nullable value for HTML insertion.
+ * @param   {*}      v     - Value to render (null/undefined → N/A)
+ * @param   {string} unit  - Unit suffix appended when v is not null
+ * @param   {string} na    - Fallback text
+ * @returns {string}        HTML string
+ */
+function val(v, unit = '', na = 'N/A') {
+  return (v == null || v === '')
+    ? `<span class="na">${na}</span>`
+    : `${v}${unit}`;
+}
+
+/**
+ * Convert a meteorological wind direction in degrees to a compass abbreviation.
+ * @param   {number} deg  - 0–360
+ * @returns {string}       e.g. "NNE"
+ */
+function degToCompass(deg) {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+/**
+ * Estimate the probability of precipitation as a percentage.
+ *
+ * The NOAA latest-observation endpoint does not include a PoP field.  This
+ * heuristic derives a rough estimate from relative humidity and the
+ * temperature/dew-point spread (a small spread → air near saturation).
+ *
+ * ⚠️  This is an approximation, not a forecast product.
+ *
+ * @param   {number|null} humidityPct  - Relative humidity 0–100
+ * @param   {number|null} tempC        - Air temperature °C
+ * @param   {number|null} dewC         - Dew-point temperature °C
+ * @returns {number|null}               Estimated PoP 0–100, or null
+ */
+function precipLikelihood(humidityPct, tempC, dewC) {
+  if (humidityPct == null) return null;
+  let p = humidityPct / 100;
+  if (tempC != null && dewC != null) {
+    const spread = tempC - dewC;
+    if (spread < 2)      p = Math.min(1, p + 0.15);
+    else if (spread < 5) p = Math.min(1, p + 0.05);
+  }
+  return Math.round(p * 100);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   11. WEATHER POPUP RENDERER
+   ─────────────────────────────────────────────────────────────────────────────
+   Populates #popup-body with a complete weather-data card built from the
+   raw GeoJSON observation feature returned by fetchObservations().
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Render observation data into the station info popup panel.
+ *
+ * @param {Object}      data         - Full GeoJSON observation feature
+ * @param {string}      stationId    - ICAO identifier (e.g. "KSAT")
+ * @param {string|null} stationName  - Human-readable station name
+ */
+function renderWeather(data, stationId, stationName) {
+  const p = data.properties;
+
+  /* ── Temperature (dual unit display) ── */
+  const tempC     = p.temperature?.value;
+  const tempF     = cToF(tempC);
+  const tempCDisp = tempF != null ? fToC(tempF) : null;
+
+  /*
+   * "Feels Like" — heat index takes priority over wind chill because both
+   * are never simultaneously applicable (heat index is relevant at high temps,
+   * wind chill at low temps).  The label is updated to reflect which one is used.
+   */
+  const heatC  = p.heatIndex?.value;
+  const chillC = p.windChill?.value;
+  let feelsC = null, feelsLabel = 'Feels Like';
+  if      (heatC  != null) { feelsC = heatC;  feelsLabel = 'Heat Index'; }
+  else if (chillC != null) { feelsC = chillC; feelsLabel = 'Wind Chill'; }
+  const feelsF     = cToF(feelsC);
+  const feelsCDisp = feelsF != null ? fToC(feelsF) : null;
+
+  /* ── Other observations ── */
+  const dewC      = p.dewpoint?.value;
+  const dewF      = cToF(dewC);
+  const windMph   = kmhToMph(p.windSpeed?.value);
+  const gustMph   = kmhToMph(p.windGust?.value);
+  const visMi     = mToMi(p.visibility?.value);
+  const pressInHg = paToInHg(p.seaLevelPressure?.value ?? p.barometricPressure?.value);
+  const humidity  = p.relativeHumidity?.value != null
+                  ? Math.round(p.relativeHumidity.value) : null;
+  const windDir   = p.windDirection?.value;
+  const dirStr    = windDir != null ? degToCompass(windDir) : null;
+  const precipPct = precipLikelihood(p.relativeHumidity?.value, tempC, dewC);
+
+  /* ── Cloud layers (first/primary layer only) ── */
+  const layer    = p.cloudLayers?.[0];
+  const cloudAmt = layer?.amount;
+  const cloudFt  = mToFt(layer?.base?.value);
+  const amtMap   = {
+    CLR:'Clear', SKC:'Clear', FEW:'Few', SCT:'Scattered',
+    BKN:'Broken', OVC:'Overcast', VV:'Vert. Vis.'
+  };
+  const cloudStr = cloudAmt
+    ? (amtMap[cloudAmt] || cloudAmt) + (cloudFt != null ? ` @ ${cloudFt} ft` : '')
+    : null;
+
+  /* ── Present weather string (e.g. "RA", "TSRA") ── */
+  const pwx = (p.presentWeather || [])
+    .map(w => w.rawString || w.weather || '')
+    .filter(Boolean)
+    .join(', ');
+
+  /* ── Update popup header and footer ── */
+  document.getElementById('popup-id').textContent   = stationId;
+  document.getElementById('popup-name').textContent  = stationName || p.stationName || '—';
+  document.getElementById('update-time').textContent = 'OBS: ' + formatTime(p.timestamp);
+
+  /* ── Build HTML fragments for optional sections ── */
+
+  // Temperature row: large °F with smaller °C companion
+  const tempHTML = tempF != null
+    ? `<div class="temp-row">
+         <div class="weather-temp">${tempF}<sup>°F</sup></div>
+         <div class="temp-celsius-wrap">
+           <div class="temp-celsius">${tempCDisp}<sup>°C</sup></div>
+         </div>
+       </div>`
+    : `<div class="weather-temp">—</div>`;
+
+  // Feels-like cell (only rendered when data is available)
+  const feelsHTML = feelsF != null
+    ? `<div class="weather-item">
+         <div class="weather-item-label">${feelsLabel}</div>
+         <div class="weather-item-value">
+           ${feelsF}°F <span class="feels-c">${feelsCDisp}°C</span>
+         </div>
+       </div>`
+    : '';
+
+  // Precipitation likelihood bar (full-width cell)
+  const precipHTML = precipPct != null
+    ? `<div class="weather-item full">
+         <div class="weather-item-label">Precip Likelihood (est.)</div>
+         <div class="weather-item-value">${precipPct}%</div>
+         <div class="precip-bar-wrap">
+           <div class="precip-bar" style="width:${precipPct}%"></div>
+         </div>
+       </div>`
+    : '';
+
+  // Sky conditions and present weather (full-width cell)
+  const cloudHTML = (cloudStr || pwx)
+    ? `<div class="weather-item full">
+         <div class="weather-item-label">Sky${pwx ? ' / Weather' : ''}</div>
+         <div class="weather-item-value">
+           ${cloudStr || ''}
+           ${pwx ? (cloudStr ? '<br>' : '') +
+             '<span style="font-size:0.75rem;color:var(--text-muted)">' + pwx + '</span>'
+             : ''}
+         </div>
+       </div>`
+    : '';
+
+  /* ── Assemble final popup body ── */
+  document.getElementById('popup-body').innerHTML = `
+    <div class="weather-main">
+      <div class="temp-col">
+        ${tempHTML}
+        <div class="weather-desc">${p.textDescription || '—'}</div>
+      </div>
+    </div>
+    <div class="weather-grid">
+      <div class="weather-item">
+        <div class="weather-item-label">Dewpoint</div>
+        <div class="weather-item-value">${val(dewF, '°F')}</div>
+      </div>
+      <div class="weather-item">
+        <div class="weather-item-label">Humidity</div>
+        <div class="weather-item-value">${val(humidity, '%')}</div>
+      </div>
+      ${feelsHTML}
+      <div class="weather-item">
+        <div class="weather-item-label">Wind</div>
+        <div class="weather-item-value">
+          ${windMph != null ? windMph + ' mph' : val(null)}
+          ${dirStr ? '<br><span style="font-size:0.7rem;color:var(--text-muted)">from ' + dirStr + '</span>' : ''}
+        </div>
+      </div>
+      <div class="weather-item">
+        <div class="weather-item-label">Gusts</div>
+        <div class="weather-item-value">${val(gustMph, 'mph')}</div>
+      </div>
+      <div class="weather-item">
+        <div class="weather-item-label">Visibility</div>
+        <div class="weather-item-value">${val(visMi, 'mi')}</div>
+      </div>
+      <div class="weather-item">
+        <div class="weather-item-label">Pressure</div>
+        <div class="weather-item-value">${val(pressInHg, ' inHg')}</div>
+      </div>
+      ${cloudHTML}
+      ${precipHTML}
+    </div>`;
+
+  popupPanel.style.display = 'block';
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   12. STATION REFRESH LOOP
+   ─────────────────────────────────────────────────────────────────────────────
+   doStationRefresh() is called both immediately (when a station is opened) and
+   on a repeating interval driven by refreshInterval.  It is a no-op if
+   activeStationId no longer matches, preventing stale updates from overwriting
+   data for a station that has since been changed or closed.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Fetch fresh observation data for stationId and re-render the popup.
+ * Guards against race conditions by checking activeStationId before and after
+ * the async fetch.
+ *
+ * @param {string} stationId
+ */
+async function doStationRefresh(stationId) {
+  if (activeStationId !== stationId) return;  // station was closed/changed
+
+  const dotEl = document.getElementById('update-dot');
+  dotEl.classList.add('refreshing');
+
+  try {
+    const data = await fetchObservations(stationId);
+    if (activeStationId !== stationId) return;   // closed while fetching
+    renderWeather(data, stationId, document.getElementById('popup-name').textContent);
+  } catch (e) {
+    if (activeStationId === stationId) {
+      document.getElementById('update-time').textContent = 'Error fetching data';
+    }
+  } finally {
+    dotEl.classList.remove('refreshing');
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   13. STATION PANEL OPEN / CLOSE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Open the weather info popup for a station.
+ * - Cancels any previous refresh timer.
+ * - Clears the previous active marker highlight.
+ * - Shows a loading skeleton while the first fetch completes.
+ * - Starts the refresh timer for live updates.
+ *
+ * @param {string}          stationId    - ICAO identifier
+ * @param {string|null}     stationName  - Human-readable name
+ * @param {HTMLElement|null} markerEl    - The .station-marker div to highlight
+ */
+async function openStation(stationId, stationName, markerEl) {
+  if (refreshTimer)    { clearInterval(refreshTimer); refreshTimer = null; }
+  if (activeMarkerEl)  { activeMarkerEl.classList.remove('active'); }
+
+  activeMarkerEl = markerEl;
+  if (markerEl) markerEl.classList.add('active');
+
+  activeStationId = stationId;
+  popupPanel.style.display = 'block';
+  document.getElementById('popup-id').textContent    = stationId;
+  document.getElementById('popup-name').textContent  = stationName || '—';
+  document.getElementById('popup-body').innerHTML    =
+    `<div style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
+       Fetching observations…
+     </div>`;
+
+  await doStationRefresh(stationId);
+  refreshTimer = setInterval(() => doStationRefresh(stationId), refreshInterval);
+}
+
+/** Close the popup and stop the refresh timer. */
+document.getElementById('popup-close').addEventListener('click', () => {
+  popupPanel.style.display = 'none';
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  activeStationId = null;
+  if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   14. MAP MARKER MANAGEMENT
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** Remove all station markers from the map and clear the tracking array. */
+function clearStations() {
+  stationMarkers.forEach(m => map.removeLayer(m));
+  stationMarkers = [];
+}
+
+/**
+ * Create and add a single station marker to the map.
+ * Returns the icon's inner div element so the caller can toggle .active.
+ *
+ * @param   {string} id    - ICAO identifier displayed inside the badge
+ * @param   {string} name  - Full station name (used as tooltip)
+ * @param   {number} lat
+ * @param   {number} lng
+ * @returns {HTMLElement}   The .station-marker div
+ */
+function makeStationMarker(id, name, lat, lng) {
+  const iconEl = document.createElement('div');
+  iconEl.className   = 'station-marker';
+  iconEl.textContent = id;
+  iconEl.title       = name;
+
+  const icon   = L.divIcon({ html: iconEl, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
+  const marker = L.marker([lat, lng], { icon }).addTo(map);
+  marker.on('click', () => openStation(id, name, iconEl));
+  stationMarkers.push(marker);
+  return iconEl;
+}
+
+/**
+ * Plot all stations from a GeoJSON FeatureCollection returned by fetchStations().
+ * Replaces any previously plotted markers.
+ *
+ * @param {Object} geoJSON  - FeatureCollection from the NOAA stations endpoint
+ */
+function plotStations(geoJSON) {
+  clearStations();
+  (geoJSON.features || []).forEach(f => {
+    const id  = f.properties.stationIdentifier;
+    const nm  = f.properties.name;
+    const [lng, lat] = f.geometry.coordinates;   // GeoJSON is [lng, lat]
+    makeStationMarker(id, nm, lat, lng);
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   15. POST-GEOCODE PIPELINE
+   ─────────────────────────────────────────────────────────────────────────────
+   All geocoding paths (ZIP, address, coords, geolocation, dropped pin) converge
+   here.  Fetches the nearest stations, plots them, and resets popup state.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Pan the map to (lat, lon), fetch nearby NOAA stations, and plot them.
+ * Resets any open popup and active marker.
+ *
+ * @param {number} lat
+ * @param {number} lon
+ */
+async function loadStationsAt(lat, lon) {
+  setStatus('loading', 'FETCHING STATIONS…');
+  overlayText.textContent = 'Fetching weather stations…';
+  map.flyTo([lat, lon], 10, { duration: 1.2 });
+
+  const data  = await fetchStations(lat, lon);
+  plotStations(data);
+
+  const count = (data.features || []).length;
+  setStatus('ok', `${count} STATION${count !== 1 ? 'S' : ''}`);
+  hideOverlay();
+
+  // Close any open station popup
+  popupPanel.style.display = 'none';
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  activeStationId = null;
+  if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   16. URL QUERY-STRING HELPERS
+   ─────────────────────────────────────────────────────────────────────────────
+   The app encodes the current search into the URL query string so results can
+   be bookmarked and shared.  history.replaceState() updates the address bar
+   without triggering a page reload.
+
+   Supported parameters:
+     ?lat=…&long=…  → coordinate search
+     ?zip=…         → ZIP code search
+     ?addr=…        → address search
+     ?station=…     → direct station lookup
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Serialise the current search input into the page URL.
+ * Values are double-encoded: URLSearchParams encodes the key=value separator
+ * characters, and the individual values are additionally encodeURIComponent'd
+ * to handle slashes, commas, and other address characters gracefully.
+ *
+ * @param {'coords'|'zip'|'address'} type  - Input type from detectInputType()
+ * @param {string}                   raw   - Raw search string
+ */
+function pushQueryParam(type, raw) {
+  const params = new URLSearchParams();
+  if (type === 'coords') {
+    const { lat, lon } = parseCoords(raw);
+    params.set('lat',  encodeURIComponent(lat));
+    params.set('long', encodeURIComponent(lon));
+  } else if (type === 'zip') {
+    params.set('zip',  encodeURIComponent(raw.trim()));
+  } else {
+    params.set('addr', encodeURIComponent(raw.trim()));
+  }
+  window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   17. MAIN SEARCH DISPATCHER
+   ─────────────────────────────────────────────────────────────────────────────
+   Reads the search input, classifies it, updates the URL, then dispatches to
+   the appropriate geocoding path.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Primary entry point for user-initiated searches.
+ * Called when the FIND button is clicked or Enter is pressed in the input.
+ */
+async function doSearch() {
+  const raw = zipInput.value.trim();
+  if (!raw) {
+    showToast('Please enter a ZIP, coordinates, or address');
+    return;
+  }
+
+  const type = detectInputType(raw);
+  pushQueryParam(type, raw);
+
+  try {
+    if (type === 'coords') {
+      setStatus('loading', 'LOCATING…');
+      showOverlay('Parsing coordinates…');
+      const { lat, lon } = parseCoords(raw);
+      if (isNaN(lat) || isNaN(lon)) throw new Error('Invalid coordinates');
+      await loadStationsAt(lat, lon);
+
+    } else if (type === 'zip') {
+      setStatus('loading', 'LOCATING…');
+      showOverlay('Geocoding ZIP code…');
+      const { lat, lon } = await zipToCoords(raw);
+      await loadStationsAt(lat, lon);
+
+    } else {
+      // Street address — requires Geocodio API key
+      setStatus('loading', 'GEOCODING…');
+      showOverlay('Translating address via Geocodio…');
+      const { lat, lon } = await addressToCoords(raw);
+      await loadStationsAt(lat, lon);
+    }
+
+  } catch (e) {
+    hideOverlay();
+    setStatus('error', 'ERROR');
+    showToast(e.message || 'Something went wrong');
+  }
+}
+
+searchBtn.addEventListener('click', doSearch);
+zipInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   18. DRAGGABLE-PIN FEATURE
+   ─────────────────────────────────────────────────────────────────────────────
+   The pin button in the header can be dragged onto the map.  While dragging,
+   a ghost pin follows the cursor.  On drop, a draggable Leaflet marker is placed
+   at the computed lat/lon and a station search is triggered.
+
+   The dropped pin can be:
+     • Dragged to a new position  → triggers a new search
+     • Double-clicked             → removed from the map
+     • Focused + Delete/Backspace → removed from the map
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** Whether the pin button is currently being dragged. */
+let pinIsDragging = false;
+
+dragPinBtn.addEventListener('dragstart', e => {
+  e.dataTransfer.effectAllowed = 'copy';
+  // Suppress the browser's default ghost thumbnail — we use our own
+  e.dataTransfer.setDragImage(new Image(), 0, 0);
+  pinIsDragging = true;
+  pinGhost.style.display = 'block';
+});
+
+// Move the ghost pin with the cursor across the whole document
+document.addEventListener('dragover', e => {
+  if (!pinIsDragging) return;
+  e.preventDefault();
+  pinGhost.style.left = e.clientX + 'px';
+  pinGhost.style.top  = e.clientY + 'px';
+});
+
+dragPinBtn.addEventListener('dragend', e => {
+  pinIsDragging = false;
+  pinGhost.style.display = 'none';
+
+  // Convert viewport-relative drop position to Leaflet map coordinates
+  const mapEl = document.getElementById('map');
+  const rect  = mapEl.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  // Ignore drops outside the map area
+  if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+
+  const latlng = map.containerPointToLatLng([x, y]);
+  placeDragPin(latlng.lat, latlng.lng);
+});
+
+// Allow keyboard removal when the drag-pin button itself has focus
+dragPinBtn.addEventListener('keydown', e => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && droppedPinMarker) {
+    removeDragPin();
+    e.preventDefault();
+  }
+});
+
+/** Remove the dropped pin marker from the map. */
+function removeDragPin() {
+  if (droppedPinMarker) {
+    map.removeLayer(droppedPinMarker);
+    droppedPinMarker = null;
+  }
+}
+
+/**
+ * Build a Leaflet DivIcon for the draggable pin at a given position.
+ * The icon is a flex column: coordinate label on top, pin emoji below.
+ *
+ * @param   {number} lat
+ * @param   {number} lng
+ * @returns {{ icon: L.DivIcon, coordStr: string }}
+ */
+function buildPinIcon(lat, lng) {
+  const coordStr = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  const wrap = document.createElement('div');
+  wrap.className = 'dropped-pin-wrap';
+  wrap.innerHTML = `
+    <div class="dropped-pin-coords">${coordStr}</div>
+    <div class="dropped-pin-icon">📍</div>
+  `;
+  return {
+    icon: L.divIcon({ html: wrap, className: '', iconSize: [90, 52], iconAnchor: [16, 52] }),
+    coordStr
+  };
+}
+
+/**
+ * Place the draggable search pin at (lat, lng) and trigger a station search.
+ * Removes any previously placed pin first.
+ *
+ * @param {number} lat
+ * @param {number} lng
+ */
+function placeDragPin(lat, lng) {
+  removeDragPin();
+
+  const { icon } = buildPinIcon(lat, lng);
+  droppedPinMarker = L.marker([lat, lng], { icon, draggable: true, zIndexOffset: 500 }).addTo(map);
+
+  // Double-click to remove
+  droppedPinMarker.on('dblclick', removeDragPin);
+
+  // Allow keyboard removal when the marker element itself has focus
+  droppedPinMarker.on('add', () => {
+    const el = droppedPinMarker.getElement();
+    if (el) {
+      el.setAttribute('tabindex', '0');
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Delete' || e.key === 'Backspace') removeDragPin();
+      });
+    }
+  });
+
+  // When the user re-drags the pin on the map, update the label and re-search
+  droppedPinMarker.on('dragend', () => {
+    const pos = droppedPinMarker.getLatLng();
+    const el  = droppedPinMarker.getElement();
+    if (el) {
+      const lbl = el.querySelector('.dropped-pin-coords');
+      if (lbl) lbl.textContent = `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`;
+    }
+    triggerPinSearch(pos.lat, pos.lng);
+  });
+
+  triggerPinSearch(lat, lng);
+}
+
+/**
+ * Populate the search input with pin coordinates, update the URL, and
+ * fetch nearby weather stations.
+ *
+ * @param {number} lat
+ * @param {number} lng
+ */
+function triggerPinSearch(lat, lng) {
+  const coordStr = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  zipInput.value = coordStr;
+  pushQueryParam('coords', coordStr);
+  setStatus('loading', 'LOCATING…');
+  showOverlay('Fetching stations for pin location…');
+  loadStationsAt(lat, lng).catch(err => {
+    hideOverlay();
+    setStatus('error', 'ERROR');
+    showToast(err.message || 'Something went wrong');
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   19. FLOATING ACTION BUTTON — "LOCATE ME"
+   ─────────────────────────────────────────────────────────────────────────────
+   Uses the browser Geolocation API to retrieve the device's current position.
+   On success:
+     1. Pans the map to the location.
+     2. Places the draggable search pin there.
+     3. Populates the search field with the coordinates.
+     4. Triggers a station search.
+
+   The button animates to a loading state while the position is being acquired.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+fabLocate.addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    showToast('Geolocation is not supported by this browser.');
+    return;
+  }
+
+  // Visual loading state on the FAB
+  fabLocate.classList.add('locating');
+  fabLocate.disabled = true;
+  setStatus('loading', 'LOCATING…');
+  showOverlay('Requesting device location…');
+
+  navigator.geolocation.getCurrentPosition(
+    // ── Success ──────────────────────────────────────────────────────────────
+    position => {
+      fabLocate.classList.remove('locating');
+      fabLocate.disabled = false;
+      hideOverlay();
+
+      const { latitude: lat, longitude: lng } = position.coords;
+
+      // Snap the map view to the device location
+      map.flyTo([lat, lng], 12, { duration: 1.2 });
+
+      // Place a pin and kick off the station search
+      placeDragPin(lat, lng);
+    },
+
+    // ── Error ─────────────────────────────────────────────────────────────────
+    err => {
+      fabLocate.classList.remove('locating');
+      fabLocate.disabled = false;
+      hideOverlay();
+      setStatus('error', 'ERROR');
+
+      const messages = {
+        1: 'Location access denied. Please allow it in your browser settings.',
+        2: 'Location unavailable. Check your device settings.',
+        3: 'Location request timed out. Please try again.'
+      };
+      showToast(messages[err.code] || 'Could not retrieve location.');
+    },
+
+    // ── Options ───────────────────────────────────────────────────────────────
+    {
+      enableHighAccuracy: true,  // use GPS when available
+      timeout: 15_000,           // give up after 15 s
+      maximumAge: 60_000         // accept a cached position up to 1 min old
+    }
+  );
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   20. URL QUERY-PARAMETER AUTO-TRIGGER
+   ─────────────────────────────────────────────────────────────────────────────
+   On page load, the query string is parsed and the appropriate action is
+   triggered automatically — the user doesn't need to type anything.
+
+   Supported parameters (evaluated in priority order):
+     ?station=KSAT         → direct station lookup (fetch obs, pan map, open popup)
+     ?lat=…&long=…         → coordinate search
+     ?zip=…                → ZIP code search
+     ?addr=…               → address search (may prompt for Geocodio key)
+
+   Values are double-encoded when written (pushQueryParam) and double-decoded
+   here to handle special characters in addresses robustly.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+(async function parseQueryParams() {
+  const params = new URLSearchParams(window.location.search);
+
+  /**
+   * Safely retrieve and double-decode a query parameter.
+   * URLSearchParams.get() performs one decodeURIComponent pass; we apply a
+   * second pass to handle values that were stored via encodeURIComponent.
+   *
+   * @param   {string}      key
+   * @returns {string|null}
+   */
+  function safeDecodeParam(key) {
+    const raw = params.get(key);
+    if (raw === null) return null;
+    try { return decodeURIComponent(raw); } catch { return raw; }
+  }
+
+  const stationParam = safeDecodeParam('station');
+  const lat          = safeDecodeParam('lat');
+  const lon          = safeDecodeParam('long');
+  const zip          = safeDecodeParam('zip');
+  const addr         = safeDecodeParam('addr');
+
+  /* ── ?station=KSAT — direct station lookup ── */
+  if (stationParam) {
+    try {
+      setStatus('loading', 'LOADING STATION…');
+      showOverlay(`Fetching station ${stationParam}…`);
+
+      const data   = await fetchObservations(stationParam);
+      const coords = data.geometry?.coordinates;  // GeoJSON: [lng, lat]
+      if (!coords) throw new Error('No coordinates in station response');
+
+      const [lng, lat] = coords;
+      map.flyTo([lat, lng], 12, { duration: 1.2 });
+
+      const stName = data.properties?.stationName || stationParam;
+      const iconEl = makeStationMarker(stationParam, stName, lat, lng);
+
+      hideOverlay();
+      setStatus('ok', stationParam);
+
+      // Open the popup immediately with the already-fetched data
+      if (refreshTimer)   { clearInterval(refreshTimer); refreshTimer = null; }
+      if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); }
+      activeMarkerEl  = iconEl;
+      iconEl.classList.add('active');
+      activeStationId = stationParam;
+
+      popupPanel.style.display = 'block';
+      document.getElementById('popup-id').textContent   = stationParam;
+      document.getElementById('popup-name').textContent  = stName;
+      document.getElementById('popup-body').innerHTML =
+        `<div style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
+           Loading…
+         </div>`;
+      renderWeather(data, stationParam, stName);
+
+      // Start the live-refresh timer
+      refreshTimer = setInterval(() => doStationRefresh(stationParam), refreshInterval);
+
+    } catch (e) {
+      hideOverlay();
+      setStatus('error', 'ERROR');
+      showToast(e.message || 'Failed to load station');
+    }
+    return;  // Don't process other params
+  }
+
+  /* ── Other params ── */
+  if (lat && lon) {
+    zipInput.value = `${lat}, ${lon}`;
+    doSearch();
+  } else if (zip) {
+    zipInput.value = zip.trim();
+    doSearch();
+  } else if (addr) {
+    zipInput.value = addr.trim();
+    doSearch();
+  }
+})();
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SERVICE WORKER REGISTRATION (PWA)
+   ─────────────────────────────────────────────────────────────────────────────
+   The service worker is generated as a Blob URL at runtime so this app remains
+   a self-contained single HTML file.  It implements a "cache-first" strategy:
+     • On install  → cache this page (the app shell).
+     • On fetch    → serve from cache if available, fall back to network.
+     • Stale-while-revalidate is used for tile and API requests so the app
+       always shows something, even offline.
+   ───────────────────────────────────────────────────────────────────────────── */
+if ('serviceWorker' in navigator) {
+  /**
+   * Inline Service Worker source.
+   * Written as a template literal and converted to a Blob URL so no separate
+   * .js file is required.
+   */
+  const swSource = `
+    const CACHE_NAME = 'wxmap-v1';
+    const SHELL_URL  = self.location.href.replace(/\\/sw-blob.*$/, '');
+
+    /* ── Install: cache the app shell ── */
+    self.addEventListener('install', event => {
+      event.waitUntil(
+        caches.open(CACHE_NAME).then(cache => cache.add(SHELL_URL))
+      );
+      self.skipWaiting();
+    });
+
+    /* ── Activate: remove outdated caches ── */
+    self.addEventListener('activate', event => {
+      event.waitUntil(
+        caches.keys().then(keys =>
+          Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+        )
+      );
+      self.clients.claim();
+    });
+
+    /* ── Fetch: cache-first with network fallback ── */
+    self.addEventListener('fetch', event => {
+      // Only intercept GET requests
+      if (event.request.method !== 'GET') return;
+
+      event.respondWith(
+        caches.match(event.request).then(cached => {
+          const networkFetch = fetch(event.request).then(response => {
+            // Cache a fresh copy for non-API, non-tile requests
+            if (
+              response.ok &&
+              !event.request.url.includes('api.weather.gov') &&
+              !event.request.url.includes('tile.openstreetmap')
+            ) {
+              caches.open(CACHE_NAME).then(cache => cache.put(event.request, response.clone()));
+            }
+            return response;
+          });
+          return cached || networkFetch;
+        })
+      );
+    });
+  `;
+
+  try {
+    const blob  = new Blob([swSource], { type: 'application/javascript' });
+    const swUrl = URL.createObjectURL(blob);
+    navigator.serviceWorker.register(swUrl, { scope: './' })
+      .then(() => console.info('[WX.MAP] Service worker registered (PWA shell cached)'))
+      .catch(err => console.warn('[WX.MAP] Service worker registration failed:', err));
+  } catch (err) {
+    console.warn('[WX.MAP] Could not register service worker:', err);
+  }
+}
+
+}); // ── end DOMContentLoaded ─────────────────────────────────────────────────
+</script>
+</body>
+</html>

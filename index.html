@@ -21,9 +21,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="Real-time NOAA weather station map. Search by ZIP, address, or coordinates. Live observations updated every minute.">
 <meta name="theme-color" content="#0a0e17">
+
+<!-- iOS PWA / home-screen optimisations -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="WX.MAP">
+<meta name="mobile-web-app-capable" content="yes">
+<!-- Prevent double-tap zoom on iOS -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+<!-- Apple touch icon (inline SVG data-URI) -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20512%20512'%3E%3Crect%20width='512'%20height='512'%20rx='100'%20fill='%230a0e17'/%3E%3Ctext%20x='256'%20y='340'%20font-size='280'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E">
 
 <!-- PWA: Web App Manifest (served as a data-URI so no extra file is needed) -->
 <link rel="manifest" href="data:application/manifest+json,{
@@ -544,6 +554,215 @@
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SAFE-AREA & MOBILE FOUNDATIONS
+     Respect iOS notch, home indicator, and Android cutouts via env().
+     ════════════════════════════════════════════════════════════════════════════ */
+  :root {
+    --safe-top:    env(safe-area-inset-top,    0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left:   env(safe-area-inset-left,   0px);
+    --safe-right:  env(safe-area-inset-right,  0px);
+
+    /* Bottom sheet sizing (overridden in JS when popup opens on mobile) */
+    --sheet-peek:  0px;
+  }
+
+  /* Prevent tap-highlight flash on touch */
+  * { -webkit-tap-highlight-color: transparent; }
+
+  /* Touch-action: allow map panning but prevent pull-to-refresh */
+  body { touch-action: pan-x pan-y; overscroll-behavior: none; }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     TAP-TO-PLACE MODE INDICATOR
+     Shown in the header when the user activates "tap to place" on touch devices.
+     ════════════════════════════════════════════════════════════════════════════ */
+  #tap-place-banner {
+    display: none;
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    background: rgba(255,107,53,0.15);
+    border-bottom: 1px solid var(--accent2);
+    color: var(--accent2);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    padding: 7px 12px;
+    z-index: 1001;
+    animation: slideIn 0.2s ease;
+  }
+  #tap-place-banner.active { display: block; }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     MOBILE STYLES  (≤ 640 px wide OR coarse pointer — touch screens)
+     ════════════════════════════════════════════════════════════════════════════ */
+  @media (max-width: 640px), (pointer: coarse) {
+
+    /* ── Header: two-row layout ── */
+    header {
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px 14px 10px calc(14px + var(--safe-left));
+      padding-top: calc(10px + var(--safe-top));
+    }
+
+    .logo {
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    /* Status bar moves to the right on the first row, beside the logo */
+    .status-bar {
+      font-size: 0.65rem;
+    }
+
+    /* Search bar stretches to full width on the second row */
+    .search-bar {
+      order: 3;           /* push below logo + status */
+      flex-basis: 100%;
+      max-width: 100%;
+      gap: 6px;
+    }
+
+    /* Bigger touch target for the text input — 44 px height minimum */
+    .search-bar input {
+      height: 44px;
+      padding: 0 14px;
+      font-size: 16px;    /* prevent iOS auto-zoom on focus */
+      letter-spacing: 0.02em;
+    }
+
+    /* FIND button — full-height touch target */
+    #search-btn {
+      height: 44px;
+      padding: 0 20px;
+      font-size: 0.8rem;
+      flex-shrink: 0;
+    }
+
+    /* Drag-pin button — hide on touch (replaced by tap-to-place) */
+    #drag-pin { display: none; }
+
+    /* ── Leaflet zoom controls — move to left side, clear of FAB ── */
+    .leaflet-control-zoom {
+      margin-bottom: calc(88px + var(--safe-bottom)) !important;
+    }
+
+    /* ── FAB — larger, above home indicator ── */
+    #fab-locate {
+      width: 54px; height: 54px;
+      bottom: calc(20px + var(--safe-bottom));
+      right: calc(16px + var(--safe-right));
+      box-shadow: 0 4px 24px rgba(0,212,255,0.5);
+    }
+    #fab-locate svg { width: 24px; height: 24px; }
+
+    /* ── Popup panel: BOTTOM SHEET on mobile ── */
+    #popup-panel {
+      /* Override the desktop absolute top-right positioning */
+      position: fixed !important;
+      top: auto !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      border-radius: 16px 16px 0 0;
+      border-left: none;
+      border-right: none;
+      border-bottom: none;
+      border-top: 1px solid var(--border);
+      max-height: 70vh;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      /* slide up from bottom */
+      animation: sheetSlideUp 0.3s cubic-bezier(0.32, 0.72, 0, 1) !important;
+      padding-bottom: var(--safe-bottom);
+      /* z-index above FAB */
+      z-index: 1100 !important;
+    }
+
+    @keyframes sheetSlideUp {
+      from { transform: translateY(100%); opacity: 0.6; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+
+    /* Drag handle above popup header */
+    #popup-panel::before {
+      content: '';
+      display: block;
+      width: 40px; height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      margin: 10px auto 0;
+    }
+
+    /* Slightly larger close button */
+    .popup-close {
+      width: 36px !important; height: 36px !important;
+      font-size: 16px !important;
+      flex-shrink: 0;
+    }
+
+    /* Temperature number: slightly smaller to fit mobile width */
+    .weather-temp { font-size: 2rem; }
+
+    /* ── Toast: rise above bottom sheet when open ── */
+    main.sheet-open #toast {
+      bottom: calc(70vh + 8px) !important;
+    }
+
+    /* ── Modal: full-width on small screens ── */
+    #modal-box {
+      width: calc(100vw - 24px);
+      padding: 20px 16px;
+      border-radius: 12px;
+    }
+
+    /* Bigger modal inputs for touch */
+    #modal-box input[type="text"] {
+      height: 48px;
+      font-size: 16px !important;
+      padding: 0 14px;
+    }
+
+    /* Bigger modal buttons */
+    .modal-actions button {
+      height: 44px;
+      padding: 0 20px;
+    }
+
+    /* ── Station markers: slightly larger hit-area on touch ── */
+    .station-marker {
+      width: 34px !important; height: 34px !important;
+      font-size: 8px !important;
+    }
+
+    /* ── Map overlay text: readable on small screens ── */
+    .overlay-text { font-size: 0.75rem; }
+
+    /* ── Interval input: bigger touch target ── */
+    #interval-input {
+      width: 44px;
+      height: 28px;
+      font-size: 0.65rem !important;
+      padding: 0 4px;
+    }
+    /* ── FAB shift: above bottom sheet when open ── */
+    main.sheet-open #fab-locate {
+      bottom: calc(70vh + 12px + var(--safe-bottom));
+      transition: bottom 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    /* ── Toast: add safe area inset ── */
+    #toast { bottom: calc(20px + var(--safe-bottom)); }
+    main.sheet-open #toast { bottom: calc(70vh + 8px) !important; }
+  }
 </style>
 </head>
 <body>
@@ -568,6 +787,7 @@
       placeholder="ZIP, lat/lon, or address…"
       maxlength="120"
       autocomplete="off"
+      inputmode="search"
       aria-label="Location search"
     />
 
@@ -575,12 +795,27 @@
       Draggable pin — drag this emoji onto the map to place a search pin
       at any arbitrary location.  Double-clicking the dropped pin or pressing
       Delete while this button is focused removes the pin.
+      Hidden on touch devices (replaced by tap-pin-btn below).
     -->
     <button
       id="drag-pin"
       draggable="true"
       title="Drag onto map to search by location"
       aria-label="Drag pin onto map"
+    >📍</button>
+
+    <!--
+      Tap-to-place button — visible only on touch devices.
+      Activates a one-shot map-tap mode that places the search pin.
+    -->
+    <button
+      id="tap-pin-btn"
+      title="Tap on map to search by location"
+      aria-label="Tap map to place pin"
+      style="display:none;width:44px;height:44px;cursor:pointer;
+             background:var(--bg);border:1px solid var(--border);
+             border-radius:var(--radius);color:var(--accent2);
+             font-size:20px;flex-shrink:0;transition:border-color 0.15s;"
     >📍</button>
 
     <button id="search-btn" aria-label="Search">FIND</button>
@@ -591,6 +826,11 @@
     <span class="dot"></span><span id="status-text">READY</span>
   </div>
 </header>
+
+<!-- Tap-to-place mode banner (mobile only) -->
+<div id="tap-place-banner" role="status" aria-live="polite">
+  📍 Tap anywhere on the map to place a search pin — tap again to cancel
+</div>
 
 <!-- Ghost pin that follows the mouse cursor during a drag operation -->
 <div id="pin-ghost" aria-hidden="true">📍</div>
@@ -748,6 +988,7 @@ document.addEventListener('DOMContentLoaded', function () {
  * Tile layer: OpenStreetMap standard (free, no API key required).
  */
 const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
+window._wxmap = map;   // expose for mobile tap-to-place
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -1732,6 +1973,7 @@ function placeDragPin(lat, lng) {
 
   triggerPinSearch(lat, lng);
 }
+window.placeDragPin = placeDragPin;   // expose for mobile tap-to-place
 
 /**
  * Populate the search input with pin coordinates, update the URL, and
@@ -1990,6 +2232,109 @@ if ('serviceWorker' in navigator) {
 }
 
 }); // ── end DOMContentLoaded ─────────────────────────────────────────────────
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MOBILE ENHANCEMENTS — added for PWA mobile optimisation
+   ─────────────────────────────────────────────────────────────────────────────
+   • Detects touch/coarse-pointer devices.
+   • Shows tap-pin-btn (replaces drag-pin on touch).
+   • Implements "tap-to-place" mode: one map click places the search pin.
+   • Toggles main.sheet-open when the popup panel is shown/hidden so the FAB
+     shifts above the bottom sheet.
+   ───────────────────────────────────────────────────────────────────────────── */
+(function initMobile() {
+  const isTouchDevice = () =>
+    window.matchMedia('(pointer: coarse)').matches ||
+    ('ontouchstart' in window) ||
+    navigator.maxTouchPoints > 0;
+
+  if (!isTouchDevice()) return;   // desktop — nothing to do
+
+  /* ── Show touch-specific controls ── */
+  const tapPinBtn      = document.getElementById('tap-pin-btn');
+  const tapPlaceBanner = document.getElementById('tap-place-banner');
+  const mainEl         = document.querySelector('main');
+
+  if (tapPinBtn) tapPinBtn.style.display = 'flex';
+
+  /* ── Patch popup open/close to toggle sheet-open on <main> ── */
+  const _popupPanel = document.getElementById('popup-panel');
+  const _popupClose = document.getElementById('popup-close');
+
+  /**
+   * Observe display changes on #popup-panel so we can add / remove
+   * the sheet-open class on <main> without touching the existing JS.
+   */
+  const sheetObserver = new MutationObserver(() => {
+    if (_popupPanel.style.display !== 'none' && _popupPanel.style.display !== '') {
+      mainEl.classList.add('sheet-open');
+    } else {
+      mainEl.classList.remove('sheet-open');
+    }
+  });
+  sheetObserver.observe(_popupPanel, { attributes: true, attributeFilter: ['style'] });
+
+  /* ── Tap-to-place mode ── */
+  let tapModeActive = false;
+
+  /** Activate / deactivate tap-to-place mode */
+  function setTapMode(active) {
+    tapModeActive = active;
+    tapPlaceBanner.classList.toggle('active', active);
+    tapPinBtn.style.borderColor = active ? 'var(--accent2)' : '';
+
+    if (active) {
+      // Change Leaflet cursor to crosshair to signal the mode
+      document.getElementById('map').style.cursor = 'crosshair';
+    } else {
+      document.getElementById('map').style.cursor = '';
+    }
+  }
+
+  /* Toggle mode when the tap-pin button is pressed */
+  tapPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
+
+  /*
+   * Wait for the Leaflet map to be available in the outer DOMContentLoaded
+   * scope.  The map is created synchronously in section 1, so it is ready
+   * immediately after DOMContentLoaded fires.  We use a tiny rAF delay to
+   * ensure the outer listener has finished before we hook into the map.
+   */
+  requestAnimationFrame(() => {
+    const leafletMap = window._wxmap;
+    if (!leafletMap) {
+      console.warn('[WX.MAP mobile] Could not get Leaflet map reference for tap-mode');
+      return;
+    }
+
+    leafletMap.on('click', function (e) {
+      if (!tapModeActive) return;
+
+      // Place the pin at the tapped location
+      if (typeof placeDragPin === 'function') {
+        placeDragPin(e.latlng.lat, e.latlng.lng);
+      }
+
+      setTapMode(false);   // exit tap mode after placing
+    });
+  });
+
+  /* ── Swipe-down-to-dismiss the bottom sheet ── */
+  let sheetTouchStartY = 0;
+
+  _popupPanel.addEventListener('touchstart', e => {
+    sheetTouchStartY = e.touches[0].clientY;
+  }, { passive: true });
+
+  _popupPanel.addEventListener('touchend', e => {
+    const dy = e.changedTouches[0].clientY - sheetTouchStartY;
+    if (dy > 80) {
+      // User swiped down > 80 px — dismiss the sheet
+      _popupClose && _popupClose.click();
+    }
+  }, { passive: true });
+
+})();
 </script>
 </body>
 </html>

@@ -3,6 +3,7 @@
     "/^python -m http\\.server 8000$/": {
       "approve": true,
       "matchCommandLine": true
-    }
+    },
+    "git restore": true
   }
 }

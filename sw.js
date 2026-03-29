@@ -16,7 +16,7 @@ self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
       // Cache shell URLs and wait for completion
-      return Promise.all(SHELL_URLS.map(url => 
+      return Promise.all(SHELL_URLS.map(url =>
         cache.add(url).catch(err => {
           console.warn(`[SW] Failed to cache ${url}:`, err.message);
         })

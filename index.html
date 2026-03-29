@@ -73,9 +73,9 @@
     font-family: 'Space Mono', monospace;
     background: var(--bg);
     color: var(--text);
-    height: 100dvh;
-    /* fallback for browsers that don't support 100dvh */
+    /* Fallback first, then dynamic viewport height for modern browsers */
     height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -427,8 +427,9 @@
      Positioned bottom-right, above the map attribution bar.
      ════════════════════════════════════════════════════════════════════════════ */
   #fab-locate {
-    position: absolute;
-    bottom: 32px; right: 16px;
+    position: fixed;
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    right: calc(16px + env(safe-area-inset-right, 0px));
     z-index: 1000;
     width: 48px; height: 48px;
     border-radius: 50%;
@@ -648,8 +649,8 @@
     /* ── FAB — larger, above home indicator ── */
     #fab-locate {
       width: 54px; height: 54px;
-      bottom: calc(20px + var(--safe-bottom));
-      right: calc(16px + var(--safe-right));
+      bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+      right: calc(12px + env(safe-area-inset-right, 0px));
       box-shadow: 0 4px 24px rgba(0,212,255,0.5);
     }
     #fab-locate svg { width: 24px; height: 24px; }
@@ -748,7 +749,7 @@
     }
     /* ── FAB shift: above bottom sheet when open ── */
     main.sheet-open #fab-locate {
-      bottom: calc(70vh + 12px + var(--safe-bottom));
+      bottom: calc(70vh + 12px + env(safe-area-inset-bottom, 0px));
       transition: bottom 0.3s cubic-bezier(0.32, 0.72, 0, 1);
     }
 
@@ -938,6 +939,121 @@
 
 <!-- Leaflet JS (must precede the inline script that references L) -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+/* ═════════════════════════════════════════════════════════════════════════════
+   EARLY SERVICE WORKER REGISTRATION (for PWA detection)
+   This MUST happen before or outside DOMContentLoaded so the browser can detect
+   that this is a PWA and show the installation prompt.
+   ═════════════════════════════════════════════════════════════════════════════ */
+if ('serviceWorker' in navigator) {
+  const swSource = `
+    const CACHE_NAME = 'wxmap-v2';
+    const SHELL_URLS = [
+      self.location.href.split('?')[0],
+      './manifest.json'
+    ];
+
+    /* ── Install: cache the app shell and manifest ── */
+    self.addEventListener('install', event => {
+      event.waitUntil(
+        caches.open(CACHE_NAME).then(cache => {
+          // Cache shell URLs and wait for completion
+          return Promise.all(SHELL_URLS.map(url => cache.add(url).catch(() => {})));
+        })
+      );
+      self.skipWaiting();
+    });
+
+    /* ── Activate: remove outdated caches and claim clients ── */
+    self.addEventListener('activate', event => {
+      event.waitUntil(
+        caches.keys().then(keys =>
+          Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+        ).then(() => self.clients.claim())
+      );
+    });
+
+    /* ── Fetch: cache-first with network fallback ── */
+    self.addEventListener('fetch', event => {
+      // Only intercept GET requests
+      if (event.request.method !== 'GET') return;
+
+      event.respondWith(
+        caches.match(event.request).then(cached => {
+          if (cached) return cached;
+
+          return fetch(event.request).then(response => {
+            // Cache a fresh copy for non-API, non-tile, non-CDN requests
+            if (
+              response.ok &&
+              !event.request.url.includes('api.weather.gov') &&
+              !event.request.url.includes('tile.openstreetmap') &&
+              !event.request.url.includes('fonts.googleapis') &&
+              !event.request.url.includes('fonts.gstatic') &&
+              !event.request.url.includes('unpkg.com')
+            ) {
+              caches.open(CACHE_NAME).then(cache =>
+                cache.put(event.request, response.clone()).catch(() => {})
+              );
+            }
+            return response;
+          }).catch(() => {
+            // Network failed — return cached or offline fallback
+            return caches.match(event.request);
+          });
+        })
+      );
+    });
+  `;
+
+  try {
+    const blob  = new Blob([swSource], { type: 'application/javascript' });
+    const swUrl = URL.createObjectURL(blob);
+    navigator.serviceWorker.register(swUrl, { scope: './' })
+      .then(reg => {
+        console.info('[WX.MAP] Service worker registered (PWA enabled)');
+        // Check for updates periodically (every 6 hours)
+        setInterval(() => reg.update(), 6 * 60 * 60 * 1000);
+      })
+      .catch(err => console.error('[WX.MAP] Service worker registration failed:', err));
+  } catch (err) {
+    console.error('[WX.MAP] Could not register service worker:', err);
+  }
+} else {
+  console.warn('[WX.MAP] Service workers not supported — PWA features disabled');
+}
+
+/* ═════════════════════════════════════════════════════════════════════════════
+   PWA INSTALLATION PROMPT
+   Modern browsers fire 'beforeinstallprompt' when the PWA meets installability
+   criteria. We store the event but do NOT prevent the default prompt, allowing
+   the browser to show its automatic install prompt.
+   ═════════════════════════════════════════════════════════════════════════════ */
+window.pwaInstallPrompt = null;
+
+window.addEventListener('beforeinstallprompt', e => {
+  // Store the event for potential custom UI (optional)
+  window.pwaInstallPrompt = e;
+  console.info('[WX.MAP] PWA is installable on this device');
+
+  // Do NOT prevent default — let the browser show its automatic prompt
+  // at the optimal time (usually after user has engaged with app)
+});
+
+window.addEventListener('appinstalled', () => {
+  console.info('[WX.MAP] App successfully installed');
+  window.pwaInstallPrompt = null;
+});
+
+// Log installation outcomes
+window.addEventListener('beforeinstallprompt', e => {
+  e.userChoice?.then(result => {
+    console.info('[WX.MAP] Installation choice:', result.outcome);
+  });
+});
+
+</script>
 
 <script>
 /*
@@ -2151,124 +2267,7 @@ fabLocate.addEventListener('click', () => {
   }
 })();
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   SERVICE WORKER REGISTRATION (PWA)
-   ─────────────────────────────────────────────────────────────────────────────
-   The service worker is generated as a Blob URL at runtime so this app remains
-   a self-contained single HTML file.  It implements a "cache-first" strategy:
-     • On install  → cache this page (the app shell) + manifest.
-     • On fetch    → serve from cache if available, fall back to network.
-     • Stale-while-revalidate is used for tile and API requests so the app
-       always shows something, even offline.
-   ───────────────────────────────────────────────────────────────────────────── */
-if ('serviceWorker' in navigator) {
-  /**
-   * Inline Service Worker source.
-   * Written as a template literal and converted to a Blob URL so no separate
-   * .js file is required.
-   */
-  const swSource = `
-    const CACHE_NAME = 'wxmap-v2';
-    const SHELL_URLS = [
-      self.location.href.split('?')[0],
-      './manifest.json'
-    ];
-
-    /* ── Install: cache the app shell and manifest ── */
-    self.addEventListener('install', event => {
-      event.waitUntil(
-        caches.open(CACHE_NAME).then(cache => {
-          // Cache shell  URLs
-          Promise.all(SHELL_URLS.map(url => cache.add(url).catch(() => {})));
-          return cache;
-        })
-      );
-      self.skipWaiting();
-    });
-
-    /* ── Activate: remove outdated caches and claim clients ── */
-    self.addEventListener('activate', event => {
-      event.waitUntil(
-        caches.keys().then(keys =>
-          Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-        ).then(() => self.clients.claim())
-      );
-    });
-
-    /* ── Fetch: cache-first with network fallback ── */
-    self.addEventListener('fetch', event => {
-      // Only intercept GET requests
-      if (event.request.method !== 'GET') return;
-
-      event.respondWith(
-        caches.match(event.request).then(cached => {
-          if (cached) return cached;
-
-          return fetch(event.request).then(response => {
-            // Cache a fresh copy for non-API, non-tile, non-CDN requests
-            if (
-              response.ok &&
-              !event.request.url.includes('api.weather.gov') &&
-              !event.request.url.includes('tile.openstreetmap') &&
-              !event.request.url.includes('fonts.googleapis') &&
-              !event.request.url.includes('fonts.gstatic') &&
-              !event.request.url.includes('unpkg.com')
-            ) {
-              caches.open(CACHE_NAME).then(cache =>
-                cache.put(event.request, response.clone()).catch(() => {})
-              );
-            }
-            return response;
-          }).catch(() => {
-            // Network failed — return cached or offline fallback
-            return caches.match(event.request);
-          });
-        })
-      );
-    });
-  `;
-
-  try {
-    const blob  = new Blob([swSource], { type: 'application/javascript' });
-    const swUrl = URL.createObjectURL(blob);
-    navigator.serviceWorker.register(swUrl, { scope: './' })
-      .then(reg => {
-        console.info('[WX.MAP] Service worker registered (PWA enabled)');
-        // Check for updates periodically (every 6 hours)
-        setInterval(() => reg.update(), 6 * 60 * 60 * 1000);
-      })
-      .catch(err => console.warn('[WX.MAP] Service worker registration failed:', err));
-  } catch (err) {
-    console.warn('[WX.MAP] Could not register service worker:', err);
-  }
-} else {
-  console.warn('[WX.MAP] Service workers not supported — PWA features disabled');
-}
-
-}); // ── end DOMContentLoaded ─────────────────────────────────────────────────
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   PWA INSTALLATION PROMPT
-   ─────────────────────────────────────────────────────────────────────────────
-   Modern browsers fire 'beforeinstallprompt' when the PWA meets installability
-   criteria. We capture this event so the app can show an install button/prompt
-   at an appropriate time. This is a Progressive Enhancement — older browsers
-   will simply ignore this.
-   ───────────────────────────────────────────────────────────────────────────── */
-window.pwaInstallPrompt = null;
-
-window.addEventListener('beforeinstallprompt', e => {
-  // Prevent the browser's automatic prompt
-  e.preventDefault();
-  // Store the event for later use
-  window.pwaInstallPrompt = e;
-  console.info('[WX.MAP] PWA installation prompt available — use showInstallPrompt()');
-});
-
-window.addEventListener('appinstalled', () => {
-  console.info('[WX.MAP] App was installed');
-  window.pwaInstallPrompt = null;
-});
+}); // ── end DOMContentLoaded ──────────────────────────────────────────────────
 
 /* ─────────────────────────────────────────────────────────────────────────────
    MOBILE ENHANCEMENTS — added for PWA mobile optimisation

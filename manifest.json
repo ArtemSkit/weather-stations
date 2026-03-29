@@ -5,10 +5,10 @@
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "orientation": "portrait",
   "background_color": "#0a0e17",
   "theme_color": "#0a0e17",
-  "categories": ["weather"],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20192%20192'%3E%3Crect%20width='192'%20height='192'%20rx='45'%20fill='%230a0e17'/%3E%3Ctext%20x='96'%20y='135'%20font-size='120'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E",

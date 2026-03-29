@@ -1027,28 +1027,53 @@ if ('serviceWorker' in navigator) {
 /* ═════════════════════════════════════════════════════════════════════════════
    PWA INSTALLATION PROMPT
    Modern browsers (Chrome, Edge, Opera, some Brave versions) fire 'beforeinstallprompt'
-   when the PWA meets installability criteria. We consolidate all PWA event handling
-   into one robust consolidated listener. Note: Brave/Opera GX may have detection issues.
+   when the PWA meets installability criteria. This handler unifies all PWA events.
+   
+   Browser Compatibility Notes:
+   - Chrome/Edge/Firefox: Full support via beforeinstallprompt
+   - Opera: Supports beforeinstallprompt (usually)
+   - Brave: May block beforeinstallprompt for privacy; requires user action/trust
+   - Safari iOS: No beforeinstallprompt; use "Add to Home Screen" (native iOS feature)
    ═════════════════════════════════════════════════════════════════════════════ */
+
+/** Detect browser user agent for troubleshooting */
+function getBrowserInfo() {
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes('edg')) return 'Edge';
+  if (ua.includes('chrome') && ua.includes('brave')) return 'Brave';
+  if (ua.includes('chrome') && !ua.includes('chromium')) return 'Chrome';
+  if (ua.includes('opr/') || ua.includes('opera')) return 'Opera';
+  if (ua.includes('firefox')) return 'Firefox';
+  if (ua.includes('safari') && !ua.includes('chrome')) return 'Safari';
+  return 'Unknown';
+}
+
+const browser = getBrowserInfo();
+console.info(`[WX.MAP] Browser detected: ${browser}`);
+
 window.pwaInstallPrompt = null;
 window.pwaInstallable = false;
+let beforeInstallPromptFired = false;
 
 // Single consolidated beforeinstallprompt listener
 window.addEventListener('beforeinstallprompt', e => {
   try {
+    beforeInstallPromptFired = true;
+    
     // Store the event for potential custom UI or manual triggering
     window.pwaInstallPrompt = e;
     window.pwaInstallable = true;
-    console.info('[WX.MAP] PWA is installable (beforeinstallprompt fired)');
-    
+    console.info(`[WX.MAP] ✓ PWA is installable (beforeinstallprompt fired on ${browser})`);
+
     // DO NOT prevent default — let the browser show its automatic prompt at optimal time
     // Automatic prompt typically appears after moderate user engagement
-    
+
     // Log user's installation choice
     e.userChoice?.then(result => {
-      console.info('[WX.MAP] User chose to', result.outcome, 'the app');
+      console.info(`[WX.MAP] User chose to ${result.outcome} the app`);
       if (result.outcome === 'accepted') {
         window.pwaInstallPrompt = null;
+        console.info('[WX.MAP] Installation accepted — app will install');
       }
     }).catch(err => {
       console.warn('[WX.MAP] Installation choice error:', err);
@@ -1061,7 +1086,8 @@ window.addEventListener('beforeinstallprompt', e => {
 // Track successful installations
 window.addEventListener('appinstalled', () => {
   try {
-    console.info('[WX.MAP] App successfully installed and running in standalone mode');
+    console.info(`[WX.MAP] ✓ App successfully installed (${browser})`);
+    console.info('[WX.MAP] App is now running in PWA standalone mode');
     window.pwaInstallable = false;
     window.pwaInstallPrompt = null;
   } catch (err) {
@@ -1070,10 +1096,84 @@ window.addEventListener('appinstalled', () => {
 });
 
 // Detect if running in PWA standalone mode
-if (window.matchMedia('(display-mode: standalone)').matches || 
-    window.navigator.standalone === true) {
-  console.info('[WX.MAP] Running in PWA standalone mode');
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                     window.navigator.standalone === true;
+if (isStandalone) {
+  console.info(`[WX.MAP] ✓ Running in PWA standalone mode (${browser})`);
 }
+
+// Diagnostic: Log PWA installability after page load
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    if (!beforeInstallPromptFired) {
+      console.warn(`[WX.MAP] ⚠ beforeinstallprompt has not fired on ${browser}`);
+      console.warn('[WX.MAP] Possible causes:');
+      console.warn('  • Service worker may not be registered yet or failed to register');
+      console.warn('  • Manifest may be invalid or inaccessible');
+      console.warn('  • Minimum user engagement requirements may not be met');
+      
+      if (browser === 'Brave') {
+        console.warn('  ⚠ BRAVE-SPECIFIC: Privacy features may block beforeinstallprompt');
+        console.warn('    Try: Settings → View detailed settings → Extensions → Scroll down');
+        console.warn('    Look for PWA-related or WebApp settings that might be disabled');
+        console.warn('    Or manually visit chrome://flags and search "app" settings');
+      } else if (browser === 'Opera') {
+        console.warn('  ⚠ OPERA-GX-SPECIFIC: VPN/privacy features may block beforeinstallprompt');
+        console.warn('    Try disabling GX Guard or checking opera://flags for PWA settings');
+      }
+      
+      console.info('[WX.MAP] Checking PWA requirements:');
+      
+      // Check service worker
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(registrations => {
+          if (registrations.length > 0) {
+            console.info(`  ✓ Service Workers registered: ${registrations.length}`);
+            registrations.forEach((reg, i) => {
+              console.info(
+                `    [${i}] scope: ${reg.scope}, ` +
+                `active: ${reg.active ? 'yes' : 'no'}`
+              );
+            });
+          } else {
+            console.warn('  ✗ No service workers registered — PWA requires valid SW!');
+          }
+        }).catch(err => {
+          console.error('  ✗ Error checking service workers:', err.message);
+        });
+      } else {
+        console.warn('  ✗ Service Workers not supported in this browser');
+      }
+      
+      // Try to fetch manifest
+      fetch('./manifest.json')
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
+        .then(manifest => {
+          console.info('  ✓ Manifest loaded successfully');
+          console.info(`    - name: ${manifest.name}`);
+          console.info(`    - short_name: ${manifest.short_name}`);
+          console.info(`    - start_url: ${manifest.start_url}`);
+          console.info(`    - display: ${manifest.display}`);
+          console.info(`    - scope: ${manifest.scope}`);
+          console.info(`    - icons: ${manifest.icons?.length || 0}`);
+          
+          if (manifest.display !== 'standalone') {
+            console.warn(`    ⚠ display is "${manifest.display}" (should be "standalone")`);
+          }
+        })
+        .catch(err => {
+          console.warn('  ✗ Manifest fetch failed:', err.message);
+        });
+      
+      // Final note
+      console.info('[WX.MAP] For manual testing: Open DevTools, reload page, watch this console');
+      console.info('[WX.MAP] Install prompt should appear after ~10-15 seconds of engagement');
+    }
+  }, 2500);
+});
 
 </script>
 
@@ -2021,7 +2121,7 @@ document.addEventListener('dragover', e => {
 dragPinBtn.addEventListener('dragend', e => {
   try {
     if (!pinIsDragging) return;
-    
+
     pinIsDragging = false;
     pinGhost.style.display = 'none';
 
@@ -2037,7 +2137,7 @@ dragPinBtn.addEventListener('dragend', e => {
       console.warn('[WX.MAP] Map element not found');
       return;
     }
-    
+
     const rect  = mapEl.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -2115,7 +2215,7 @@ document.addEventListener('pointerup', e => {
       console.warn('[WX.MAP] Map element not found during pointer up');
       return;
     }
-    
+
     const rect  = mapEl.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;

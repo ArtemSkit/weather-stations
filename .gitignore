@@ -125,6 +125,16 @@ dist
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
 
+# VSCode
+.vscode/
+# Built Visual Studio Code Extensions
+*.vsix
+# Local workspace files
+*.code-workspace
+# IFS files
+*.ifs
+
+
 # yarn v3
 .pnp.*
 .yarn/*

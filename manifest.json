@@ -1,0 +1,49 @@
+{
+  "name": "WX.MAP Weather Station Finder",
+  "short_name": "WX.MAP",
+  "description": "Real-time NOAA weather station map. Search by ZIP, address, or coordinates. Live observations updated every minute.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0a0e17",
+  "theme_color": "#0a0e17",
+  "categories": ["weather"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20192%20192'%3E%3Crect%20width='192'%20height='192'%20rx='45'%20fill='%230a0e17'/%3E%3Ctext%20x='96'%20y='135'%20font-size='120'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20512%20512'%3E%3Crect%20width='512'%20height='512'%20fill='%230a0e17'/%3E%3Ctext%20x='256'%20y='340'%20font-size='320'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20540%201170'%3E%3Crect%20width='540'%20height='1170'%20fill='%230a0e17'/%3E%3Ctext%20x='270'%20y='600'%20font-size='100'%20text-anchor='middle'%20fill='%2300d4ff'%3EWX.MAP%3C/text%3E%3C/svg%3E",
+      "sizes": "540x1170",
+      "type": "image/svg+xml",
+      "form_factor": "narrow"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Find Weather Stations",
+      "short_name": "Find Stations",
+      "description": "Search for weather stations by location",
+      "url": "./index.html",
+      "icons": [
+        {
+          "src": "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20192%20192'%3E%3Crect%20width='192'%20height='192'%20rx='45'%20fill='%230a0e17'/%3E%3Ctext%20x='96'%20y='135'%20font-size='120'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E",
+          "sizes": "192x192",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}

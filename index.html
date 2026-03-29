@@ -35,17 +35,8 @@
 <!-- Apple touch icon (inline SVG data-URI) -->
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20512%20512'%3E%3Crect%20width='512'%20height='512'%20rx='100'%20fill='%230a0e17'/%3E%3Ctext%20x='256'%20y='340'%20font-size='280'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E">
 
-<!-- PWA: Web App Manifest (served as a data-URI so no extra file is needed) -->
-<link rel="manifest" href="data:application/manifest+json,{
-  %22name%22:%22WX.MAP%20Weather%20Station%20Finder%22,
-  %22short_name%22:%22WX.MAP%22,
-  %22description%22:%22Real-time%20NOAA%20weather%20station%20map%22,
-  %22start_url%22:%22.%22,
-  %22display%22:%22standalone%22,
-  %22background_color%22:%22%230a0e17%22,
-  %22theme_color%22:%22%230a0e17%22,
-  %22icons%22:[{%22src%22:%22data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20512%20512'%3E%3Crect%20width='512'%20height='512'%20fill='%230a0e17'/%3E%3Ctext%20x='256'%20y='340'%20font-size='320'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E%22,%22sizes%22:%22512x512%22,%22type%22:%22image/svg+xml%22}]
-}">
+<!-- PWA: Web App Manifest (external file for better browser support) -->
+<link rel="manifest" href="./manifest.json">
 
 <!-- Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -82,6 +73,8 @@
     font-family: 'Space Mono', monospace;
     background: var(--bg);
     color: var(--text);
+    height: 100dvh;
+    /* fallback for browsers that don't support 100dvh */
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -2163,7 +2156,7 @@ fabLocate.addEventListener('click', () => {
    ─────────────────────────────────────────────────────────────────────────────
    The service worker is generated as a Blob URL at runtime so this app remains
    a self-contained single HTML file.  It implements a "cache-first" strategy:
-     • On install  → cache this page (the app shell).
+     • On install  → cache this page (the app shell) + manifest.
      • On fetch    → serve from cache if available, fall back to network.
      • Stale-while-revalidate is used for tile and API requests so the app
        always shows something, even offline.
@@ -2175,25 +2168,31 @@ if ('serviceWorker' in navigator) {
    * .js file is required.
    */
   const swSource = `
-    const CACHE_NAME = 'wxmap-v1';
-    const SHELL_URL  = self.location.href.replace(/\\/sw-blob.*$/, '');
+    const CACHE_NAME = 'wxmap-v2';
+    const SHELL_URLS = [
+      self.location.href.split('?')[0],
+      './manifest.json'
+    ];
 
-    /* ── Install: cache the app shell ── */
+    /* ── Install: cache the app shell and manifest ── */
     self.addEventListener('install', event => {
       event.waitUntil(
-        caches.open(CACHE_NAME).then(cache => cache.add(SHELL_URL))
+        caches.open(CACHE_NAME).then(cache => {
+          // Cache shell  URLs
+          Promise.all(SHELL_URLS.map(url => cache.add(url).catch(() => {})));
+          return cache;
+        })
       );
       self.skipWaiting();
     });
 
-    /* ── Activate: remove outdated caches ── */
+    /* ── Activate: remove outdated caches and claim clients ── */
     self.addEventListener('activate', event => {
       event.waitUntil(
         caches.keys().then(keys =>
           Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-        )
+        ).then(() => self.clients.claim())
       );
-      self.clients.claim();
     });
 
     /* ── Fetch: cache-first with network fallback ── */
@@ -2203,18 +2202,27 @@ if ('serviceWorker' in navigator) {
 
       event.respondWith(
         caches.match(event.request).then(cached => {
-          const networkFetch = fetch(event.request).then(response => {
-            // Cache a fresh copy for non-API, non-tile requests
+          if (cached) return cached;
+
+          return fetch(event.request).then(response => {
+            // Cache a fresh copy for non-API, non-tile, non-CDN requests
             if (
               response.ok &&
               !event.request.url.includes('api.weather.gov') &&
-              !event.request.url.includes('tile.openstreetmap')
+              !event.request.url.includes('tile.openstreetmap') &&
+              !event.request.url.includes('fonts.googleapis') &&
+              !event.request.url.includes('fonts.gstatic') &&
+              !event.request.url.includes('unpkg.com')
             ) {
-              caches.open(CACHE_NAME).then(cache => cache.put(event.request, response.clone()));
+              caches.open(CACHE_NAME).then(cache =>
+                cache.put(event.request, response.clone()).catch(() => {})
+              );
             }
             return response;
+          }).catch(() => {
+            // Network failed — return cached or offline fallback
+            return caches.match(event.request);
           });
-          return cached || networkFetch;
         })
       );
     });
@@ -2224,14 +2232,43 @@ if ('serviceWorker' in navigator) {
     const blob  = new Blob([swSource], { type: 'application/javascript' });
     const swUrl = URL.createObjectURL(blob);
     navigator.serviceWorker.register(swUrl, { scope: './' })
-      .then(() => console.info('[WX.MAP] Service worker registered (PWA shell cached)'))
+      .then(reg => {
+        console.info('[WX.MAP] Service worker registered (PWA enabled)');
+        // Check for updates periodically (every 6 hours)
+        setInterval(() => reg.update(), 6 * 60 * 60 * 1000);
+      })
       .catch(err => console.warn('[WX.MAP] Service worker registration failed:', err));
   } catch (err) {
     console.warn('[WX.MAP] Could not register service worker:', err);
   }
+} else {
+  console.warn('[WX.MAP] Service workers not supported — PWA features disabled');
 }
 
 }); // ── end DOMContentLoaded ─────────────────────────────────────────────────
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PWA INSTALLATION PROMPT
+   ─────────────────────────────────────────────────────────────────────────────
+   Modern browsers fire 'beforeinstallprompt' when the PWA meets installability
+   criteria. We capture this event so the app can show an install button/prompt
+   at an appropriate time. This is a Progressive Enhancement — older browsers
+   will simply ignore this.
+   ───────────────────────────────────────────────────────────────────────────── */
+window.pwaInstallPrompt = null;
+
+window.addEventListener('beforeinstallprompt', e => {
+  // Prevent the browser's automatic prompt
+  e.preventDefault();
+  // Store the event for later use
+  window.pwaInstallPrompt = e;
+  console.info('[WX.MAP] PWA installation prompt available — use showInstallPrompt()');
+});
+
+window.addEventListener('appinstalled', () => {
+  console.info('[WX.MAP] App was installed');
+  window.pwaInstallPrompt = null;
+});
 
 /* ─────────────────────────────────────────────────────────────────────────────
    MOBILE ENHANCEMENTS — added for PWA mobile optimisation
@@ -2310,7 +2347,19 @@ if ('serviceWorker' in navigator) {
     leafletMap.on('click', function (e) {
       if (!tapModeActive) return;
 
-      // Place the pin at the tapped location
+      // Check if the click target is a marker or any interactive element
+      const target = e.originalEvent?.target;
+      if (target && (
+        target.classList?.contains('leaflet-marker-icon') ||
+        target.classList?.contains('station-marker') ||
+        target.classList?.contains('dropped-pin-wrap') ||
+        target.closest('.dropped-pin-wrap')
+      )) {
+        // Click was on a marker or interactive element — don't interfere
+        return;
+      }
+
+      // Place the pin at the tapped location (on empty map area)
       if (typeof placeDragPin === 'function') {
         placeDragPin(e.latlng.lat, e.latlng.lng);
       }

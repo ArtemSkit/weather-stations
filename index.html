@@ -947,79 +947,16 @@
    that this is a PWA and show the installation prompt.
    ═════════════════════════════════════════════════════════════════════════════ */
 if ('serviceWorker' in navigator) {
-  const swSource = `
-    const CACHE_NAME = 'wxmap-v2';
-    const SHELL_URLS = [
-      self.location.href.split('?')[0],
-      './manifest.json'
-    ];
-
-    /* ── Install: cache the app shell and manifest ── */
-    self.addEventListener('install', event => {
-      event.waitUntil(
-        caches.open(CACHE_NAME).then(cache => {
-          // Cache shell URLs and wait for completion
-          return Promise.all(SHELL_URLS.map(url => cache.add(url).catch(() => {})));
-        })
-      );
-      self.skipWaiting();
+  navigator.serviceWorker.register('./sw.js', { scope: './' })
+    .then(reg => {
+      console.info('[WX.MAP] Service worker registered from sw.js (PWA enabled)');
+      // Check for updates periodically (every 6 hours)
+      setInterval(() => reg.update(), 6 * 60 * 60 * 1000);
+    })
+    .catch(err => {
+      console.error('[WX.MAP] Service worker registration failed:', err);
+      console.error('[WX.MAP] Make sure sw.js is accessible from the root directory');
     });
-
-    /* ── Activate: remove outdated caches and claim clients ── */
-    self.addEventListener('activate', event => {
-      event.waitUntil(
-        caches.keys().then(keys =>
-          Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-        ).then(() => self.clients.claim())
-      );
-    });
-
-    /* ── Fetch: cache-first with network fallback ── */
-    self.addEventListener('fetch', event => {
-      // Only intercept GET requests
-      if (event.request.method !== 'GET') return;
-
-      event.respondWith(
-        caches.match(event.request).then(cached => {
-          if (cached) return cached;
-
-          return fetch(event.request).then(response => {
-            // Cache a fresh copy for non-API, non-tile, non-CDN requests
-            if (
-              response.ok &&
-              !event.request.url.includes('api.weather.gov') &&
-              !event.request.url.includes('tile.openstreetmap') &&
-              !event.request.url.includes('fonts.googleapis') &&
-              !event.request.url.includes('fonts.gstatic') &&
-              !event.request.url.includes('unpkg.com')
-            ) {
-              caches.open(CACHE_NAME).then(cache =>
-                cache.put(event.request, response.clone()).catch(() => {})
-              );
-            }
-            return response;
-          }).catch(() => {
-            // Network failed — return cached or offline fallback
-            return caches.match(event.request);
-          });
-        })
-      );
-    });
-  `;
-
-  try {
-    const blob  = new Blob([swSource], { type: 'application/javascript' });
-    const swUrl = URL.createObjectURL(blob);
-    navigator.serviceWorker.register(swUrl, { scope: './' })
-      .then(reg => {
-        console.info('[WX.MAP] Service worker registered (PWA enabled)');
-        // Check for updates periodically (every 6 hours)
-        setInterval(() => reg.update(), 6 * 60 * 60 * 1000);
-      })
-      .catch(err => console.error('[WX.MAP] Service worker registration failed:', err));
-  } catch (err) {
-    console.error('[WX.MAP] Could not register service worker:', err);
-  }
 } else {
   console.warn('[WX.MAP] Service workers not supported — PWA features disabled');
 }
@@ -1028,7 +965,7 @@ if ('serviceWorker' in navigator) {
    PWA INSTALLATION PROMPT
    Modern browsers (Chrome, Edge, Opera, some Brave versions) fire 'beforeinstallprompt'
    when the PWA meets installability criteria. This handler unifies all PWA events.
-   
+
    Browser Compatibility Notes:
    - Chrome/Edge/Firefox: Full support via beforeinstallprompt
    - Opera: Supports beforeinstallprompt (usually)
@@ -1059,7 +996,7 @@ let beforeInstallPromptFired = false;
 window.addEventListener('beforeinstallprompt', e => {
   try {
     beforeInstallPromptFired = true;
-    
+
     // Store the event for potential custom UI or manual triggering
     window.pwaInstallPrompt = e;
     window.pwaInstallable = true;
@@ -1096,7 +1033,7 @@ window.addEventListener('appinstalled', () => {
 });
 
 // Detect if running in PWA standalone mode
-const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
                      window.navigator.standalone === true;
 if (isStandalone) {
   console.info(`[WX.MAP] ✓ Running in PWA standalone mode (${browser})`);
@@ -1111,7 +1048,7 @@ window.addEventListener('load', () => {
       console.warn('  • Service worker may not be registered yet or failed to register');
       console.warn('  • Manifest may be invalid or inaccessible');
       console.warn('  • Minimum user engagement requirements may not be met');
-      
+
       if (browser === 'Brave') {
         console.warn('  ⚠ BRAVE-SPECIFIC: Privacy features may block beforeinstallprompt');
         console.warn('    Try: Settings → View detailed settings → Extensions → Scroll down');
@@ -1121,9 +1058,9 @@ window.addEventListener('load', () => {
         console.warn('  ⚠ OPERA-GX-SPECIFIC: VPN/privacy features may block beforeinstallprompt');
         console.warn('    Try disabling GX Guard or checking opera://flags for PWA settings');
       }
-      
+
       console.info('[WX.MAP] Checking PWA requirements:');
-      
+
       // Check service worker
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(registrations => {
@@ -1144,7 +1081,7 @@ window.addEventListener('load', () => {
       } else {
         console.warn('  ✗ Service Workers not supported in this browser');
       }
-      
+
       // Try to fetch manifest
       fetch('./manifest.json')
         .then(r => {
@@ -1159,7 +1096,7 @@ window.addEventListener('load', () => {
           console.info(`    - display: ${manifest.display}`);
           console.info(`    - scope: ${manifest.scope}`);
           console.info(`    - icons: ${manifest.icons?.length || 0}`);
-          
+
           if (manifest.display !== 'standalone') {
             console.warn(`    ⚠ display is "${manifest.display}" (should be "standalone")`);
           }
@@ -1167,7 +1104,7 @@ window.addEventListener('load', () => {
         .catch(err => {
           console.warn('  ✗ Manifest fetch failed:', err.message);
         });
-      
+
       // Final note
       console.info('[WX.MAP] For manual testing: Open DevTools, reload page, watch this console');
       console.info('[WX.MAP] Install prompt should appear after ~10-15 seconds of engagement');

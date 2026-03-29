@@ -1026,32 +1026,54 @@ if ('serviceWorker' in navigator) {
 
 /* ═════════════════════════════════════════════════════════════════════════════
    PWA INSTALLATION PROMPT
-   Modern browsers fire 'beforeinstallprompt' when the PWA meets installability
-   criteria. We store the event but do NOT prevent the default prompt, allowing
-   the browser to show its automatic install prompt.
+   Modern browsers (Chrome, Edge, Opera, some Brave versions) fire 'beforeinstallprompt'
+   when the PWA meets installability criteria. We consolidate all PWA event handling
+   into one robust consolidated listener. Note: Brave/Opera GX may have detection issues.
    ═════════════════════════════════════════════════════════════════════════════ */
 window.pwaInstallPrompt = null;
+window.pwaInstallable = false;
 
+// Single consolidated beforeinstallprompt listener
 window.addEventListener('beforeinstallprompt', e => {
-  // Store the event for potential custom UI (optional)
-  window.pwaInstallPrompt = e;
-  console.info('[WX.MAP] PWA is installable on this device');
-
-  // Do NOT prevent default — let the browser show its automatic prompt
-  // at the optimal time (usually after user has engaged with app)
+  try {
+    // Store the event for potential custom UI or manual triggering
+    window.pwaInstallPrompt = e;
+    window.pwaInstallable = true;
+    console.info('[WX.MAP] PWA is installable (beforeinstallprompt fired)');
+    
+    // DO NOT prevent default — let the browser show its automatic prompt at optimal time
+    // Automatic prompt typically appears after moderate user engagement
+    
+    // Log user's installation choice
+    e.userChoice?.then(result => {
+      console.info('[WX.MAP] User chose to', result.outcome, 'the app');
+      if (result.outcome === 'accepted') {
+        window.pwaInstallPrompt = null;
+      }
+    }).catch(err => {
+      console.warn('[WX.MAP] Installation choice error:', err);
+    });
+  } catch (err) {
+    console.error('[WX.MAP] beforeinstallprompt handler error:', err);
+  }
 });
 
+// Track successful installations
 window.addEventListener('appinstalled', () => {
-  console.info('[WX.MAP] App successfully installed');
-  window.pwaInstallPrompt = null;
+  try {
+    console.info('[WX.MAP] App successfully installed and running in standalone mode');
+    window.pwaInstallable = false;
+    window.pwaInstallPrompt = null;
+  } catch (err) {
+    console.error('[WX.MAP] appinstalled handler error:', err);
+  }
 });
 
-// Log installation outcomes
-window.addEventListener('beforeinstallprompt', e => {
-  e.userChoice?.then(result => {
-    console.info('[WX.MAP] Installation choice:', result.outcome);
-  });
-});
+// Detect if running in PWA standalone mode
+if (window.matchMedia('(display-mode: standalone)').matches || 
+    window.navigator.standalone === true) {
+  console.info('[WX.MAP] Running in PWA standalone mode');
+}
 
 </script>
 
@@ -1972,51 +1994,159 @@ zipInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); }
 let pinIsDragging = false;
 
 dragPinBtn.addEventListener('dragstart', e => {
-  e.dataTransfer.effectAllowed = 'copy';
-  // Suppress the browser's default ghost thumbnail — we use our own
-  e.dataTransfer.setDragImage(new Image(), 0, 0);
-  pinIsDragging = true;
-  pinGhost.style.display = 'block';
+  try {
+    e.dataTransfer.effectAllowed = 'copy';
+    // Suppress the browser's default ghost thumbnail — we use our own
+    e.dataTransfer.setDragImage(new Image(), 0, 0);
+    pinIsDragging = true;
+    pinGhost.style.display = 'block';
+    console.debug('[WX.MAP] Pin drag started');
+  } catch (err) {
+    console.error('[WX.MAP] dragstart error:', err);
+  }
 });
 
 // Move the ghost pin with the cursor across the whole document
 document.addEventListener('dragover', e => {
   if (!pinIsDragging) return;
-  e.preventDefault();
-  pinGhost.style.left = e.clientX + 'px';
-  pinGhost.style.top  = e.clientY + 'px';
+  try {
+    e.preventDefault();
+    pinGhost.style.left = e.clientX + 'px';
+    pinGhost.style.top  = e.clientY + 'px';
+  } catch (err) {
+    console.error('[WX.MAP] dragover error:', err);
+  }
 });
 
 dragPinBtn.addEventListener('dragend', e => {
-  pinIsDragging = false;
-  pinGhost.style.display = 'none';
+  try {
+    if (!pinIsDragging) return;
+    
+    pinIsDragging = false;
+    pinGhost.style.display = 'none';
 
-  // Convert viewport-relative drop position to Leaflet map coordinates
-  const mapEl = document.getElementById('map');
-  const rect  = mapEl.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
+    // Ensure map and its methods are available (critical in PWA standalone mode)
+    if (!map || typeof map.containerPointToLatLng !== 'function') {
+      console.warn('[WX.MAP] Map not ready when pin dropped');
+      return;
+    }
 
-  // Ignore drops outside the map area
-  if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+    // Convert viewport-relative drop position to Leaflet map coordinates
+    const mapEl = document.getElementById('map');
+    if (!mapEl) {
+      console.warn('[WX.MAP] Map element not found');
+      return;
+    }
+    
+    const rect  = mapEl.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
 
-  const latlng = map.containerPointToLatLng([x, y]);
-  placeDragPin(latlng.lat, latlng.lng);
+    // Ignore drops outside the map area
+    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+      console.debug('[WX.MAP] Pin dropped outside map area');
+      return;
+    }
+
+    const latlng = map.containerPointToLatLng([x, y]);
+    console.debug('[WX.MAP] Pin dropped at', latlng);
+    placeDragPin(latlng.lat, latlng.lng);
+  } catch (err) {
+    console.error('[WX.MAP] dragend handler error:', err);
+    pinIsDragging = false;
+    pinGhost.style.display = 'none';
+  }
 });
 
 // Allow keyboard removal when the drag-pin button itself has focus
 dragPinBtn.addEventListener('keydown', e => {
-  if ((e.key === 'Delete' || e.key === 'Backspace') && droppedPinMarker) {
-    removeDragPin();
-    e.preventDefault();
+  try {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && droppedPinMarker) {
+      removeDragPin();
+      e.preventDefault();
+    }
+  } catch (err) {
+    console.error('[WX.MAP] keydown handler error:', err);
+  }
+});
+
+/*
+ * Fallback: Pointer events for PWA standalone mode compatibility.
+ * Some PWA installations have issues with drag-drop events, so this provides
+ * an alternative interface using pointerdown/pointermove/pointerup.
+ */
+let pointerPinDragState = { isDragging: false };
+
+dragPinBtn.addEventListener('pointerdown', e => {
+  try {
+    if (e.button !== 0) return; // Left button or primary touch only
+    pointerPinDragState.isDragging = true;
+    pinGhost.style.display = 'block';
+    console.debug('[WX.MAP] Pin pointer drag started');
+  } catch (err) {
+    console.error('[WX.MAP] pointerdown error:', err);
+  }
+});
+
+document.addEventListener('pointermove', e => {
+  if (!pointerPinDragState.isDragging) return;
+  try {
+    pinGhost.style.left = e.clientX + 'px';
+    pinGhost.style.top  = e.clientY + 'px';
+  } catch (err) {
+    console.error('[WX.MAP] pointermove error:', err);
+  }
+});
+
+document.addEventListener('pointerup', e => {
+  try {
+    if (!pointerPinDragState.isDragging) return;
+    pointerPinDragState.isDragging = false;
+    pinGhost.style.display = 'none';
+
+    // Ensure map is accessible
+    if (!map || typeof map.containerPointToLatLng !== 'function') {
+      console.warn('[WX.MAP] Map not ready during pointer pin drop');
+      return;
+    }
+
+    const mapEl = document.getElementById('map');
+    if (!mapEl) {
+      console.warn('[WX.MAP] Map element not found during pointer up');
+      return;
+    }
+    
+    const rect  = mapEl.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Ignore drops outside the map area
+    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+      console.debug('[WX.MAP] Pin dropped outside map area (pointer)');
+      return;
+    }
+
+    const latlng = map.containerPointToLatLng([x, y]);
+    console.debug('[WX.MAP] Pin dropped via pointer at', latlng);
+    placeDragPin(latlng.lat, latlng.lng);
+  } catch (err) {
+    console.error('[WX.MAP] pointerup handler error:', err);
+    pointerPinDragState.isDragging = false;
+    pinGhost.style.display = 'none';
   }
 });
 
 /** Remove the dropped pin marker from the map. */
 function removeDragPin() {
-  if (droppedPinMarker) {
-    map.removeLayer(droppedPinMarker);
-    droppedPinMarker = null;
+  try {
+    if (droppedPinMarker && map) {
+      map.removeLayer(droppedPinMarker);
+      droppedPinMarker = null;
+      console.debug('[WX.MAP] Pin removed');
+    }
+  } catch (err) {
+    console.error('[WX.MAP] Error removing pin:', err);
+    droppedPinMarker = null; // Clear reference even if removal fails
   }
 }
 
@@ -2050,37 +2180,66 @@ function buildPinIcon(lat, lng) {
  * @param {number} lng
  */
 function placeDragPin(lat, lng) {
-  removeDragPin();
-
-  const { icon } = buildPinIcon(lat, lng);
-  droppedPinMarker = L.marker([lat, lng], { icon, draggable: true, zIndexOffset: 500 }).addTo(map);
-
-  // Double-click to remove
-  droppedPinMarker.on('dblclick', removeDragPin);
-
-  // Allow keyboard removal when the marker element itself has focus
-  droppedPinMarker.on('add', () => {
-    const el = droppedPinMarker.getElement();
-    if (el) {
-      el.setAttribute('tabindex', '0');
-      el.addEventListener('keydown', e => {
-        if (e.key === 'Delete' || e.key === 'Backspace') removeDragPin();
-      });
+  try {
+    // Ensure map is available (critical for PWA standalone mode)
+    if (!map) {
+      console.error('[WX.MAP] Map not initialized in placeDragPin');
+      return;
     }
-  });
 
-  // When the user re-drags the pin on the map, update the label and re-search
-  droppedPinMarker.on('dragend', () => {
-    const pos = droppedPinMarker.getLatLng();
-    const el  = droppedPinMarker.getElement();
-    if (el) {
-      const lbl = el.querySelector('.dropped-pin-coords');
-      if (lbl) lbl.textContent = `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`;
-    }
-    triggerPinSearch(pos.lat, pos.lng);
-  });
+    removeDragPin();
 
-  triggerPinSearch(lat, lng);
+    const { icon } = buildPinIcon(lat, lng);
+    droppedPinMarker = L.marker([lat, lng], { icon, draggable: true, zIndexOffset: 500 }).addTo(map);
+
+    // Double-click to remove
+    droppedPinMarker.on('dblclick', () => {
+      try {
+        removeDragPin();
+      } catch (err) {
+        console.error('[WX.MAP] Error removing pin on dblclick:', err);
+      }
+    });
+
+    // Allow keyboard removal when the marker element itself has focus
+    droppedPinMarker.on('add', () => {
+      try {
+        const el = droppedPinMarker.getElement();
+        if (el) {
+          el.setAttribute('tabindex', '0');
+          el.addEventListener('keydown', e => {
+            try {
+              if (e.key === 'Delete' || e.key === 'Backspace') removeDragPin();
+            } catch (err) {
+              console.error('[WX.MAP] Error in marker keydown:', err);
+            }
+          });
+        }
+      } catch (err) {
+        console.error('[WX.MAP] Error in marker add handler:', err);
+      }
+    });
+
+    // When the user re-drags the pin on the map, update the label and re-search
+    droppedPinMarker.on('dragend', () => {
+      try {
+        const pos = droppedPinMarker.getLatLng();
+        const el  = droppedPinMarker.getElement();
+        if (el) {
+          const lbl = el.querySelector('.dropped-pin-coords');
+          if (lbl) lbl.textContent = `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`;
+        }
+        console.debug('[WX.MAP] Pin re-dragged to', pos);
+        triggerPinSearch(pos.lat, pos.lng);
+      } catch (err) {
+        console.error('[WX.MAP] Error in marker dragend:', err);
+      }
+    });
+
+    triggerPinSearch(lat, lng);
+  } catch (err) {
+    console.error('[WX.MAP] Error in placeDragPin:', err);
+  }
 }
 window.placeDragPin = placeDragPin;   // expose for mobile tap-to-place
 

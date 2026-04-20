@@ -75,8 +75,9 @@ self.addEventListener('fetch', event => {
           !event.request.url.includes('fonts.gstatic') &&
           !event.request.url.includes('unpkg.com')
         ) {
+          const responseForCache = response.clone();
           caches.open(CACHE_NAME).then(cache =>
-            cache.put(event.request, response.clone()).catch(err => {
+            cache.put(event.request, responseForCache).catch(err => {
               console.warn('[SW] Failed to cache response:', err.message);
             })
           );

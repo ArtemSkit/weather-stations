@@ -827,17 +827,8 @@
 </header>
 
 <!-- Update notification banner (shown when new version is available) -->
-<script>
-  /**
-   * Handle PWA app updates: when a new service worker is ready, show a banner
-   * and offer to refresh. Automatically refresh in standalone mode after 5 seconds.
-   */
-  window.addEventListener('wx-app-update-ready', () => {
-    console.info('[WX.MAP] Update available — showing notification banner');
 
-    const updateBanner = document.getElementById('update-banner');
-    const refreshBtn = document.getElementById('update-refresh-btn');
-    const dismissBtn = document.getElementById('update-dismiss-btn');
+<!-- Tap-to-place mode banner (mobile only) -->
 
     // Show the banner
     updateBanner.style.display = 'block';
@@ -851,25 +842,7 @@
       setTimeout(() => window.location.reload(), 500);
     }
 
-    refreshBtn.addEventListener('click', activateUpdate);
-    dismissBtn.addEventListener('click', () => {
-      updateBanner.style.display = 'none';
-    });
 
-    // In standalone PWA mode, auto-refresh after 5 seconds to minimize disruption
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
-                         window.navigator.standalone === true;
-    if (isStandalone) {
-      console.info('[WX.MAP] Running in PWA standalone mode — will auto-refresh in 5 seconds');
-      setTimeout(() => {
-        console.info('[WX.MAP] Auto-refreshing with new app version');
-        activateUpdate();
-      }, 5000);
-    }
-  });
-</script>
-
-<!-- Tap-to-place mode banner (mobile only) -->
 <div id="tap-place-banner" role="status" aria-live="polite">
   📍 Tap the map to place a pin — tap the pin button again to cancel
 </div>
@@ -1091,7 +1064,6 @@ let beforeInstallPromptFired = false;
 // Single consolidated beforeinstallprompt listener
 window.addEventListener('beforeinstallprompt', e => {
   try {
-    e.preventDefault();
     beforeInstallPromptFired = true;
 
     // Store the event for potential custom UI or manual triggering
@@ -1099,8 +1071,9 @@ window.addEventListener('beforeinstallprompt', e => {
     console.info(`[WX.MAP] ✓ PWA is installable (beforeinstallprompt fired on ${browser})`);
     console.debug('[WX.MAP] beforeinstallprompt event captured', e);
 
-    // DO NOT prevent default — let the browser show its automatic prompt at optimal time
+    // Allow the browser to show its automatic prompt at optimal time
     // Automatic prompt typically appears after moderate user engagement
+    // Note: we do NOT call e.preventDefault() so the browser shows its native UI
 
     // Log user's installation choice
     e.userChoice?.then(result => {
@@ -1115,6 +1088,52 @@ window.addEventListener('beforeinstallprompt', e => {
   } catch (err) {
     console.error('[WX.MAP] beforeinstallprompt handler error:', err);
   }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// UPDATE NOTIFICATION (moved to DOMContentLoaded to ensure DOM is ready)
+// ═════════════════════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  window.addEventListener('wx-app-update-ready', () => {
+    console.info('[WX.MAP] Update available — showing notification banner');
+
+    const updateBanner = document.getElementById('update-banner');
+    const refreshBtn = document.getElementById('update-refresh-btn');
+    const dismissBtn = document.getElementById('update-dismiss-btn');
+
+    if (!updateBanner || !refreshBtn || !dismissBtn) {
+      console.error('[WX.MAP] Update banner elements not found in DOM');
+      return;
+    }
+
+    // Show the banner
+    updateBanner.style.display = 'block';
+
+    // Refresh: skip waiting service worker and activate the new one
+    function activateUpdate() {
+      if (navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'SKIP_WAITING' });
+      }
+      // Reload page after service worker takes over (give it 500ms)
+      setTimeout(() => window.location.reload(), 500);
+    }
+
+    refreshBtn.addEventListener('click', activateUpdate);
+    dismissBtn.addEventListener('click', () => {
+      updateBanner.style.display = 'none';
+    });
+
+    // In standalone PWA mode, auto-refresh after 5 seconds to minimize disruption
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                         window.navigator.standalone === true;
+    if (isStandalone) {
+      console.info('[WX.MAP] Running in PWA standalone mode — will auto-refresh in 5 seconds');
+      setTimeout(() => {
+        console.info('[WX.MAP] Auto-refreshing with new app version');
+        activateUpdate();
+      }, 5000);
+    }
+  });
 });
 
 // Track successful installations

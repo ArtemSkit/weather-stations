@@ -642,9 +642,10 @@
       flex-shrink: 0;
     }
 
-    /* Drag-pin button — used for tap-to-place on touch */
-    #drag-pin { display: flex !important; }
-    #tap-pin-btn { display: none !important; }
+    /* Drag-pin is not draggable on touch devices; replace with tap-to-place button */
+    #drag-pin { display: none !important; }
+    #tap-pin-btn { display: flex !important; }
+    #tap-pin-btn.active { border-color: var(--accent2); }
 
     /* ── Leaflet zoom controls — move to left side, clear of FAB ── */
     .leaflet-control-zoom {
@@ -2515,10 +2516,16 @@ fabLocate.addEventListener('click', () => {
 
   /* ── Show touch-specific controls ── */
   const dragPinBtn      = document.getElementById('drag-pin');
+  const tapPinBtn       = document.getElementById('tap-pin-btn');
   const tapPlaceBanner = document.getElementById('tap-place-banner');
   const mainEl         = document.querySelector('main');
 
   dragPinBtn.draggable = false;
+  dragPinBtn.style.display = 'none';
+  tapPinBtn.style.display = 'flex';
+
+  /* Ensure accessible state for the tap-pin button */
+  tapPinBtn.setAttribute('aria-pressed', 'false');
 
   /* ── Patch popup open/close to toggle sheet-open on <main> ── */
   const _popupPanel = document.getElementById('popup-panel');
@@ -2541,6 +2548,8 @@ fabLocate.addEventListener('click', () => {
     tapModeActive = active;
     tapPlaceBanner.classList.toggle('active', active);
     dragPinBtn.style.borderColor = active ? 'var(--accent2)' : '';
+    tapPinBtn.classList.toggle('active', active);
+    tapPinBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
 
     if (active) {
       // Change Leaflet cursor to crosshair to signal the mode
@@ -2550,8 +2559,10 @@ fabLocate.addEventListener('click', () => {
     }
   }
 
-  /* Toggle mode when the drag-pin button is pressed */
-  dragPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
+  /* Toggle mode when the mobile pin button is pressed */
+  const toggleTapMode = () => setTapMode(!tapModeActive);
+  dragPinBtn.addEventListener('click', toggleTapMode);
+  tapPinBtn.addEventListener('click', toggleTapMode);
 
   /*
    * Wait for the Leaflet map to be available in the outer DOMContentLoaded

@@ -819,11 +819,54 @@
     <button id="search-btn" aria-label="Search">FIND</button>
   </div>
 
-  <!-- Status indicator: dot + text, driven by setStatus() -->
+  /* ── Status indicator: dot + text, driven by setStatus() ── */
   <div class="status-bar" id="status-bar" role="status" aria-live="polite">
     <span class="dot"></span><span id="status-text">READY</span>
   </div>
 </header>
+
+<!-- Update notification banner (shown when new version is available) -->
+<script>
+  /**
+   * Handle PWA app updates: when a new service worker is ready, show a banner
+   * and offer to refresh. Automatically refresh in standalone mode after 5 seconds.
+   */
+  window.addEventListener('wx-app-update-ready', () => {
+    console.info('[WX.MAP] Update available — showing notification banner');
+
+    const updateBanner = document.getElementById('update-banner');
+    const refreshBtn = document.getElementById('update-refresh-btn');
+    const dismissBtn = document.getElementById('update-dismiss-btn');
+
+    // Show the banner
+    updateBanner.style.display = 'block';
+
+    // Refresh: skip waiting service worker and activate the new one
+    function activateUpdate() {
+      if (navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'SKIP_WAITING' });
+      }
+      // Reload page after service worker takes over (give it 500ms)
+      setTimeout(() => window.location.reload(), 500);
+    }
+
+    refreshBtn.addEventListener('click', activateUpdate);
+    dismissBtn.addEventListener('click', () => {
+      updateBanner.style.display = 'none';
+    });
+
+    // In standalone PWA mode, auto-refresh after 5 seconds to minimize disruption
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                         window.navigator.standalone === true;
+    if (isStandalone) {
+      console.info('[WX.MAP] Running in PWA standalone mode — will auto-refresh in 5 seconds');
+      setTimeout(() => {
+        console.info('[WX.MAP] Auto-refreshing with new app version');
+        activateUpdate();
+      }, 5000);
+    }
+  });
+</script>
 
 <!-- Tap-to-place mode banner (mobile only) -->
 <div id="tap-place-banner" role="status" aria-live="polite">
@@ -909,6 +952,26 @@
 <!-- Toast notification (error / info messages) -->
 <div id="toast" role="alert" aria-live="assertive"></div>
 
+<!-- Update available banner (slides down from top) -->
+<div id="update-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:10001;
+     background:linear-gradient(135deg,var(--accent2),#ff8c42);padding:14px 20px;color:#000;
+     font-family:'Syne',sans-serif;font-weight:600;text-align:center;font-size:0.85rem;
+     box-shadow:0 4px 12px rgba(0,0,0,0.3);animation:slideDown 0.4s ease;" role="alert">
+  🚀 App update available! <button id="update-refresh-btn" style="background:#000;color:var(--accent2);
+  border:none;border-radius:3px;padding:5px 12px;margin-left:12px;cursor:pointer;font-weight:700;
+  font-family:'Syne',sans-serif;font-size:0.8rem;">REFRESH NOW</button>
+  <button id="update-dismiss-btn" style="background:transparent;color:#000;border:1px solid #000;
+  border-radius:3px;padding:4px 10px;margin-left:8px;cursor:pointer;font-weight:600;font-family:'Syne',sans-serif;
+  font-size:0.75rem;">Dismiss</button>
+</div>
+
+<style>
+  @keyframes slideDown {
+    from { transform: translateY(-100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+</style>
+
 <!-- ════════════════════════════════════════════════════════════════
      GEOCODIO API KEY MODAL
      Shown once when the user first performs an address search.
@@ -949,17 +1012,42 @@
    EARLY SERVICE WORKER REGISTRATION (for PWA detection)
    This MUST happen before or outside DOMContentLoaded so the browser can detect
    that this is a PWA and show the installation prompt.
+
+   Also sets up update detection: when a new service worker is ready, prompts the
+   user to refresh or automatically refreshes on the next app open.
    ═════════════════════════════════════════════════════════════════════════════ */
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js', { scope: './' })
     .then(reg => {
       console.info('[WX.MAP] Service worker registered from sw.js (PWA enabled)');
-      // Check for updates periodically (every 6 hours)
-      setInterval(() => {
+
+      // Check for updates immediately, then periodically (every 30 minutes for faster updates)
+      const checkForUpdates = () => {
         reg.update().catch(err => {
           console.warn('[WX.MAP] Service worker update check failed:', err.message);
         });
-      }, 6 * 60 * 60 * 1000);
+      };
+
+      checkForUpdates();  // Check now on app start
+      setInterval(checkForUpdates, 30 * 60 * 1000);  // Check every 30 minutes
+
+      // Listen for a new service worker entering "waiting" state
+      // This indicates a new version is available and ready to be activated
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (!newWorker) return;
+
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            // New service worker is ready, and there's an old one still in control
+            // This means an update is available
+            console.info('[WX.MAP] App update available — user refresh/reload recommended');
+
+            // Dispatch a custom event so the app can notify the user
+            window.dispatchEvent(new CustomEvent('wx-app-update-ready'));
+          }
+        });
+      });
     })
     .catch(err => {
       console.error('[WX.MAP] Service worker registration failed:', err);

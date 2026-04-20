@@ -598,7 +598,7 @@
   /* ════════════════════════════════════════════════════════════════════════════
      MOBILE STYLES  (≤ 640 px wide OR coarse pointer — touch screens)
      ════════════════════════════════════════════════════════════════════════════ */
-  @media (max-width: 640px), (pointer: coarse) {
+  @media (pointer: coarse), (max-width: 640px) {
 
     /* ── Header: two-row layout ── */
     header {
@@ -643,7 +643,8 @@
     }
 
     /* Drag-pin button — used for tap-to-place on touch */
-    #drag-pin { display: flex; }
+    #drag-pin { display: flex !important; }
+    #tap-pin-btn { display: none !important; }
 
     /* ── Leaflet zoom controls — move to left side, clear of FAB ── */
     .leaflet-control-zoom {
@@ -819,7 +820,6 @@
     <button id="search-btn" aria-label="Search">FIND</button>
   </div>
 
-  <!-- ── Status indicator: dot + text, driven by setStatus() ── -->
   <div class="status-bar" id="status-bar" role="status" aria-live="polite">
     <span class="dot"></span><span id="status-text">READY</span>
   </div>
@@ -1136,6 +1136,7 @@ if (isStandalone) {
 // Diagnostic: Log PWA installability after page load
 window.addEventListener('load', () => {
   setTimeout(() => {
+    console.log('Service worker controller:', navigator.serviceWorker.controller);
     if (!beforeInstallPromptFired) {
       console.warn(`[WX.MAP] ⚠ beforeinstallprompt has not fired on ${browser}`);
       console.warn('[WX.MAP] Possible causes:');

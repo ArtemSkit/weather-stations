@@ -2,7 +2,7 @@
   "name": "WX.MAP Weather Station Finder",
   "short_name": "WX.MAP",
   "description": "Real-time NOAA weather station map. Search by ZIP, address, or coordinates. Live observations updated every minute.",
-  "start_url": "./",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",

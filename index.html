@@ -642,8 +642,8 @@
       flex-shrink: 0;
     }
 
-    /* Drag-pin button — hide on touch (replaced by tap-to-place) */
-    #drag-pin { display: none; }
+    /* Drag-pin button — used for tap-to-place on touch */
+    #drag-pin { display: flex; }
 
     /* ── Leaflet zoom controls — move to left side, clear of FAB ── */
     .leaflet-control-zoom {
@@ -819,7 +819,7 @@
     <button id="search-btn" aria-label="Search">FIND</button>
   </div>
 
-  /* ── Status indicator: dot + text, driven by setStatus() ── */
+  <!-- ── Status indicator: dot + text, driven by setStatus() ── -->
   <div class="status-bar" id="status-bar" role="status" aria-live="polite">
     <span class="dot"></span><span id="status-text">READY</span>
   </div>

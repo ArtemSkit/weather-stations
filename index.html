@@ -823,7 +823,7 @@
 
 <!-- Tap-to-place mode banner (mobile only) -->
 <div id="tap-place-banner" role="status" aria-live="polite">
-  📍 Tap anywhere on the map to place a search pin — tap again to cancel
+  📍 Tap the map to place a pin — tap the pin button again to cancel
 </div>
 
 <!-- Ghost pin that follows the mouse cursor during a drag operation -->
@@ -989,7 +989,6 @@ const browser = getBrowserInfo();
 console.info(`[WX.MAP] Browser detected: ${browser}`);
 
 window.pwaInstallPrompt = null;
-window.pwaInstallable = false;
 let beforeInstallPromptFired = false;
 
 // Single consolidated beforeinstallprompt listener
@@ -999,7 +998,6 @@ window.addEventListener('beforeinstallprompt', e => {
 
     // Store the event for potential custom UI or manual triggering
     window.pwaInstallPrompt = e;
-    window.pwaInstallable = true;
     console.info(`[WX.MAP] ✓ PWA is installable (beforeinstallprompt fired on ${browser})`);
 
     // DO NOT prevent default — let the browser show its automatic prompt at optimal time
@@ -2107,71 +2105,7 @@ dragPinBtn.addEventListener('keydown', e => {
   }
 });
 
-/*
- * Fallback: Pointer events for PWA standalone mode compatibility.
- * Some PWA installations have issues with drag-drop events, so this provides
- * an alternative interface using pointerdown/pointermove/pointerup.
- */
-let pointerPinDragState = { isDragging: false };
 
-dragPinBtn.addEventListener('pointerdown', e => {
-  try {
-    if (e.button !== 0) return; // Left button or primary touch only
-    pointerPinDragState.isDragging = true;
-    pinGhost.style.display = 'block';
-    console.debug('[WX.MAP] Pin pointer drag started');
-  } catch (err) {
-    console.error('[WX.MAP] pointerdown error:', err);
-  }
-});
-
-document.addEventListener('pointermove', e => {
-  if (!pointerPinDragState.isDragging) return;
-  try {
-    pinGhost.style.left = e.clientX + 'px';
-    pinGhost.style.top  = e.clientY + 'px';
-  } catch (err) {
-    console.error('[WX.MAP] pointermove error:', err);
-  }
-});
-
-document.addEventListener('pointerup', e => {
-  try {
-    if (!pointerPinDragState.isDragging) return;
-    pointerPinDragState.isDragging = false;
-    pinGhost.style.display = 'none';
-
-    // Ensure map is accessible
-    if (!map || typeof map.containerPointToLatLng !== 'function') {
-      console.warn('[WX.MAP] Map not ready during pointer pin drop');
-      return;
-    }
-
-    const mapEl = document.getElementById('map');
-    if (!mapEl) {
-      console.warn('[WX.MAP] Map element not found during pointer up');
-      return;
-    }
-
-    const rect  = mapEl.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    // Ignore drops outside the map area
-    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
-      console.debug('[WX.MAP] Pin dropped outside map area (pointer)');
-      return;
-    }
-
-    const latlng = map.containerPointToLatLng([x, y]);
-    console.debug('[WX.MAP] Pin dropped via pointer at', latlng);
-    placeDragPin(latlng.lat, latlng.lng);
-  } catch (err) {
-    console.error('[WX.MAP] pointerup handler error:', err);
-    pointerPinDragState.isDragging = false;
-    pinGhost.style.display = 'none';
-  }
-});
 
 /** Remove the dropped pin marker from the map. */
 function removeDragPin() {
@@ -2483,11 +2417,11 @@ fabLocate.addEventListener('click', () => {
   if (!isTouchDevice()) return;   // desktop — nothing to do
 
   /* ── Show touch-specific controls ── */
-  const tapPinBtn      = document.getElementById('tap-pin-btn');
+  const dragPinBtn      = document.getElementById('drag-pin');
   const tapPlaceBanner = document.getElementById('tap-place-banner');
   const mainEl         = document.querySelector('main');
 
-  if (tapPinBtn) tapPinBtn.style.display = 'flex';
+  dragPinBtn.draggable = false;
 
   /* ── Patch popup open/close to toggle sheet-open on <main> ── */
   const _popupPanel = document.getElementById('popup-panel');
@@ -2509,11 +2443,10 @@ fabLocate.addEventListener('click', () => {
   /* ── Tap-to-place mode ── */
   let tapModeActive = false;
 
-  /** Activate / deactivate tap-to-place mode */
   function setTapMode(active) {
     tapModeActive = active;
     tapPlaceBanner.classList.toggle('active', active);
-    tapPinBtn.style.borderColor = active ? 'var(--accent2)' : '';
+    dragPinBtn.style.borderColor = active ? 'var(--accent2)' : '';
 
     if (active) {
       // Change Leaflet cursor to crosshair to signal the mode
@@ -2523,8 +2456,8 @@ fabLocate.addEventListener('click', () => {
     }
   }
 
-  /* Toggle mode when the tap-pin button is pressed */
-  tapPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
+  /* Toggle mode when the drag-pin button is pressed */
+  dragPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
 
   /*
    * Wait for the Leaflet map to be available in the outer DOMContentLoaded

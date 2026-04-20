@@ -1091,11 +1091,13 @@ let beforeInstallPromptFired = false;
 // Single consolidated beforeinstallprompt listener
 window.addEventListener('beforeinstallprompt', e => {
   try {
+    e.preventDefault();
     beforeInstallPromptFired = true;
 
     // Store the event for potential custom UI or manual triggering
     window.pwaInstallPrompt = e;
     console.info(`[WX.MAP] ✓ PWA is installable (beforeinstallprompt fired on ${browser})`);
+    console.debug('[WX.MAP] beforeinstallprompt event captured', e);
 
     // DO NOT prevent default — let the browser show its automatic prompt at optimal time
     // Automatic prompt typically appears after moderate user engagement

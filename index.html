@@ -416,10 +416,14 @@
     font-family: 'Space Mono', monospace; font-size: 0.58rem;
     text-align: center; padding: 1px 3px; outline: none;
     transition: border-color 0.15s;
-    -moz-appearance: textfield;   /* hide Firefox number arrows */
+    appearance: textfield;  /* hide number spinner arrows */
+    -moz-appearance: textfield;
   }
   #interval-input::-webkit-outer-spin-button,
-  #interval-input::-webkit-inner-spin-button { -webkit-appearance: none; }
+  #interval-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+  }
   #interval-input:focus { border-color: var(--accent); }
 
   /* ════════════════════════════════════════════════════════════════════════════
@@ -951,7 +955,11 @@ if ('serviceWorker' in navigator) {
     .then(reg => {
       console.info('[WX.MAP] Service worker registered from sw.js (PWA enabled)');
       // Check for updates periodically (every 6 hours)
-      setInterval(() => reg.update(), 6 * 60 * 60 * 1000);
+      setInterval(() => {
+        reg.update().catch(err => {
+          console.warn('[WX.MAP] Service worker update check failed:', err.message);
+        });
+      }, 6 * 60 * 60 * 1000);
     })
     .catch(err => {
       console.error('[WX.MAP] Service worker registration failed:', err);
@@ -2432,11 +2440,8 @@ fabLocate.addEventListener('click', () => {
    * the sheet-open class on <main> without touching the existing JS.
    */
   const sheetObserver = new MutationObserver(() => {
-    if (_popupPanel.style.display !== 'none' && _popupPanel.style.display !== '') {
-      mainEl.classList.add('sheet-open');
-    } else {
-      mainEl.classList.remove('sheet-open');
-    }
+    const isVisible = _popupPanel.style.display === 'block';
+    mainEl.classList.toggle('sheet-open', isVisible);
   });
   sheetObserver.observe(_popupPanel, { attributes: true, attributeFilter: ['style'] });
 

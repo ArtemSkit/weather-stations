@@ -45,6 +45,14 @@ self.addEventListener('activate', event => {
   );
 });
 
+/* ── Message handler: receive commands from the app ── */
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    console.info('[SW] Received SKIP_WAITING command — activating new version now');
+    self.skipWaiting();
+  }
+});
+
 /* ── Fetch: cache-first with network fallback ── */
 self.addEventListener('fetch', event => {
   // Only intercept GET requests

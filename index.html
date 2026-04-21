@@ -2515,7 +2515,7 @@ initMobile(); // Initialize mobile-specific features
    • Toggles main.sheet-open when the popup panel is shown/hidden so the FAB
      shifts above the bottom sheet.
    ───────────────────────────────────────────────────────────────────────────── */
-(function initMobile() {
+function initMobile() {
   const isTouchDevice = () =>
     window.matchMedia('(pointer: coarse)').matches ||
     ('ontouchstart' in window) ||
@@ -2625,7 +2625,8 @@ initMobile(); // Initialize mobile-specific features
     }
   }, { passive: true });
 
-})();
+}
+</script>
 </script>
 </body>
 </html>

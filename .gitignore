@@ -134,6 +134,9 @@ dist
 # IFS files
 *.ifs
 
+# Claude Code — local agent settings, memory, and transcripts (never commit)
+.claude/
+
 
 # yarn v3
 .pnp.*

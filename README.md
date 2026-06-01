@@ -12,13 +12,14 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 4. [Draggable Pin](#draggable-pin)
 5. [Locate Me Button](#locate-me-button)
 6. [Weather Station Popup](#weather-station-popup)
-7. [URL Query Parameters](#url-query-parameters)
-8. [Geocodio API Key](#geocodio-api-key)
-9. [Progressive Web App (PWA)](#progressive-web-app-pwa)
-10. [Architecture](#architecture)
-11. [Data Sources & APIs](#data-sources--apis)
-12. [Offline Support](#offline-support)
-13. [Browser Compatibility](#browser-compatibility)
+7. [Dangerous-Weather Alerts](#dangerous-weather-alerts)
+8. [URL Query Parameters](#url-query-parameters)
+9. [Geocodio API Key](#geocodio-api-key)
+10. [Progressive Web App (PWA)](#progressive-web-app-pwa)
+11. [Architecture](#architecture)
+12. [Data Sources & APIs](#data-sources--apis)
+13. [Offline Support](#offline-support)
+14. [Browser Compatibility](#browser-compatibility)
 
 ---
 
@@ -33,6 +34,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Dual temperature** | °F displayed prominently; °C shown alongside it |
 | **Feels Like** | Heat Index or Wind Chill, whichever is applicable |
 | **Precipitation chance** | Real next-hour probability of precipitation from the NWS gridded forecast |
+| **Dangerous-weather alerts** | Active NWS watches/warnings/advisories for the area, shown in a severity-ranked banner; stations inside a warning polygon get a pulsing red ring |
 | **Sky conditions** | Cloud layer amount and base altitude |
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
@@ -186,6 +188,35 @@ The pulsing dot indicates a refresh in progress; steady green means data is curr
 
 ---
 
+## Dangerous-Weather Alerts
+
+Every search also pulls the **active National Weather Service alerts** for that location — tornado and flash-flood warnings, severe-thunderstorm and winter-storm warnings, flood and tornado watches, heat advisories, and so on. They are fetched from the NWS [`/alerts/active`](https://api.weather.gov/alerts/active) endpoint, which returns only the alerts whose area contains the searched point.
+
+> **Why alerts attach to the *area*, not a station.** The NWS never issues alerts for individual observation stations — it issues them for **polygons** (storm-based warnings) or **county/forecast zones** (most watches). WX.MAP therefore anchors alerts to the searched location and surfaces them in two complementary ways.
+
+### Tier 1 — area alert banner
+
+A banner floats at the top-left of the map whenever the area has active alerts (and stays hidden when it doesn't). It lists every active alert, ranked **most-dangerous-first** and colour-coded:
+
+| Class | Examples | Colour |
+|---|---|---|
+| **Critical** | Tornado Warning, Flash Flood Warning | 🔴 Red |
+| **Warning** | any other Warning, or Extreme/Severe-rated alert | 🟠 Orange |
+| **Watch** | Tornado Watch, Flood Watch, Severe T-storm Watch | 🟡 Amber |
+| **Info** | Advisories, special statements | 🟡 Yellow |
+
+The banner opens expanded; click the summary chip to collapse it, or click any alert to reveal its full headline, description, and the NWS safety **instructions**, along with the time it expires.
+
+### Tier 2 — per-station danger ring
+
+Storm-based warnings (tornado, severe-thunderstorm, flash-flood) are issued as tight **polygons** that often cover only part of a city — so they can apply to some stations in the area but not others. WX.MAP runs a point-in-polygon test on every plotted station and gives any station **inside an active warning polygon** a **pulsing red ring**. Watches and other zone-only alerts have no polygon and are conveyed by the banner alone (they apply area-wide, not to a single station).
+
+### Refresh & resilience
+
+Alerts move fast, so they are **re-fetched every 2 minutes** while a location stays loaded and **cached per coordinate for 2 minutes** to coalesce the refresh ticks into a single network call. The alert fetch is best-effort: if it fails or returns nothing, the banner simply stays hidden and the rest of the app is unaffected.
+
+---
+
 ## URL Query Parameters
 
 Every search updates the page URL, making results **bookmarkable and shareable**.
@@ -204,6 +235,7 @@ When the `station` parameter is present:
 2. The station's `geometry.coordinates` from the response is used to pan the map.
 3. A station marker is plotted and the info popup opens immediately.
 4. Live refresh starts automatically.
+5. Active [dangerous-weather alerts](#dangerous-weather-alerts) for the station's location are loaded too — banner plus a danger ring on the marker if it sits inside a warning polygon.
 
 This parameter takes priority over all others.
 
@@ -292,6 +324,7 @@ weather-stations/
 │   │   ├── <main>
 │   │   │   ├── #map                (Leaflet map container)
 │   │   │   ├── #map-overlay        (loading spinner)
+│   │   │   ├── #alert-banner       (active NWS watches/warnings)
 │   │   │   ├── #popup-panel        (station info / mobile bottom sheet)
 │   │   │   └── #fab-locate         (GPS floating action button)
 │   │   ├── #toast                 (error / info notifications)
@@ -315,6 +348,7 @@ weather-stations/
 │           ├── Panel open / close
 │           ├── Marker management
 │           ├── loadStationsAt pipeline
+│           ├── Dangerous-weather alerts  (banner + per-station polygon flags)
 │           ├── URL helpers
 │           ├── doSearch dispatcher
 │           ├── Draggable pin
@@ -331,7 +365,7 @@ weather-stations/
 
 | Service | Purpose | Key required |
 |---|---|---|
-| [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, hourly forecast (precip chance) | No |
+| [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, hourly forecast (precip chance), active alerts | No |
 | [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates | No |
 | [Geocodio](https://www.geocod.io/) | Street address → coordinates | Yes (free tier available) |
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |

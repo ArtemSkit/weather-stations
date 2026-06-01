@@ -1648,6 +1648,66 @@ async function fetchObservations(stationId) {
   return res.json();
 }
 
+/* Cache of real forecast PoP keyed by station id.  A forecast changes slowly, so
+   re-fetching it on every live-observation tick (every ≥10 s) would be wasteful and
+   could exhaust the NOAA rate budget.  Entries expire after FORECAST_TTL_MS. */
+const forecastPoPCache = new Map();   // stationId → { pop: number|null, ts: number }
+const FORECAST_TTL_MS  = 10 * 60 * 1000;  // 10 minutes
+
+/**
+ * Fetch the real probability of precipitation for the current hour at a location.
+ *
+ * Unlike the latest-observation endpoint (which carries no PoP), this resolves the
+ * NOAA forecast grid for the coordinate and reads the gridded
+ * `probabilityOfPrecipitation` produced by the local Weather Forecast Office — an
+ * actual forecast product, not a heuristic.
+ *
+ * Two-step NOAA flow:
+ *   1. GET /points/{lat},{lon}  → properties.forecastHourly (grid forecast URL)
+ *   2. GET {forecastHourly}     → properties.periods[0].probabilityOfPrecipitation
+ *
+ * Results are cached per station for FORECAST_TTL_MS.  Any failure resolves to null
+ * so a missing forecast never blocks the live observation display.
+ *
+ * @param   {number} lat        - Latitude
+ * @param   {number} lon        - Longitude
+ * @param   {string} stationId  - Cache key (ICAO id)
+ * @returns {Promise<number|null>} PoP 0–100, or null when unavailable
+ */
+async function fetchForecastPoP(lat, lon, stationId) {
+  // Serve a still-fresh cached value to avoid hitting NOAA on every refresh tick.
+  const cached = forecastPoPCache.get(stationId);
+  if (cached && Date.now() - cached.ts < FORECAST_TTL_MS) return cached.pop;
+
+  let pop = null;
+  try {
+    // Step 1 — turn the coordinate into a forecast grid. The /points response tells
+    // us which Weather Forecast Office and grid cell this location belongs to, and
+    // hands back the ready-made hourly-forecast URL for that cell.
+    const ptRes = await fetchWithTimeout(
+      `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
+    if (!ptRes.ok) throw new Error(`NOAA points API returned HTTP ${ptRes.status}`);
+    const hourlyUrl = (await ptRes.json()).properties?.forecastHourly;
+
+    // Step 2 — fetch that hourly forecast. periods[0] is the current hour; its
+    // probabilityOfPrecipitation is the real PoP we want (0–100, or null).
+    if (hourlyUrl) {
+      const fcRes = await fetchWithTimeout(hourlyUrl);
+      if (!fcRes.ok) throw new Error(`NOAA forecast API returned HTTP ${fcRes.status}`);
+      const period = (await fcRes.json()).properties?.periods?.[0];
+      const v = period?.probabilityOfPrecipitation?.value;
+      pop = v != null ? Math.round(v) : null;
+    }
+  } catch (e) {
+    // Forecast is supplementary — swallow and fall back to "no data".
+    pop = null;
+  }
+
+  // Cache even a null result so a missing/failed forecast isn't retried every tick.
+  forecastPoPCache.set(stationId, { pop, ts: Date.now() });
+  return pop;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    10. UNIT-CONVERSION HELPERS
    ───────────────────────────────────────────────────────────────────────────── */
@@ -1702,31 +1762,6 @@ function degToCompass(deg) {
   return dirs[Math.round(deg / 22.5) % 16];
 }
 
-/**
- * Estimate the probability of precipitation as a percentage.
- *
- * The NOAA latest-observation endpoint does not include a PoP field.  This
- * heuristic derives a rough estimate from relative humidity and the
- * temperature/dew-point spread (a small spread → air near saturation).
- *
- * ⚠️  This is an approximation, not a forecast product.
- *
- * @param   {number|null} humidityPct  - Relative humidity 0–100
- * @param   {number|null} tempC        - Air temperature °C
- * @param   {number|null} dewC         - Dew-point temperature °C
- * @returns {number|null}               Estimated PoP 0–100, or null
- */
-function precipLikelihood(humidityPct, tempC, dewC) {
-  if (humidityPct == null) return null;
-  let p = humidityPct / 100;
-  if (tempC != null && dewC != null) {
-    const spread = tempC - dewC;
-    if (spread < 2)      p = Math.min(1, p + 0.15);
-    else if (spread < 5) p = Math.min(1, p + 0.05);
-  }
-  return Math.round(p * 100);
-}
-
 /* ─────────────────────────────────────────────────────────────────────────────
    11. WEATHER POPUP RENDERER
    ─────────────────────────────────────────────────────────────────────────────
@@ -1740,8 +1775,9 @@ function precipLikelihood(humidityPct, tempC, dewC) {
  * @param {Object}      data         - Full GeoJSON observation feature
  * @param {string}      stationId    - ICAO identifier (e.g. "KSAT")
  * @param {string|null} stationName  - Human-readable station name
+ * @param {number|null} precipPct    - Real forecast PoP 0–100 (from fetchForecastPoP)
  */
-function renderWeather(data, stationId, stationName) {
+function renderWeather(data, stationId, stationName, precipPct = null) {
   const p = data.properties;
 
   /* ── Temperature (dual unit display) ── */
@@ -1775,7 +1811,6 @@ function renderWeather(data, stationId, stationName) {
                   ? Math.round(p.relativeHumidity.value) : null;
   const windDir   = p.windDirection?.value;
   const dirStr    = windDir != null ? degToCompass(windDir) : null;
-  const precipPct = precipLikelihood(p.relativeHumidity?.value, tempC, dewC);
 
   /* ── Cloud layers (first/primary layer only) ── */
   const layer    = p.cloudLayers?.[0];
@@ -1822,10 +1857,10 @@ function renderWeather(data, stationId, stationName) {
        </div>`
     : '';
 
-  // Precipitation likelihood bar (full-width cell)
+  // Precipitation likelihood bar (full-width cell) — real NWS hourly forecast PoP
   const precipHTML = precipPct != null
     ? `<div class="weather-item full">
-         <div class="weather-item-label">Precip Likelihood (est.)</div>
+         <div class="weather-item-label">Precip Chance (next hr)</div>
          <div class="weather-item-value">${precipPct}%</div>
          <div class="precip-bar-wrap">
            <div class="precip-bar" style="width:${precipPct}%"></div>
@@ -1915,7 +1950,17 @@ async function doStationRefresh(stationId) {
   try {
     const data = await fetchObservations(stationId);
     if (activeStationId !== stationId) return;   // closed while fetching
-    renderWeather(data, stationId, document.getElementById('popup-name').textContent);
+
+    // Real forecast PoP for the station's own coordinates (best-effort, cached).
+    // GeoJSON geometry is [lon, lat]; a missing/failed forecast resolves to null.
+    let precipPct = null;
+    const coords = data.geometry?.coordinates;
+    if (Array.isArray(coords) && coords.length >= 2) {
+      precipPct = await fetchForecastPoP(coords[1], coords[0], stationId);
+      if (activeStationId !== stationId) return;  // closed while fetching forecast
+    }
+
+    renderWeather(data, stationId, document.getElementById('popup-name').textContent, precipPct);
   } catch (e) {
     if (activeStationId === stationId) {
       document.getElementById('update-time').textContent = 'Error fetching data';

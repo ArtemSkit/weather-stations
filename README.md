@@ -32,7 +32,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Live observations** | Auto-refreshing weather data (configurable interval, ≥10 s) |
 | **Dual temperature** | °F displayed prominently; °C shown alongside it |
 | **Feels Like** | Heat Index or Wind Chill, whichever is applicable |
-| **Precipitation estimate** | Heuristic % likelihood from humidity and dew-point spread |
+| **Precipitation chance** | Real next-hour probability of precipitation from the NWS gridded forecast |
 | **Sky conditions** | Cloud layer amount and base altitude |
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
@@ -164,7 +164,15 @@ Click any station badge on the map to open the info panel. It shows:
 | **Visibility** | Miles |
 | **Pressure** | Sea-level or barometric pressure in inHg |
 | **Sky / Weather** | Cloud layer amount and base altitude in feet; present weather codes |
-| **Precip Likelihood** | Estimated % with a colour-gradient fill bar |
+| **Precip Chance (next hr)** | Real probability of precipitation for the current hour, shown as % with a colour-gradient fill bar |
+
+> **Humidity vs. Precip Chance — what's the difference?**
+> **Humidity** is the relative-humidity reading taken straight from the station's latest observation. **Precip Chance** is a genuine *forecast* value, not derived from humidity. The latest-observation endpoint carries no probability-of-precipitation field, so WX.MAP resolves the station's coordinates to its NOAA forecast grid and reads the `probabilityOfPrecipitation` produced by the local Weather Forecast Office:
+>
+> 1. `GET /points/{lat},{lon}` → the station's `forecastHourly` grid URL.
+> 2. `GET {forecastHourly}` → `periods[0].probabilityOfPrecipitation.value` (current hour).
+>
+> Because a forecast changes slowly, the result is **cached per station for 10 minutes** rather than re-fetched on every live-observation tick. The forecast fetch is best-effort: if it fails or is unavailable, the Precip Chance row is simply omitted and the rest of the observation still renders.
 
 ### Live refresh
 
@@ -323,7 +331,7 @@ weather-stations/
 
 | Service | Purpose | Key required |
 |---|---|---|
-| [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations | No |
+| [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, hourly forecast (precip chance) | No |
 | [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates | No |
 | [Geocodio](https://www.geocod.io/) | Street address → coordinates | Yes (free tier available) |
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |

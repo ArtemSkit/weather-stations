@@ -196,7 +196,7 @@ Every search also pulls the **active National Weather Service alerts** for that 
 
 ### Tier 1 — area alert banner
 
-A banner floats at the top-left of the map whenever the area has active alerts (and stays hidden when it doesn't). It lists every active alert, ranked **most-dangerous-first** and colour-coded:
+A banner floats at the top-left of the map whenever the area has active alerts (and stays hidden when it doesn't). The map's zoom control sits at the **bottom-left** so the banner never covers it, and the banner caps its own height and scrolls when many alerts are active. The banner lists every active alert, ranked **most-dangerous-first** and colour-coded:
 
 | Class | Examples | Colour |
 |---|---|---|

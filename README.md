@@ -38,25 +38,30 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Locate Me FAB** | One-tap GPS location → instant station search |
 | **Shareable URLs** | Every search updates the address bar — bookmark or share |
 | **Geocodio address lookup** | Street-address geocoding; API key stored in a browser cookie |
-| **PWA** | Installable, offline-capable shell via Service Worker |
+| **PWA** | Installable, offline-capable, and self-updating via Service Worker |
 
 ---
 
 ## Getting Started
 
-WX.MAP is a **single HTML file** — no build step, no server, no installation required.
+WX.MAP needs **no build step and no backend**. The app is a small set of static files:
 
-1. Download `weather-stations.html`.
-2. Open it in any modern browser (Chrome, Firefox, Edge, Safari).
-3. For full functionality, serve it over HTTP/HTTPS (required for Service Worker and Geolocation on some browsers):
+| File | Role |
+|---|---|
+| `index.html` | The entire app — markup, styles, and vanilla-JS logic |
+| `sw.js` | Service worker — offline caching and update delivery |
+| `manifest.json` | Web App Manifest — install metadata (name, icons, theme) |
+
+1. Open `index.html` in any modern browser (Chrome, Firefox, Edge, Safari), **or**
+2. For the full PWA experience (install, offline, auto-updates) serve the folder over HTTP/HTTPS — the service worker and manifest must be fetched over the network:
 
 ```bash
-# Python 3 one-liner
+# Python 3 one-liner — run from the project folder
 python3 -m http.server 8080
-# then open http://localhost:8080/weather-stations.html
+# then open http://localhost:8080/index.html
 ```
 
-> **Note:** The Geolocation API and Service Worker require a **secure context** (HTTPS or localhost). Opening the file directly via `file://` will work for map and search features but not Locate Me or PWA install.
+> **Note:** The Service Worker and Geolocation API require a **secure context** (HTTPS or `localhost`). Opening `index.html` directly via `file://` still gives you the map and search, but not Locate Me, install, or offline support.
 
 ---
 
@@ -77,14 +82,14 @@ Geocoded via the **Nominatim / OpenStreetMap** API — no API key required.
 
 ### 2. Latitude / Longitude
 
-Enter two comma-separated decimal numbers:
+Enter two comma-separated decimal numbers — latitude first, then longitude:
 
 ```
 29.4241, -98.4936
 38.8867, -77.0947
 ```
 
-Coordinates are parsed directly — no geocoding needed, so this is the fastest path.
+Valid ranges are **latitude −90 to 90** and **longitude −180 to 180**. Coordinates are parsed directly — no geocoding needed, so this is the fastest path. Out-of-range input is rejected instantly with a clear message, without making a network request.
 
 ### 3. Street Address
 
@@ -214,6 +219,7 @@ Visit [geocod.io](https://www.geocod.io/) and sign up for a free account. The fr
 ### Key storage
 
 - Stored **only in your browser** as a cookie.
+- The cookie is scoped to this app's own path, so other sites sharing the same host (e.g. other GitHub Pages projects) never receive it.
 - Never sent to anyone except Geocodio's geocoding endpoint.
 - To remove it, clear your browser cookies for this page.
 
@@ -221,7 +227,7 @@ Visit [geocod.io](https://www.geocod.io/) and sign up for a free account. The fr
 
 ## Progressive Web App (PWA)
 
-WX.MAP includes a Web App Manifest and a Service Worker, qualifying it as a PWA.
+WX.MAP ships a Web App Manifest (`manifest.json`) and a Service Worker (`sw.js`), making it installable, offline-capable, and self-updating.
 
 ### Installing
 
@@ -231,56 +237,84 @@ In a supporting browser (Chrome, Edge, Safari on iOS):
 
 Once installed, the app opens in a standalone window without the browser chrome.
 
+### Caching strategy
+
+The service worker uses a hybrid strategy tuned for a single-file app:
+
+| Request | Strategy | Why |
+|---|---|---|
+| HTML document (navigation) | **Network-first** | Always serves the latest `index.html` when online; falls back to the cached copy offline |
+| Same-origin assets (`manifest.json`, …) | **Cache-first** | Instant loads; the cache is filled from the network on first fetch |
+| Cross-origin (NOAA API, OSM tiles, Google Fonts, unpkg CDN) | **Pass-through** | Never cached — live data and third-party assets always go straight to the network |
+
+Because the document is fetched network-first, a normal reload while online already pulls new code — even before the service-worker swap completes.
+
+### Updates
+
+WX.MAP detects and applies new versions reliably:
+
+1. The browser re-checks `sw.js` on each navigation and every 30 minutes.
+2. When a changed worker is found, it installs and **waits** — the running session is never disrupted mid-use.
+3. An **"App update available"** banner slides down from the top with **REFRESH NOW** / **Dismiss**.
+4. Accepting (or, in an installed/standalone window, a 5-second auto-apply) tells the waiting worker to take over; the page then reloads **once** into the new version.
+5. Caches from previous versions are purged automatically on activation.
+
 ### Offline support
 
-The Service Worker caches the app shell on first load. Subsequent visits load instantly from cache even without a network connection. Live weather data requires an internet connection — network requests for the NOAA and Nominatim APIs are not cached.
+The app shell (`index.html`, `manifest.json`) is precached on first load, so the app opens instantly — even fully offline. Live weather data still requires a connection: NOAA and Nominatim requests are never cached and fail gracefully with an error toast when offline.
 
 ---
 
 ## Architecture
 
-WX.MAP is intentionally a **zero-dependency, single-file application** — everything lives in `weather-stations.html`.
+WX.MAP is a **zero-dependency, no-build app**. All UI and logic live in `index.html`; the PWA plumbing lives in two small sibling files (`sw.js`, `manifest.json`).
 
 ```
-weather-stations.html
-├── <head>
-│   ├── Web App Manifest       (inline data-URI)
-│   ├── Google Fonts           (Space Mono, Syne)
-│   └── Leaflet CSS            (CDN)
-├── <body>
-│   ├── Header                 (logo, search bar, status badge)
-│   ├── Pin ghost              (follows cursor during drag)
-│   ├── <main>
-│   │   ├── #map               (Leaflet map container)
-│   │   ├── #map-overlay       (loading spinner)
-│   │   ├── #popup-panel       (station weather info)
-│   │   └── #fab-locate        (GPS floating action button)
-│   ├── #toast                 (error / info notifications)
-│   └── #modal-overlay         (Geocodio API key prompt)
-└── <script>
-    ├── Leaflet JS             (CDN)
-    └── Application script     (vanilla JS, ~600 lines)
-        ├── Map initialisation
-        ├── Application state
-        ├── UI helpers
-        ├── Refresh-interval editor
-        ├── Input-type detection
-        ├── Geocoding (ZIP/address)
-        ├── Cookie helpers
-        ├── Geocodio key modal
-        ├── NOAA Weather API
-        ├── Unit conversion
-        ├── Popup renderer
-        ├── Station refresh loop
-        ├── Panel open / close
-        ├── Marker management
-        ├── loadStationsAt pipeline
-        ├── URL helpers
-        ├── doSearch dispatcher
-        ├── Draggable pin
-        ├── Locate Me (Geolocation API)
-        ├── URL auto-trigger
-        └── Service Worker registration
+weather-stations/
+├── index.html                      (the whole app)
+│   ├── <head>
+│   │   ├── <link rel="manifest">       → manifest.json
+│   │   ├── inline SVG favicon + apple-touch-icon
+│   │   ├── Google Fonts                (Space Mono, Syne — CDN)
+│   │   └── Leaflet CSS                 (CDN)
+│   ├── <body>
+│   │   ├── Header                  (logo, search bar, status badge)
+│   │   ├── #update-banner          (slides down when a new version is ready)
+│   │   ├── #pin-ghost              (follows cursor during drag)
+│   │   ├── <main>
+│   │   │   ├── #map                (Leaflet map container)
+│   │   │   ├── #map-overlay        (loading spinner)
+│   │   │   ├── #popup-panel        (station info / mobile bottom sheet)
+│   │   │   └── #fab-locate         (GPS floating action button)
+│   │   ├── #toast                 (error / info notifications)
+│   │   └── #modal-overlay         (Geocodio API key prompt)
+│   └── <script>
+│       ├── Leaflet JS              (CDN)
+│       ├── SW registration + update flow
+│       └── Application script      (vanilla JS)
+│           ├── Map initialisation
+│           ├── Application state
+│           ├── UI helpers
+│           ├── Refresh-interval editor
+│           ├── Input-type detection
+│           ├── Geocoding (ZIP / address)
+│           ├── Cookie helpers
+│           ├── Geocodio key modal
+│           ├── NOAA Weather API
+│           ├── Unit conversion
+│           ├── Popup renderer
+│           ├── Station refresh loop
+│           ├── Panel open / close
+│           ├── Marker management
+│           ├── loadStationsAt pipeline
+│           ├── URL helpers
+│           ├── doSearch dispatcher
+│           ├── Draggable pin
+│           ├── Locate Me (Geolocation API)
+│           ├── URL auto-trigger
+│           └── Mobile enhancements (tap-to-place, bottom sheet)
+├── sw.js                           (service worker — caching + updates)
+└── manifest.json                   (Web App Manifest — install metadata)
 ```
 
 ---
@@ -295,15 +329,18 @@ weather-stations.html
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |
 | [Browser Geolocation API](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation_API) | Device GPS | User permission |
 
+> **Resilience:** every network request (geocoding and weather) is capped by a **15-second timeout** — a slow or unreachable API aborts cleanly with an error toast instead of leaving the app stuck "loading". Rapid repeat searches are de-duplicated too, so a slow earlier request can never overwrite the results of a newer one.
+
 ---
 
 ## Offline Support
 
 | Scenario | Behaviour |
 |---|---|
-| First visit (online) | App shell cached by Service Worker |
-| Repeat visit (online) | Shell loaded from cache; weather data fetched live |
-| Visit while offline | Shell loads from cache; weather fetches fail gracefully with error toasts |
+| First visit (online) | App shell precached by the service worker |
+| Repeat visit (online) | Latest `index.html` fetched network-first (cache refreshed); weather data fetched live |
+| New version deployed | Update banner shown; applied on accept, or auto-applied in standalone — see [Updates](#updates) |
+| Visit while offline | Shell served from cache; weather fetches fail gracefully with error toasts |
 | `?station=` param offline | Station data fetch fails; error toast shown |
 
 ---

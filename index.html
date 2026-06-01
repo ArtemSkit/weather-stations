@@ -12,10 +12,10 @@
   ║  • Nominatim (OSM) — free ZIP→coordinates geocoding.                        ║
   ║  • Geocodio API — street address geocoding (API key required, stored        ║
   ║    in a browser cookie so the user is only prompted once).                  ║
-  ║  • Service Worker (inline, registered at runtime) — offline caching for     ║
-  ║    the shell so it loads even without a network connection.                 ║
-  ║  • Web App Manifest (inline <script type="application/json">) — allows      ║
-  ║    the browser's "Add to Home Screen" / "Install App" prompt.               ║
+  ║  • Service Worker (external sw.js) — offline caching for the app shell      ║
+  ║    so it loads even without a network connection; also delivers updates.    ║
+  ║  • Web App Manifest (external manifest.json) — enables the browser's        ║
+  ║    "Add to Home Screen" / "Install App" prompt.                             ║
   ╚══════════════════════════════════════════════════════════════════════════════╝
 -->
 <html lang="en">
@@ -31,6 +31,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <!-- Prevent double-tap zoom on iOS -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+<!-- Favicon (inline SVG data-URI) — avoids a 404 for /favicon.ico and gives the tab an icon -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20192%20192'%3E%3Crect%20width='192'%20height='192'%20rx='45'%20fill='%230a0e17'/%3E%3Ctext%20x='96'%20y='135'%20font-size='120'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E">
 
 <!-- Apple touch icon (inline SVG data-URI) -->
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20512%20512'%3E%3Crect%20width='512'%20height='512'%20rx='100'%20fill='%230a0e17'/%3E%3Ctext%20x='256'%20y='340'%20font-size='280'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E">
@@ -826,8 +829,6 @@
   </div>
 </header>
 
-<!-- Update notification banner (shown when new version is available) -->
-
 <!-- Tap-to-place mode banner (mobile only) -->
 <div id="tap-place-banner" role="status" aria-live="polite">
   📍 Tap the map to place a pin — tap the pin button again to cancel
@@ -969,52 +970,92 @@
 
 <script>
 /* ═════════════════════════════════════════════════════════════════════════════
-   EARLY SERVICE WORKER REGISTRATION (for PWA detection)
-   This MUST happen before or outside DOMContentLoaded so the browser can detect
-   that this is a PWA and show the installation prompt.
+   SERVICE WORKER REGISTRATION & UPDATE FLOW
+   ─────────────────────────────────────────────────────────────────────────────
+   Registering a service worker makes this an installable, offline-capable PWA and
+   drives the in-app "update available" flow:
 
-   Also sets up update detection: when a new service worker is ready, prompts the
-   user to refresh or automatically refreshes on the next app open.
+     1. The browser re-fetches sw.js on navigation and on each reg.update() call.
+     2. If sw.js changed, the new worker installs and parks in the "waiting" state.
+        The old worker keeps controlling the page so the current session is not
+        disrupted mid-use.
+     3. We surface an update banner. When the user accepts (or automatically after
+        a short delay in an installed/standalone window) we message the WAITING
+        worker to skipWaiting → it activates → 'controllerchange' fires → we reload
+        exactly once so the page runs the freshly-cached assets.
+
+   The document itself is served network-first by the worker (see sw.js), so an
+   ordinary reload while online always pulls the latest HTML — making updates
+   reliable even before the worker swap completes.
    ═════════════════════════════════════════════════════════════════════════════ */
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js', { scope: './' })
-    .then(reg => {
-      console.info('[WX.MAP] Service worker registered from sw.js (PWA enabled)');
+  (() => {
+    let swRegistration = null;
+    let reloading = false;
 
-      // Check for updates immediately, then periodically (every 30 minutes for faster updates)
-      const checkForUpdates = () => {
-        reg.update().catch(err => {
-          console.warn('[WX.MAP] Service worker update check failed:', err.message);
-        });
-      };
+    // Whether a worker already controlled this page at load time. On a first visit
+    // the page is uncontrolled, and the worker's clients.claim() fires its own
+    // 'controllerchange' — we must NOT treat that initial claim as an update
+    // (doing so would reload-flash every first load).
+    const hadControllerAtStart = !!navigator.serviceWorker.controller;
 
-      checkForUpdates();  // Check now on app start
-      setInterval(checkForUpdates, 30 * 60 * 1000);  // Check every 30 minutes
-
-      // Listen for a new service worker entering "waiting" state
-      // This indicates a new version is available and ready to be activated
-      reg.addEventListener('updatefound', () => {
-        const newWorker = reg.installing;
-        if (!newWorker) return;
-
-        newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            // New service worker is ready, and there's an old one still in control
-            // This means an update is available
-            console.info('[WX.MAP] App update available — user refresh/reload recommended');
-
-            // Dispatch a custom event so the app can notify the user
-            window.dispatchEvent(new CustomEvent('wx-app-update-ready'));
-          }
-        });
-      });
-    })
-    .catch(err => {
-      console.error('[WX.MAP] Service worker registration failed:', err);
-      console.error('[WX.MAP] Make sure sw.js is accessible from the root directory');
+    // When a NEW worker activates and takes control of an already-controlled page,
+    // reload once so the page is driven by the new worker and its fresh cache.
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloading || !hadControllerAtStart) return;
+      reloading = true;
+      window.location.reload();
     });
+
+    // Tell the rest of the app a new version is ready to activate.
+    const announceUpdate = () =>
+      window.dispatchEvent(new CustomEvent('wx-app-update-ready'));
+
+    navigator.serviceWorker.register('./sw.js', { scope: './' })
+      .then(reg => {
+        swRegistration = reg;
+        console.info('[WX.MAP] Service worker registered (PWA enabled)');
+
+        // A worker already parked in "waiting" means an update installed during a
+        // previous visit but was never activated — surface it now.
+        if (reg.waiting && navigator.serviceWorker.controller) announceUpdate();
+
+        // Detect a new worker finishing installation while the page is open.
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener('statechange', () => {
+            // 'installed' + an existing controller == an update (not a first install).
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              announceUpdate();
+            }
+          });
+        });
+
+        // Poll for updates: once now, then every 30 minutes.
+        const checkForUpdates = () =>
+          reg.update().catch(err =>
+            console.warn('[WX.MAP] Update check failed:', err.message));
+        checkForUpdates();
+        setInterval(checkForUpdates, 30 * 60 * 1000);
+      })
+      .catch(err =>
+        console.error('[WX.MAP] Service worker registration failed:', err));
+
+    // Activate the waiting worker. Exposed globally so the update banner (and the
+    // standalone auto-refresh) can trigger the swap. 'controllerchange' performs
+    // the reload; the timeout is only a safety net if that event never fires.
+    window.__wxActivateUpdate = () => {
+      const worker = (swRegistration && swRegistration.waiting) ||
+                     navigator.serviceWorker.controller;
+      if (worker) worker.postMessage({ type: 'SKIP_WAITING' });
+      setTimeout(() => {
+        if (!reloading) { reloading = true; window.location.reload(); }
+      }, 3000);
+    };
+  })();
 } else {
-  console.warn('[WX.MAP] Service workers not supported — PWA features disabled');
+  console.warn('[WX.MAP] Service workers not supported — offline & update features disabled');
 }
 
 /* ═════════════════════════════════════════════════════════════════════════════
@@ -1052,83 +1093,56 @@ window.addEventListener('beforeinstallprompt', e => {
   try {
     beforeInstallPromptFired = true;
 
-    // Store the event for potential custom UI or manual triggering
+    // Keep a reference so a future custom "Install" button could trigger it.
+    // We deliberately do NOT call e.preventDefault(), so the browser still shows
+    // its own install UI at the moment it judges best. The actual install outcome
+    // is reported by the 'appinstalled' listener below.
     window.pwaInstallPrompt = e;
     console.info(`[WX.MAP] ✓ PWA is installable (beforeinstallprompt fired on ${browser})`);
-    console.debug('[WX.MAP] beforeinstallprompt event captured', e);
-
-    // Allow the browser to show its automatic prompt at optimal time
-    // Automatic prompt typically appears after moderate user engagement
-    // Note: we do NOT call e.preventDefault() so the browser shows its native UI
-
-    // Log user's installation choice
-    e.userChoice?.then(result => {
-      console.info(`[WX.MAP] User chose to ${result.outcome} the app`);
-      if (result.outcome === 'accepted') {
-        window.pwaInstallPrompt = null;
-        console.info('[WX.MAP] Installation accepted — app will install');
-      }
-    }).catch(err => {
-      console.warn('[WX.MAP] Installation choice error:', err);
-    });
   } catch (err) {
     console.error('[WX.MAP] beforeinstallprompt handler error:', err);
   }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// UPDATE NOTIFICATION (moved to DOMContentLoaded to ensure DOM is ready)
+// UPDATE-AVAILABLE BANNER
+// Reacts to the 'wx-app-update-ready' event from the SW update flow above. The
+// banner markup lives earlier in the document, so it is already in the DOM by the
+// time this script runs — no DOMContentLoaded wait is required. The listener is
+// attached synchronously, before register().then can resolve, so the event is
+// never missed.
 // ═════════════════════════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', () => {
-  window.addEventListener('wx-app-update-ready', () => {
-    console.info('[WX.MAP] Update available — showing notification banner');
+window.addEventListener('wx-app-update-ready', () => {
+  const banner     = document.getElementById('update-banner');
+  const refreshBtn = document.getElementById('update-refresh-btn');
+  const dismissBtn = document.getElementById('update-dismiss-btn');
+  if (!banner || !refreshBtn || !dismissBtn) {
+    console.error('[WX.MAP] Update banner elements not found in DOM');
+    return;
+  }
 
-    const updateBanner = document.getElementById('update-banner');
-    const refreshBtn = document.getElementById('update-refresh-btn');
-    const dismissBtn = document.getElementById('update-dismiss-btn');
+  console.info('[WX.MAP] Update available — showing banner');
+  banner.style.display = 'block';
 
-    if (!updateBanner || !refreshBtn || !dismissBtn) {
-      console.error('[WX.MAP] Update banner elements not found in DOM');
-      return;
-    }
+  // Use onclick (not addEventListener) so a repeated event can never stack handlers.
+  refreshBtn.onclick = () => window.__wxActivateUpdate();
+  dismissBtn.onclick = () => { banner.style.display = 'none'; };
 
-    // Show the banner
-    updateBanner.style.display = 'block';
-
-    // Refresh: skip waiting service worker and activate the new one
-    function activateUpdate() {
-      if (navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({ type: 'SKIP_WAITING' });
-      }
-      // Reload page after service worker takes over (give it 500ms)
-      setTimeout(() => window.location.reload(), 500);
-    }
-
-    refreshBtn.addEventListener('click', activateUpdate);
-    dismissBtn.addEventListener('click', () => {
-      updateBanner.style.display = 'none';
-    });
-
-    // In standalone PWA mode, auto-refresh after 5 seconds to minimize disruption
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
-                         window.navigator.standalone === true;
-    if (isStandalone) {
-      console.info('[WX.MAP] Running in PWA standalone mode — will auto-refresh in 5 seconds');
-      setTimeout(() => {
-        console.info('[WX.MAP] Auto-refreshing with new app version');
-        activateUpdate();
-      }, 5000);
-    }
-  });
+  // In an installed/standalone window, apply the update automatically after a
+  // short grace period so the app stays current with minimal disruption.
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                       window.navigator.standalone === true;
+  if (isStandalone) {
+    console.info('[WX.MAP] Standalone mode — auto-applying update in 5 s');
+    setTimeout(() => window.__wxActivateUpdate(), 5000);
+  }
 });
 
 // Track successful installations
 window.addEventListener('appinstalled', () => {
   try {
     console.info(`[WX.MAP] ✓ App successfully installed (${browser})`);
-    console.info('[WX.MAP] App is now running in PWA standalone mode');
-    window.pwaInstallable = false;
-    window.pwaInstallPrompt = null;
+    window.pwaInstallPrompt = null;   // prompt consumed — clear the stale reference
   } catch (err) {
     console.error('[WX.MAP] appinstalled handler error:', err);
   }
@@ -1141,78 +1155,17 @@ if (isStandalone) {
   console.info(`[WX.MAP] ✓ Running in PWA standalone mode (${browser})`);
 }
 
-// Diagnostic: Log PWA installability after page load
+// Diagnostic: if the app never became installable, log one concise hint.
 window.addEventListener('load', () => {
   setTimeout(() => {
-    console.log('Service worker controller:', navigator.serviceWorker.controller);
-    if (!beforeInstallPromptFired) {
-      console.warn(`[WX.MAP] ⚠ beforeinstallprompt has not fired on ${browser}`);
-      console.warn('[WX.MAP] Possible causes:');
-      console.warn('  • Service worker may not be registered yet or failed to register');
-      console.warn('  • Manifest may be invalid or inaccessible');
-      console.warn('  • Minimum user engagement requirements may not be met');
-
-      if (browser === 'Brave') {
-        console.warn('  ⚠ BRAVE-SPECIFIC: Privacy features may block beforeinstallprompt');
-        console.warn('    Try: Settings → View detailed settings → Extensions → Scroll down');
-        console.warn('    Look for PWA-related or WebApp settings that might be disabled');
-        console.warn('    Or manually visit chrome://flags and search "app" settings');
-      } else if (browser === 'Opera') {
-        console.warn('  ⚠ OPERA-GX-SPECIFIC: VPN/privacy features may block beforeinstallprompt');
-        console.warn('    Try disabling GX Guard or checking opera://flags for PWA settings');
-      }
-
-      console.info('[WX.MAP] Checking PWA requirements:');
-
-      // Check service worker
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(registrations => {
-          if (registrations.length > 0) {
-            console.info(`  ✓ Service Workers registered: ${registrations.length}`);
-            registrations.forEach((reg, i) => {
-              console.info(
-                `    [${i}] scope: ${reg.scope}, ` +
-                `active: ${reg.active ? 'yes' : 'no'}`
-              );
-            });
-          } else {
-            console.warn('  ✗ No service workers registered — PWA requires valid SW!');
-          }
-        }).catch(err => {
-          console.error('  ✗ Error checking service workers:', err.message);
-        });
-      } else {
-        console.warn('  ✗ Service Workers not supported in this browser');
-      }
-
-      // Try to fetch manifest
-      fetch('./manifest.json')
-        .then(r => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.json();
-        })
-        .then(manifest => {
-          console.info('  ✓ Manifest loaded successfully');
-          console.info(`    - name: ${manifest.name}`);
-          console.info(`    - short_name: ${manifest.short_name}`);
-          console.info(`    - start_url: ${manifest.start_url}`);
-          console.info(`    - display: ${manifest.display}`);
-          console.info(`    - scope: ${manifest.scope}`);
-          console.info(`    - icons: ${manifest.icons?.length || 0}`);
-
-          if (manifest.display !== 'standalone') {
-            console.warn(`    ⚠ display is "${manifest.display}" (should be "standalone")`);
-          }
-        })
-        .catch(err => {
-          console.warn('  ✗ Manifest fetch failed:', err.message);
-        });
-
-      // Final note
-      console.info('[WX.MAP] For manual testing: Open DevTools, reload page, watch this console');
-      console.info('[WX.MAP] Install prompt should appear after ~10-15 seconds of engagement');
+    if (!beforeInstallPromptFired && !isStandalone) {
+      console.info(
+        `[WX.MAP] Install prompt not offered on ${browser}. This is expected until ` +
+        `engagement criteria are met, if the app is already installed, or in ` +
+        `privacy-focused browsers (e.g. Brave) that suppress it.`
+      );
     }
-  }, 2500);
+  }, 3000);
 });
 
 </script>
@@ -1319,6 +1272,14 @@ let refreshInterval = 60_000;
  * @type {L.Marker|null}
  */
 let droppedPinMarker = null;
+
+/**
+ * Monotonic counter incremented on every loadStationsAt() call. A slow earlier
+ * request compares its captured value against this and bails out if a newer
+ * search has started, so stale results can never overwrite fresh ones.
+ * @type {number}
+ */
+let searchGeneration = 0;
 
 /* Cached DOM references — gathered once to avoid repeated getElementById calls */
 const zipInput      = document.getElementById('zip-input');
@@ -1438,6 +1399,30 @@ function parseCoords(raw) {
    ───────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * fetch() with an automatic timeout. A hung request (slow API, flaky network)
+ * would otherwise leave the UI stuck in a loading state forever, so we abort it
+ * after `timeoutMs` and surface a clear, user-facing message.
+ *
+ * @param   {string}      url
+ * @param   {RequestInit} [options={}]
+ * @param   {number}      [timeoutMs=15000]
+ * @returns {Promise<Response>}
+ * @throws  {Error} 'Request timed out…' on abort, or the underlying network error
+ */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Request timed out — please try again');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Convert a US ZIP code to geographic coordinates using the Nominatim API
  * (OpenStreetMap's free geocoding service — no key required).
  *
@@ -1448,7 +1433,7 @@ function parseCoords(raw) {
 async function zipToCoords(zip) {
   const url = `https://nominatim.openstreetmap.org/search`
             + `?postalcode=${encodeURIComponent(zip)}&country=US&format=json&limit=1`;
-  const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+  const res = await fetchWithTimeout(url, { headers: { 'Accept-Language': 'en' } });
   if (!res.ok) throw new Error('ZIP geocoding request failed');
   const data = await res.json();
   if (!data.length) throw new Error(`ZIP code "${zip}" not found`);
@@ -1474,8 +1459,8 @@ async function addressToCoords(address) {
   await ensureGeocodioApiKey();
 
   const url = `https://api.geocod.io/v1.7/geocode`
-            + `?q=${encodeURIComponent(address)}&api_key=${geocodioApiKey}&limit=1`;
-  const res = await fetch(url);
+            + `?q=${encodeURIComponent(address)}&api_key=${encodeURIComponent(geocodioApiKey)}&limit=1`;
+  const res = await fetchWithTimeout(url);
   if (!res.ok) throw new Error(`Geocodio API error (HTTP ${res.status})`);
   const data = await res.json();
   if (!data.results?.length) throw new Error(`Address "${address}" not found`);
@@ -1513,7 +1498,10 @@ function getCookie(name) {
  */
 function setCookie(name, value, daysToExpire = 365) {
   const expires = new Date(Date.now() + daysToExpire * 86_400_000).toUTCString();
-  document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires};path=/;SameSite=Strict`;
+  // Scope the cookie to this app's directory (not the whole origin) so sibling
+  // projects sharing the host — e.g. other GitHub Pages sites — never receive it.
+  const path = location.pathname.replace(/[^/]*$/, '') || '/';
+  document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires};path=${path};SameSite=Strict`;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1604,7 +1592,9 @@ function ensureGeocodioApiKey() {
  */
 async function fetchStations(lat, lon) {
   const url = `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}/stations`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'WXMap/1.0' } });
+  // The browser always sends its own User-Agent and ignores any custom one
+  // (User-Agent is a forbidden fetch header), so there's no point setting it.
+  const res = await fetchWithTimeout(url);
   if (!res.ok) throw new Error(`NOAA stations API returned HTTP ${res.status}`);
   return res.json();
 }
@@ -1619,7 +1609,9 @@ async function fetchStations(lat, lon) {
  */
 async function fetchObservations(stationId) {
   const url = `https://api.weather.gov/stations/${stationId}/observations/latest`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'WXMap/1.0' } });
+  // The browser always sends its own User-Agent and ignores any custom one
+  // (User-Agent is a forbidden fetch header), so there's no point setting it.
+  const res = await fetchWithTimeout(url);
   if (!res.ok) throw new Error(`NOAA observations API returned HTTP ${res.status}`);
   return res.json();
 }
@@ -1630,9 +1622,6 @@ async function fetchObservations(stationId) {
 
 /** Celsius → Fahrenheit (string, 1 decimal place). Returns null if input is null. */
 const cToF = c => c != null ? ((c * 9/5) + 32).toFixed(1) : null;
-
-/** Fahrenheit string → Celsius string (1 decimal place). */
-const fToC = f => f != null ? (((parseFloat(f) - 32) * 5) / 9).toFixed(1) : null;
 
 /** km/h → mph (1 decimal place). */
 const kmhToMph = k => k != null ? (k * 0.621371).toFixed(1) : null;
@@ -1726,7 +1715,9 @@ function renderWeather(data, stationId, stationName) {
   /* ── Temperature (dual unit display) ── */
   const tempC     = p.temperature?.value;
   const tempF     = cToF(tempC);
-  const tempCDisp = tempF != null ? fToC(tempF) : null;
+  // Display the actual °C value (not a °F→°C round-trip, which would re-introduce
+  // rounding error from the already-rounded Fahrenheit string).
+  const tempCDisp = tempC != null ? tempC.toFixed(1) : null;
 
   /*
    * "Feels Like" — heat index takes priority over wind chill because both
@@ -1739,7 +1730,7 @@ function renderWeather(data, stationId, stationName) {
   if      (heatC  != null) { feelsC = heatC;  feelsLabel = 'Heat Index'; }
   else if (chillC != null) { feelsC = chillC; feelsLabel = 'Wind Chill'; }
   const feelsF     = cToF(feelsC);
-  const feelsCDisp = feelsF != null ? fToC(feelsF) : null;
+  const feelsCDisp = feelsC != null ? feelsC.toFixed(1) : null;
 
   /* ── Other observations ── */
   const dewC      = p.dewpoint?.value;
@@ -1850,11 +1841,11 @@ function renderWeather(data, stationId, stationName) {
       </div>
       <div class="weather-item">
         <div class="weather-item-label">Gusts</div>
-        <div class="weather-item-value">${val(gustMph, 'mph')}</div>
+        <div class="weather-item-value">${val(gustMph, ' mph')}</div>
       </div>
       <div class="weather-item">
         <div class="weather-item-label">Visibility</div>
-        <div class="weather-item-value">${val(visMi, 'mi')}</div>
+        <div class="weather-item-value">${val(visMi, ' mi')}</div>
       </div>
       <div class="weather-item">
         <div class="weather-item-label">Pressure</div>
@@ -1934,6 +1925,11 @@ async function openStation(stationId, stationName, markerEl) {
      </div>`;
 
   await doStationRefresh(stationId);
+
+  // The user may have closed the panel or opened a different station while the
+  // first fetch was in flight — only start the live-refresh timer if this station
+  // is still the active one, otherwise we'd leak an orphaned interval.
+  if (activeStationId !== stationId) return;
   refreshTimer = setInterval(() => doStationRefresh(stationId), refreshInterval);
 }
 
@@ -1987,10 +1983,10 @@ function makeStationMarker(id, name, lat, lng) {
 function plotStations(geoJSON) {
   clearStations();
   (geoJSON.features || []).forEach(f => {
-    const id  = f.properties.stationIdentifier;
-    const nm  = f.properties.name;
-    const [lng, lat] = f.geometry.coordinates;   // GeoJSON is [lng, lat]
-    makeStationMarker(id, nm, lat, lng);
+    const coords = f.geometry?.coordinates;
+    if (!coords) return;                         // skip any feature without a location
+    const [lng, lat] = coords;                   // GeoJSON order is [lng, lat]
+    makeStationMarker(f.properties.stationIdentifier, f.properties.name, lat, lng);
   });
 }
 
@@ -2009,11 +2005,16 @@ function plotStations(geoJSON) {
  * @param {number} lon
  */
 async function loadStationsAt(lat, lon) {
+  // Tag this search so a slower earlier request can't overwrite the results of a
+  // newer one if the user searches again before the first fetch resolves.
+  const gen = ++searchGeneration;
+
   setStatus('loading', 'FETCHING STATIONS…');
   overlayText.textContent = 'Fetching weather stations…';
   map.flyTo([lat, lon], 10, { duration: 1.2 });
 
   const data  = await fetchStations(lat, lon);
+  if (gen !== searchGeneration) return;          // superseded by a newer search
   plotStations(data);
 
   const count = (data.features || []).length;
@@ -2090,7 +2091,8 @@ async function doSearch() {
       setStatus('loading', 'LOCATING…');
       showOverlay('Parsing coordinates…');
       const { lat, lon } = parseCoords(raw);
-      if (isNaN(lat) || isNaN(lon)) throw new Error('Invalid coordinates');
+      if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180)
+        throw new Error('Invalid coordinates — use lat (-90…90), lon (-180…180)');
       await loadStationsAt(lat, lon);
 
     } else if (type === 'zip') {
@@ -2626,7 +2628,6 @@ function initMobile() {
   }, { passive: true });
 
 }
-</script>
 </script>
 </body>
 </html>

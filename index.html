@@ -1458,12 +1458,23 @@ async function addressToCoords(address) {
   // ── Ensure we have an API key (cookie → prompt fallback) ──
   await ensureGeocodioApiKey();
 
-  const url = `https://api.geocod.io/v1.7/geocode`
+  const url = `https://api.geocod.io/v1.9/geocode`
             + `?q=${encodeURIComponent(address)}&api_key=${encodeURIComponent(geocodioApiKey)}&limit=1`;
   const res = await fetchWithTimeout(url);
-  if (!res.ok) throw new Error(`Geocodio API error (HTTP ${res.status})`);
-  const data = await res.json();
-  if (!data.results?.length) throw new Error(`Address "${address}" not found`);
+
+  // Geocodio returns a JSON { error } body on 4xx (e.g. 422 = "Could not
+  // geocode address, zip code or city/state are required"). Read it once and
+  // surface that message instead of an opaque status code.
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    // 403 = invalid/forbidden key → clear it so the user is re-prompted next time.
+    if (res.status === 403) clearGeocodioApiKey();
+    const reason = data?.error || `HTTP ${res.status}`;
+    throw new Error(`Geocodio: ${reason}`);
+  }
+
+  if (!data?.results?.length) throw new Error(`Address "${address}" not found`);
   const loc = data.results[0].location;
   return { lat: loc.lat, lon: loc.lng };
 }
@@ -1504,6 +1515,17 @@ function setCookie(name, value, daysToExpire = 365) {
   document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires};path=${path};SameSite=Strict`;
 }
 
+/**
+ * Delete a cookie. Uses the same directory-scoped path as setCookie() so the
+ * cookie that was written is actually the one that gets cleared.
+ *
+ * @param {string} name
+ */
+function deleteCookie(name) {
+  const path = location.pathname.replace(/[^/]*$/, '') || '/';
+  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=${path};SameSite=Strict`;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    8. GEOCODIO API-KEY PROMPT (MODAL)
    ─────────────────────────────────────────────────────────────────────────────
@@ -1524,6 +1546,16 @@ function setCookie(name, value, daysToExpire = 365) {
  *
  * @returns {Promise<void>}
  */
+/**
+ * Forget the current Geocodio API key (memory + cookie). Called when Geocodio
+ * rejects the key (HTTP 403) so the user is re-prompted on the next address
+ * search instead of being stuck with a bad key forever.
+ */
+function clearGeocodioApiKey() {
+  geocodioApiKey = '';
+  deleteCookie(GEOCODIO_COOKIE_NAME);
+}
+
 function ensureGeocodioApiKey() {
   // Fast path — key already in memory
   if (geocodioApiKey) return Promise.resolve();

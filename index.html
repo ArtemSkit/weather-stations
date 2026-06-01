@@ -256,12 +256,37 @@
     box-shadow: 0 0 10px rgba(0,212,255,0.3);
     letter-spacing: 0.03em;
     text-align: center; line-height: 1.1;
+    position: relative;   /* anchor for the .alerted pulse ring (::after) */
   }
   .station-marker:hover,
   .station-marker.active {
     background: var(--accent); color: var(--bg);
     box-shadow: 0 0 20px rgba(0,212,255,0.6);
     transform: scale(1.15);
+  }
+
+  /*
+   * Tier-2 "in the danger zone" highlight.
+   * Added by flagStationsInAlerts() when a station's coordinates fall inside an
+   * active NWS warning polygon (e.g. a tornado or flash-flood warning). The
+   * pulsing red ring is drawn as a ::after pseudo-element so it layers on top of
+   * the marker without disturbing its existing border, colour, or .active scale.
+   */
+  .station-marker.alerted {
+    border-color: var(--red);
+    color: var(--red);
+  }
+  .station-marker.alerted::after {
+    content: '';
+    position: absolute; inset: -4px;
+    border-radius: 50%;
+    border: 2px solid var(--red);
+    animation: alertPulse 1.4s ease-out infinite;
+    pointer-events: none;
+  }
+  @keyframes alertPulse {
+    0%   { transform: scale(1);   opacity: 0.9; }
+    100% { transform: scale(1.8); opacity: 0;   }
   }
 
   /*
@@ -301,6 +326,84 @@
   @keyframes slideIn {
     from { opacity:0; transform: translateX(20px); }
     to   { opacity:1; transform: translateX(0); }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     DANGEROUS-WEATHER ALERT BANNER (Tier 1)
+     Floats top-left over the map and lists the active NWS watches/warnings for
+     the searched area. Hidden entirely when there are no active alerts.
+     ════════════════════════════════════════════════════════════════════════════ */
+  #alert-banner {
+    position: absolute; top: 16px; left: 16px;
+    z-index: 1100;                       /* above the station popup (1000) */
+    width: 330px; max-width: calc(100% - 32px);
+    display: none; flex-direction: column; gap: 8px;
+    font-family: 'Syne', sans-serif;
+  }
+  #alert-banner.visible { display: flex; }
+
+  /* Collapsible summary chip — shows the count + most severe event name. */
+  .alert-summary {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-left: 4px solid var(--red);
+    border-radius: 6px; padding: 9px 12px;
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.78rem;
+    cursor: pointer; text-align: left; width: 100%;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  }
+  .alert-summary .alert-summary-icon { font-size: 0.95rem; line-height: 1; }
+  .alert-summary .alert-summary-text { flex: 1; }
+  .alert-summary .alert-summary-caret { color: var(--text-muted); transition: transform 0.2s; }
+  #alert-banner.expanded .alert-summary .alert-summary-caret { transform: rotate(180deg); }
+  /* Summary chip border tinted to the most severe active alert (see alertClass()). */
+  .alert-summary.alert-warn  { border-left-color: var(--accent2); }
+  .alert-summary.alert-watch { border-left-color: #ffae42; }
+  .alert-summary.alert-info  { border-left-color: var(--yellow); }
+
+  /* The list of individual alert cards — only shown when expanded. */
+  .alert-list { display: none; flex-direction: column; gap: 8px; }
+  #alert-banner.expanded .alert-list { display: flex; }
+
+  .alert-card {
+    background: var(--surface);
+    border: 1px solid var(--border); border-left: 4px solid var(--text-muted);
+    border-radius: 6px; overflow: hidden;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  }
+  /* Severity-driven accent colour (see alertClass()). */
+  .alert-card.alert-crit  { border-left-color: var(--red); }
+  .alert-card.alert-warn  { border-left-color: var(--accent2); }
+  .alert-card.alert-watch { border-left-color: #ffae42; }
+  .alert-card.alert-info  { border-left-color: var(--yellow); }
+  .alert-card.alert-crit  .alert-event { color: var(--red); }
+  .alert-card.alert-warn  .alert-event { color: var(--accent2); }
+  .alert-card.alert-watch .alert-event { color: #ffae42; }
+  .alert-card.alert-info  .alert-event { color: var(--yellow); }
+
+  /* Card header (always visible) — click to reveal the full description. */
+  .alert-card-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    width: 100%; padding: 10px 12px; cursor: pointer; text-align: left;
+    background: transparent; border: none;
+  }
+  .alert-event   { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 0.78rem; }
+  .alert-expires { font-family: 'Space Mono', monospace; font-size: 0.6rem; color: var(--text-muted); white-space: nowrap; }
+
+  /* Card body (description + safety instruction) — collapsed until .open. */
+  .alert-card-body {
+    display: none;
+    padding: 0 12px 12px;
+    max-height: 220px; overflow-y: auto;
+    border-top: 1px solid var(--border);
+  }
+  .alert-card.open .alert-card-body { display: block; }
+  .alert-headline {
+    font-size: 0.68rem; color: var(--text); margin: 10px 0 6px; line-height: 1.45;
+  }
+  .alert-desc {
+    font-family: 'Space Mono', monospace; font-size: 0.6rem; color: var(--text-muted);
+    line-height: 1.5; white-space: pre-line;   /* preserve NWS paragraph breaks */
   }
 
   /* Header row: station ID + full name on the left, close button on the right */
@@ -746,6 +849,11 @@
       font-size: 8px !important;
     }
 
+    /* ── Alert banner: span the full width on narrow screens ── */
+    #alert-banner {
+      top: 8px; left: 8px; right: 8px; width: auto; max-width: none;
+    }
+
     /* ── Map overlay text: readable on small screens ── */
     .overlay-text { font-size: 0.75rem; }
 
@@ -848,6 +956,14 @@
     <div class="spinner"></div>
     <div class="overlay-text" id="overlay-text">Loading…</div>
   </div>
+
+  <!--
+    Active dangerous-weather alert banner (NWS watches/warnings).
+    Populated by renderAlertBanner() after each search; stays hidden when the
+    searched area has no active alerts. aria-live="polite" announces new alerts
+    to screen readers without interrupting whatever they are currently reading.
+  -->
+  <div id="alert-banner" role="region" aria-label="Active weather alerts" aria-live="polite"></div>
 
   <!-- ── Weather station info popup ── -->
   <div id="popup-panel" role="dialog" aria-label="Weather station details">
@@ -1239,6 +1355,15 @@ let geocodioApiKey = '';
  * @type {L.Marker[]}
  */
 let stationMarkers = [];
+
+/**
+ * Per-station records used by the Tier-2 alert flagging.  One entry per plotted
+ * marker: its badge element (so the .alerted class can be toggled) plus its
+ * coordinates (so it can be point-in-polygon tested against warning polygons).
+ * Rebuilt alongside stationMarkers on every loadStationsAt() call.
+ * @type {{ el: HTMLElement, lat: number, lng: number }[]}
+ */
+let stationRecords = [];
 
 /**
  * ICAO identifier of the currently open station panel, or null if none.
@@ -1708,6 +1833,48 @@ async function fetchForecastPoP(lat, lon, stationId) {
   return pop;
 }
 
+/* Cache of active alerts keyed by rounded "lat,lon".  Alerts move quickly (a
+   tornado warning can be issued or expire within minutes), so the TTL is short —
+   far shorter than the forecast cache — yet long enough to coalesce the periodic
+   refresh ticks and the initial search into a single network hit. */
+const alertsCache   = new Map();          // "lat,lon" → { alerts: Feature[], ts: number }
+const ALERTS_TTL_MS = 2 * 60 * 1000;      // 2 minutes
+
+/**
+ * Fetch the active NWS watches/warnings/advisories affecting a coordinate.
+ *
+ * Endpoint: GET https://api.weather.gov/alerts/active?point={lat},{lon}
+ * The NWS resolves the point against every active alert's area — both the small
+ * storm-based polygons (tornado, severe thunderstorm, flash-flood warnings) and
+ * the larger county/zone-based products (most watches) — and returns only those
+ * that contain the point.  That is exactly "what dangerous weather affects here".
+ *
+ * Results are cached per rounded coordinate for ALERTS_TTL_MS.  Any failure
+ * resolves to an empty array so a flaky alerts feed never blocks the map or the
+ * station data — alerts are strictly supplementary.
+ *
+ * @param   {number} lat
+ * @param   {number} lon
+ * @returns {Promise<Object[]>} Array of GeoJSON alert Features (possibly empty)
+ */
+async function fetchAlerts(lat, lon) {
+  const key    = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+  const cached  = alertsCache.get(key);
+  if (cached && Date.now() - cached.ts < ALERTS_TTL_MS) return cached.alerts;
+
+  let alerts = [];
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`);
+    if (res.ok) alerts = (await res.json()).features || [];
+  } catch (e) {
+    alerts = [];   // supplementary data — swallow and show "no alerts".
+  }
+
+  alertsCache.set(key, { alerts, ts: Date.now() });
+  return alerts;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    10. UNIT-CONVERSION HELPERS
    ───────────────────────────────────────────────────────────────────────────── */
@@ -2026,6 +2193,7 @@ document.getElementById('popup-close').addEventListener('click', () => {
 function clearStations() {
   stationMarkers.forEach(m => map.removeLayer(m));
   stationMarkers = [];
+  stationRecords = [];   // drop the Tier-2 flagging records too
 }
 
 /**
@@ -2063,7 +2231,10 @@ function plotStations(geoJSON) {
     const coords = f.geometry?.coordinates;
     if (!coords) return;                         // skip any feature without a location
     const [lng, lat] = coords;                   // GeoJSON order is [lng, lat]
-    makeStationMarker(f.properties.stationIdentifier, f.properties.name, lat, lng);
+    const el = makeStationMarker(f.properties.stationIdentifier, f.properties.name, lat, lng);
+    // Remember each marker so flagStationsInAlerts() can later test it against
+    // the active warning polygons and toggle its .alerted ring.
+    stationRecords.push({ el, lat, lng });
   });
 }
 
@@ -2086,6 +2257,10 @@ async function loadStationsAt(lat, lon) {
   // newer one if the user searches again before the first fetch resolves.
   const gen = ++searchGeneration;
 
+  // Drop any alerts from the previous area so a stale banner isn't shown for the
+  // new location while its stations and alerts are being fetched.
+  clearAlerts();
+
   setStatus('loading', 'FETCHING STATIONS…');
   overlayText.textContent = 'Fetching weather stations…';
   map.flyTo([lat, lon], 10, { duration: 1.2 });
@@ -2103,6 +2278,249 @@ async function loadStationsAt(lat, lon) {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   activeStationId = null;
   if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
+
+  // Fetch and display any active dangerous-weather alerts for this area, then keep
+  // them refreshed on a timer.  Fire-and-forget: alerts are supplementary and must
+  // never delay or block the station map. The call is generation-guarded internally.
+  loadAlertsForArea(lat, lon, gen);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   15B. DANGEROUS-WEATHER ALERTS  (NWS watches / warnings / advisories)
+   ─────────────────────────────────────────────────────────────────────────────
+   Alerts are area-based, not station-based: the NWS issues them for polygons or
+   county/forecast zones, never for individual observation stations.  So they are
+   anchored to the searched location, displayed two ways:
+
+     • Tier 1 — a banner listing every active alert affecting the area, colour-
+       coded and ranked by severity (renderAlertBanner).
+     • Tier 2 — a pulsing red ring on any station marker that falls inside an
+       active warning POLYGON, since storm-based warnings can cover only part of
+       a city and so apply to some stations but not others (flagStationsInAlerts).
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** Coordinates of the most recent search — the location the alerts belong to. */
+let currentLat    = null;
+let currentLon    = null;
+/** The alert Features currently on screen, and the handle for the refresh loop. */
+let currentAlerts = [];
+let alertsTimer   = null;
+/** Cached banner element (lives above the script, so it always resolves). */
+const alertBanner = document.getElementById('alert-banner');
+
+/**
+ * Classify an alert into one of four visual severity buckets used for colour and
+ * sort order.  Driven by the NWS `event` name first (so the two life-threatening
+ * warnings always stand out) then the `severity` rating.
+ *
+ * @param   {Object} props - alert Feature `properties`
+ * @returns {'crit'|'warn'|'watch'|'info'}
+ */
+function alertClass(props) {
+  const event = (props.event || '').toLowerCase();
+  const sev   = props.severity || '';
+  // Life-threatening, act-now products get the loudest (red, pulsing) treatment.
+  if (event.includes('tornado warning') || event.includes('flash flood warning')) return 'crit';
+  // Any other warning, or an Extreme/Severe-rated product → warning level (orange).
+  if (event.includes('warning') || sev === 'Extreme' || sev === 'Severe') return 'warn';
+  // Watches mean "conditions are favourable, be prepared" → amber.
+  if (event.includes('watch')) return 'watch';
+  // Advisories, special statements, everything else → informational (yellow).
+  return 'info';
+}
+
+/* Sort keys: class first (crit→info), then NWS severity, then soonest expiry. */
+const ALERT_CLASS_RANK = { crit: 0, warn: 1, watch: 2, info: 3 };
+const ALERT_SEV_WEIGHT = { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3, Unknown: 4 };
+
+/**
+ * Order alerts most-dangerous-first so the banner leads with what matters.
+ * @param   {Object[]} features
+ * @returns {Object[]} a sorted copy (input is not mutated)
+ */
+function sortAlerts(features) {
+  return features.slice().sort((a, b) => {
+    const pa = a.properties || {}, pb = b.properties || {};
+    const ca = ALERT_CLASS_RANK[alertClass(pa)], cb = ALERT_CLASS_RANK[alertClass(pb)];
+    if (ca !== cb) return ca - cb;
+    const sa = ALERT_SEV_WEIGHT[pa.severity] ?? 9, sb = ALERT_SEV_WEIGHT[pb.severity] ?? 9;
+    if (sa !== sb) return sa - sb;
+    return new Date(pa.expires || 0) - new Date(pb.expires || 0);
+  });
+}
+
+/**
+ * Escape a string for safe interpolation into innerHTML.  Alert descriptions are
+ * long free-text fields from an external feed, so they are always escaped.
+ * @param   {*} s
+ * @returns {string}
+ */
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Tier 1 — render the alert banner from a list of alert Features.
+ * Hides the banner entirely when there are no active alerts.
+ * @param {Object[]} features - GeoJSON alert Features from fetchAlerts()
+ */
+function renderAlertBanner(features) {
+  const sorted = sortAlerts(features || []);
+
+  // No active alerts → clear and hide the banner, then bail.
+  if (sorted.length === 0) {
+    alertBanner.className = '';
+    alertBanner.innerHTML = '';
+    return;
+  }
+
+  const top      = sorted[0].properties || {};
+  const topClass = alertClass(top);
+  const plural   = sorted.length === 1 ? '' : 's';
+
+  // Collapsible summary chip: alert count + the single most severe event name.
+  const summary = `
+    <button class="alert-summary alert-${topClass}" type="button"
+            data-role="toggle" aria-expanded="true">
+      <span class="alert-summary-icon">⚠️</span>
+      <span class="alert-summary-text">${sorted.length} alert${plural} · ${escapeHtml(top.event || 'Weather alert')}</span>
+      <span class="alert-summary-caret">▾</span>
+    </button>`;
+
+  // One card per alert; the body (headline + description + safety instruction) is
+  // collapsed until the card header is clicked, to keep the banner compact.
+  const cards = sorted.map(f => {
+    const p       = f.properties || {};
+    const cls     = alertClass(p);
+    const expires = p.expires ? `until ${formatTime(p.expires)}` : '';
+    const detail  = [p.description, p.instruction].filter(Boolean).join('\n\n');
+    return `
+      <div class="alert-card alert-${cls}">
+        <button class="alert-card-head" type="button" data-role="card" aria-expanded="false">
+          <span class="alert-event">${escapeHtml(p.event || 'Weather alert')}</span>
+          <span class="alert-expires">${escapeHtml(expires)}</span>
+        </button>
+        <div class="alert-card-body">
+          ${p.headline ? `<p class="alert-headline">${escapeHtml(p.headline)}</p>` : ''}
+          <p class="alert-desc">${escapeHtml(detail)}</p>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Start expanded so alerts are visible on arrival; the user can collapse them.
+  alertBanner.className = 'visible expanded';
+  alertBanner.innerHTML = summary + `<div class="alert-list">${cards}</div>`;
+}
+
+/* Click delegation: toggle the whole banner, or expand an individual card. */
+alertBanner.addEventListener('click', e => {
+  const toggle = e.target.closest('[data-role="toggle"]');
+  if (toggle) {
+    const expanded = alertBanner.classList.toggle('expanded');
+    toggle.setAttribute('aria-expanded', String(expanded));
+    return;
+  }
+  const head = e.target.closest('[data-role="card"]');
+  if (head) {
+    const open = head.closest('.alert-card').classList.toggle('open');
+    head.setAttribute('aria-expanded', String(open));
+  }
+});
+
+/**
+ * Standard ray-casting point-in-polygon test.
+ * @param   {number}     lng   - test point longitude
+ * @param   {number}     lat   - test point latitude
+ * @param   {number[][]} ring  - polygon outer ring as [[lng,lat], …]
+ * @returns {boolean} true if the point lies inside the ring
+ */
+function pointInPolygon(lng, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersects = ((yi > lat) !== (yj > lat)) &&
+                       (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Extract the outer ring(s) of an alert's geometry.  Most watches are zone-only
+ * (no geometry) and yield nothing here; storm-based warnings carry a Polygon or
+ * MultiPolygon footprint.
+ * @param   {Object} feature
+ * @returns {number[][][]} array of outer rings
+ */
+function alertRings(feature) {
+  const geom = feature && feature.geometry;
+  if (!geom) return [];
+  if (geom.type === 'Polygon')      return [geom.coordinates[0]];           // outer ring only
+  if (geom.type === 'MultiPolygon') return geom.coordinates.map(p => p[0]); // outer ring of each part
+  return [];
+}
+
+/**
+ * Tier 2 — flag every station marker that falls inside an active warning polygon.
+ * Stations inside a danger polygon get the pulsing red .alerted ring; all others
+ * are cleared.  Zone-only alerts (no polygon) are intentionally ignored here —
+ * they apply area-wide and are conveyed by the banner alone.
+ * @param {Object[]} features
+ */
+function flagStationsInAlerts(features) {
+  const rings = [];
+  (features || []).forEach(f => alertRings(f).forEach(r => rings.push(r)));
+
+  stationRecords.forEach(rec => {
+    const inside = rings.some(ring => pointInPolygon(rec.lng, rec.lat, ring));
+    rec.el.classList.toggle('alerted', inside);
+  });
+}
+
+/** Clear the banner, station flags, and refresh loop (e.g. when a new search starts). */
+function clearAlerts() {
+  if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
+  currentAlerts = [];
+  alertBanner.className = '';
+  alertBanner.innerHTML = '';
+  stationRecords.forEach(rec => rec.el.classList.remove('alerted'));
+}
+
+/**
+ * Fetch the alerts for a freshly searched area, render them, flag stations, and
+ * start the periodic refresh loop.  Generation-guarded so a slow alert fetch from
+ * an earlier search can't overwrite a newer one.
+ * @param {number} lat
+ * @param {number} lon
+ * @param {number} gen  - the searchGeneration captured by the calling search
+ */
+async function loadAlertsForArea(lat, lon, gen) {
+  currentLat = lat;
+  currentLon = lon;
+  if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
+
+  const alerts = await fetchAlerts(lat, lon);
+  if (gen != null && gen !== searchGeneration) return;   // superseded by a newer search
+
+  currentAlerts = alerts;
+  renderAlertBanner(alerts);
+  flagStationsInAlerts(alerts);
+
+  // Keep alerts current while this location stays loaded. The cache TTL gates the
+  // real network calls, so re-running on this interval is cheap.
+  alertsTimer = setInterval(refreshAlerts, ALERTS_TTL_MS);
+}
+
+/** Re-fetch and re-render alerts for the current location (refresh-loop tick). */
+async function refreshAlerts() {
+  if (currentLat == null) return;
+  const alerts = await fetchAlerts(currentLat, currentLon);
+  currentAlerts = alerts;
+  renderAlertBanner(alerts);
+  flagStationsInAlerts(alerts);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2537,6 +2955,9 @@ fabLocate.addEventListener('click', () => {
 
       const stName = data.properties?.stationName || stationParam;
       const iconEl = makeStationMarker(stationParam, stName, lat, lng);
+      // This path builds its single marker directly (not via plotStations), so
+      // register it for Tier-2 alert flagging by hand.
+      stationRecords = [{ el: iconEl, lat, lng }];
 
       hideOverlay();
       setStatus('ok', stationParam);
@@ -2559,6 +2980,10 @@ fabLocate.addEventListener('click', () => {
 
       // Start the live-refresh timer
       refreshTimer = setInterval(() => doStationRefresh(stationParam), refreshInterval);
+
+      // Show dangerous-weather alerts for the station's location too (no generation
+      // guard needed — this is a one-shot page-load lookup, not a repeatable search).
+      loadAlertsForArea(lat, lng, null);
 
     } catch (e) {
       hideOverlay();

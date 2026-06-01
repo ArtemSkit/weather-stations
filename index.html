@@ -337,6 +337,8 @@
     position: absolute; top: 16px; left: 16px;
     z-index: 1100;                       /* above the station popup (1000) */
     width: 330px; max-width: calc(100% - 32px);
+    /* Never let a long list of alerts run off the bottom of the map. */
+    max-height: calc(100% - 32px); overflow-y: auto;
     display: none; flex-direction: column; gap: 8px;
     font-family: 'Syne', sans-serif;
   }
@@ -1327,8 +1329,13 @@ document.addEventListener('DOMContentLoaded', function () {
  * Leaflet map centred on the contiguous United States at zoom 4.
  * Tile layer: OpenStreetMap standard (free, no API key required).
  */
-const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
+const map = L.map('map', { zoomControl: false }).setView([39.5, -98.35], 4);
 window._wxmap = map;   // expose for mobile tap-to-place
+
+// Zoom control lives bottom-left so it never sits under the top-left alert banner
+// or the top-right station panel (the right side is taken by the panel, the FAB,
+// and Leaflet's attribution).
+L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -1660,6 +1667,16 @@ function deleteCookie(name) {
    ───────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * Forget the current Geocodio API key (memory + cookie). Called when Geocodio
+ * rejects the key (HTTP 403) so the user is re-prompted on the next address
+ * search instead of being stuck with a bad key forever.
+ */
+function clearGeocodioApiKey() {
+  geocodioApiKey = '';
+  deleteCookie(GEOCODIO_COOKIE_NAME);
+}
+
+/**
  * Ensure geocodioApiKey is populated, prompting the user if necessary.
  *
  * Resolution order:
@@ -1671,16 +1688,6 @@ function deleteCookie(name) {
  *
  * @returns {Promise<void>}
  */
-/**
- * Forget the current Geocodio API key (memory + cookie). Called when Geocodio
- * rejects the key (HTTP 403) so the user is re-prompted on the next address
- * search instead of being stuck with a bad key forever.
- */
-function clearGeocodioApiKey() {
-  geocodioApiKey = '';
-  deleteCookie(GEOCODIO_COOKIE_NAME);
-}
-
 function ensureGeocodioApiKey() {
   // Fast path — key already in memory
   if (geocodioApiKey) return Promise.resolve();
@@ -2300,11 +2307,10 @@ async function loadStationsAt(lat, lon) {
    ───────────────────────────────────────────────────────────────────────────── */
 
 /** Coordinates of the most recent search — the location the alerts belong to. */
-let currentLat    = null;
-let currentLon    = null;
-/** The alert Features currently on screen, and the handle for the refresh loop. */
-let currentAlerts = [];
-let alertsTimer   = null;
+let currentLat  = null;
+let currentLon  = null;
+/** setInterval handle for the alert refresh loop, or null when no loop is active. */
+let alertsTimer = null;
 /** Cached banner element (lives above the script, so it always resolves). */
 const alertBanner = document.getElementById('alert-banner');
 
@@ -2483,7 +2489,6 @@ function flagStationsInAlerts(features) {
 /** Clear the banner, station flags, and refresh loop (e.g. when a new search starts). */
 function clearAlerts() {
   if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
-  currentAlerts = [];
   alertBanner.className = '';
   alertBanner.innerHTML = '';
   stationRecords.forEach(rec => rec.el.classList.remove('alerted'));
@@ -2505,7 +2510,6 @@ async function loadAlertsForArea(lat, lon, gen) {
   const alerts = await fetchAlerts(lat, lon);
   if (gen != null && gen !== searchGeneration) return;   // superseded by a newer search
 
-  currentAlerts = alerts;
   renderAlertBanner(alerts);
   flagStationsInAlerts(alerts);
 
@@ -2517,8 +2521,12 @@ async function loadAlertsForArea(lat, lon, gen) {
 /** Re-fetch and re-render alerts for the current location (refresh-loop tick). */
 async function refreshAlerts() {
   if (currentLat == null) return;
-  const alerts = await fetchAlerts(currentLat, currentLon);
-  currentAlerts = alerts;
+  // Capture the location for this tick. If the user searches elsewhere while the
+  // fetch is in flight, currentLat/currentLon change and we discard this result so
+  // it can't overwrite the newer area's alerts.
+  const lat = currentLat, lon = currentLon;
+  const alerts = await fetchAlerts(lat, lon);
+  if (lat !== currentLat || lon !== currentLon) return;
   renderAlertBanner(alerts);
   flagStationsInAlerts(alerts);
 }
@@ -2981,9 +2989,10 @@ fabLocate.addEventListener('click', () => {
       // Start the live-refresh timer
       refreshTimer = setInterval(() => doStationRefresh(stationParam), refreshInterval);
 
-      // Show dangerous-weather alerts for the station's location too (no generation
-      // guard needed — this is a one-shot page-load lookup, not a repeatable search).
-      loadAlertsForArea(lat, lng, null);
+      // Show dangerous-weather alerts for the station's location too. Pass the
+      // current searchGeneration so that if the user starts a normal search while
+      // this fetch is still in flight, the stale result is discarded.
+      loadAlertsForArea(lat, lng, searchGeneration);
 
     } catch (e) {
       hideOverlay();

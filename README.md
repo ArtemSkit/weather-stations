@@ -188,6 +188,10 @@ The popup footer shows:
 
 The pulsing dot indicates a refresh in progress; steady green means data is current. If an observation fetch fails the footer reads **Error fetching data**; when the *first* load fails the panel shows a brief "couldn't load — retrying" note rather than hanging on the loading state, and the next successful tick fills in the data.
 
+### On mobile
+
+On touch devices the popup becomes a **bottom sheet**. Scroll its content freely; to dismiss it, swipe **down from the top of the sheet** (a swipe that starts mid-scroll just scrolls the content and won't close it), or tap the **✕** button.
+
 ---
 
 ## Dangerous-Weather Alerts

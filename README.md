@@ -34,13 +34,15 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Dual temperature** | °F displayed prominently; °C shown alongside it |
 | **Feels Like** | Heat Index or Wind Chill, whichever is applicable |
 | **Precipitation chance** | Real next-hour probability of precipitation from the NWS gridded forecast |
-| **Dangerous-weather alerts** | Active NWS watches/warnings/advisories for the area, shown in a severity-ranked banner; stations inside a warning polygon get a pulsing red ring |
+| **Dangerous-weather alerts** | Active NWS watches/warnings/advisories for the area in a severity-ranked banner; each alert's footprint drawn on the map; a pulsing red ring on stations inside a warning polygon |
+| **Alert map areas** | Every alert's area drawn as a uniquely-coloured polygon with an event label and a hover/tap popup (severity + in-effect time window) |
 | **Sky conditions** | Cloud layer amount and base altitude |
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
 | **Shareable URLs** | Every search updates the address bar — bookmark or share |
 | **Geocodio address lookup** | Street-address geocoding; API key stored in a browser cookie |
 | **PWA** | Installable, offline-capable, and self-updating via Service Worker |
+| **Version badge** | Running app version shown in the bottom-left corner, reported live by the active Service Worker |
 
 ---
 
@@ -192,7 +194,7 @@ The pulsing dot indicates a refresh in progress; steady green means data is curr
 
 Every search also pulls the **active National Weather Service alerts** for that location — tornado and flash-flood warnings, severe-thunderstorm and winter-storm warnings, flood and tornado watches, heat advisories, and so on. They are fetched from the NWS [`/alerts/active`](https://api.weather.gov/alerts/active) endpoint, which returns only the alerts whose area contains the searched point.
 
-> **Why alerts attach to the *area*, not a station.** The NWS never issues alerts for individual observation stations — it issues them for **polygons** (storm-based warnings) or **county/forecast zones** (most watches). WX.MAP therefore anchors alerts to the searched location and surfaces them in two complementary ways.
+> **Why alerts attach to the *area*, not a station.** The NWS never issues alerts for individual observation stations — it issues them for **polygons** (storm-based warnings) or **county/forecast zones** (most watches). WX.MAP therefore anchors alerts to the searched location and surfaces them in three complementary ways.
 
 ### Tier 1 — area alert banner
 
@@ -207,9 +209,18 @@ A banner floats at the top-left of the map whenever the area has active alerts (
 
 The banner opens expanded; click the summary chip to collapse it, or click any alert to reveal its full headline, description, and the NWS safety **instructions**, along with the time it expires.
 
-### Tier 2 — per-station danger ring
+### Tier 2 — alert areas on the map
 
-Storm-based warnings (tornado, severe-thunderstorm, flash-flood) are issued as tight **polygons** that often cover only part of a city — so they can apply to some stations in the area but not others. WX.MAP runs a point-in-polygon test on every plotted station and gives any station **inside an active warning polygon** a **pulsing red ring**. Watches and other zone-only alerts have no polygon and are conveyed by the banner alone (they apply area-wide, not to a single station).
+Every alert's geographic footprint is drawn directly on the map so you can see exactly where it applies:
+
+- **Storm-based warnings** (tornado, severe-thunderstorm, flash-flood) carry an inline `Polygon`/`MultiPolygon` shape and are drawn immediately.
+- **Zone-only products** (most watches and advisories) arrive with no inline shape but list `affectedZones` — WX.MAP resolves each zone's county/forecast outline and draws them as one merged area (so a multi-county watch gets a single label, not one per county). The zone lookup is best-effort and cached, so a slow or failed fetch never blocks the map.
+
+Each area gets a **distinct colour** — hashed from the alert's id, so it stays stable across refreshes and overlapping areas remain easy to tell apart — and an **always-on label** naming the event. **Hover or tap** an area to open a popup with the event name, its **severity · urgency · certainty**, the **in-effect time window** (`onset → ends`, falling back to `effective → expires`), the headline, and the affected-area description; **clicking** pins the popup open.
+
+### Tier 3 — per-station danger ring
+
+Storm-based warnings (tornado, severe-thunderstorm, flash-flood) are issued as tight **polygons** that often cover only part of a city — so they can apply to some stations in the area but not others. WX.MAP runs a point-in-polygon test on every plotted station and gives any station **inside an active warning polygon** a **pulsing red ring**. Zone-only alerts have no storm polygon, so they get no ring — but they still appear as a map area (Tier 2) and in the banner.
 
 ### Refresh & resilience
 
@@ -291,13 +302,20 @@ Because the document is fetched network-first, a normal reload while online alre
 
 ### Updates
 
-WX.MAP detects and applies new versions reliably:
+WX.MAP is versioned by a single `APP_VERSION` constant that is woven into the service worker's cache name (`wxmap-v<version>`). Because bumping it changes `sw.js` itself, the browser is **guaranteed** to detect the new worker — even when a release only touches `index.html`. (Without this, a content-only deploy would be invisible to an installed standalone window until a cold relaunch.)
 
-1. The browser re-checks `sw.js` on each navigation and every 30 minutes.
-2. When a changed worker is found, it installs and **waits** — the running session is never disrupted mid-use.
-3. An **"App update available"** banner slides down from the top with **REFRESH NOW** / **Dismiss**.
-4. Accepting (or, in an installed/standalone window, a 5-second auto-apply) tells the waiting worker to take over; the page then reloads **once** into the new version.
-5. Caches from previous versions are purged automatically on activation.
+1. `sw.js` is registered with `updateViaCache: 'none'`, so the browser always byte-checks it against the network rather than trusting the HTTP cache.
+2. The app re-checks for a new worker on a 30-minute timer **and every time it regains focus/visibility** (throttled to once a minute) — so reopening a long-lived installed PWA pulls any pending update promptly.
+3. When a changed worker is found, it installs and **waits** — the running session is never disrupted mid-use.
+4. An **"App update available"** banner slides down from the top with **REFRESH NOW** / **Dismiss**.
+5. Accepting (or, in an installed/standalone window, a 5-second auto-apply) tells the waiting worker to take over; the page then reloads **once** into the new version.
+6. Caches from previous versions are purged automatically on activation.
+
+> **Releasing a new version:** bump `APP_VERSION` in `sw.js` (and the matching `APP_VERSION_FALLBACK` in `index.html`) so the update flow fires and the version badge reflects the new build.
+
+### Version badge
+
+A small **`vX.Y.Z`** badge sits in the **bottom-left corner** showing which build is running. The value is reported by the **active service worker** — the page requests it over a `GET_VERSION` message — so it flips to the new number the instant an update takes over, a visible confirmation that the update actually applied. Before any worker controls the page, a fallback constant is shown so the badge is never blank. The badge is click-through and sits just below the (lifted) map zoom control.
 
 ### Offline support
 
@@ -322,16 +340,17 @@ weather-stations/
 │   │   ├── #update-banner          (slides down when a new version is ready)
 │   │   ├── #pin-ghost              (follows cursor during drag)
 │   │   ├── <main>
-│   │   │   ├── #map                (Leaflet map container)
+│   │   │   ├── #map                (Leaflet map container — also holds alert area polygons)
 │   │   │   ├── #map-overlay        (loading spinner)
 │   │   │   ├── #alert-banner       (active NWS watches/warnings)
 │   │   │   ├── #popup-panel        (station info / mobile bottom sheet)
 │   │   │   └── #fab-locate         (GPS floating action button)
+│   │   ├── #app-version           (bottom-left version badge)
 │   │   ├── #toast                 (error / info notifications)
 │   │   └── #modal-overlay         (Geocodio API key prompt)
 │   └── <script>
 │       ├── Leaflet JS              (CDN)
-│       ├── SW registration + update flow
+│       ├── SW registration + update flow + version badge
 │       └── Application script      (vanilla JS)
 │           ├── Map initialisation
 │           ├── Application state
@@ -348,7 +367,7 @@ weather-stations/
 │           ├── Panel open / close
 │           ├── Marker management
 │           ├── loadStationsAt pipeline
-│           ├── Dangerous-weather alerts  (banner + per-station polygon flags)
+│           ├── Dangerous-weather alerts  (banner + map area polygons + per-station ring)
 │           ├── URL helpers
 │           ├── doSearch dispatcher
 │           ├── Draggable pin
@@ -365,7 +384,7 @@ weather-stations/
 
 | Service | Purpose | Key required |
 |---|---|---|
-| [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, hourly forecast (precip chance), active alerts | No |
+| [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, hourly forecast (precip chance), active alerts, alert-area zone geometry | No |
 | [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates | No |
 | [Geocodio](https://www.geocod.io/) | Street address → coordinates | Yes (free tier available) |
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |

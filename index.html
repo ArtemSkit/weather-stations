@@ -1285,7 +1285,7 @@ if ('serviceWorker' in navigator) {
    so the badge flips to the new number the moment an update takes over. Before any
    worker controls the page we show APP_VERSION_FALLBACK so there's never a blank.
    ═════════════════════════════════════════════════════════════════════════════ */
-const APP_VERSION_FALLBACK = '1.0.2';   // keep in sync with APP_VERSION in sw.js
+const APP_VERSION_FALLBACK = '1.0.3';   // keep in sync with APP_VERSION in sw.js
 
 function setVersionBadge(v) {
   const el = document.getElementById('app-version');
@@ -2797,7 +2797,9 @@ function renderAlertAreas(features) {
   (features || []).forEach(f => {
     const p     = f.properties || {};
     // Hash the stable alert id (fall back to event) so colours persist across refreshes.
-    const color = `hsl(${alertHue(f.id || p.id || p.event)} 85% 62%)`;
+    // Comma-separated hsl() — Leaflet applies this as an SVG fill/stroke attribute,
+    // where the space-separated CSS Color 4 form isn't reliably parsed on older Safari.
+    const color = `hsl(${alertHue(f.id || p.id || p.event)}, 85%, 62%)`;
     const label = shortAlertLabel(p.event);
 
     if (f.geometry) {
@@ -3095,7 +3097,11 @@ function buildPinIcon(lat, lng) {
     <div class="dropped-pin-icon">📍</div>
   `;
   return {
-    icon: L.divIcon({ html: wrap, className: '', iconSize: [90, 52], iconAnchor: [16, 52] }),
+    // The emoji is horizontally centred in the 90 px-wide icon (flex align-items:center)
+    // and sits at the bottom of the ~47 px-tall content, so the pin's tip is at
+    // (width/2, content-bottom) = (45, 47). Anchoring there makes the tip sit exactly
+    // on the marked coordinate instead of ~29 px to its right.
+    icon: L.divIcon({ html: wrap, className: '', iconSize: [90, 52], iconAnchor: [45, 47] }),
     coordStr
   };
 }
@@ -3470,15 +3476,20 @@ function initMobile() {
 
   /* ── Swipe-down-to-dismiss the bottom sheet ── */
   let sheetTouchStartY = 0;
+  let sheetSwipeIsDismiss = true;   // did the swipe begin at the top of the sheet?
 
   _popupPanel.addEventListener('touchstart', e => {
     sheetTouchStartY = e.touches[0].clientY;
+    // Only a downward swipe that STARTS at the very top of the (scrollable) sheet is
+    // a dismiss gesture. If the content is scrolled, the same drag is the user
+    // scrolling and must not close the panel.
+    sheetSwipeIsDismiss = _popupPanel.scrollTop <= 0;
   }, { passive: true });
 
   _popupPanel.addEventListener('touchend', e => {
     const dy = e.changedTouches[0].clientY - sheetTouchStartY;
-    if (dy > 80) {
-      // User swiped down > 80 px — dismiss the sheet
+    if (sheetSwipeIsDismiss && dy > 80) {
+      // Swiped down > 80 px from the top — dismiss the sheet
       _popupClose && _popupClose.click();
     }
   }, { passive: true });

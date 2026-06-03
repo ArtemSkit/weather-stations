@@ -224,7 +224,10 @@ Storm-based warnings (tornado, severe-thunderstorm, flash-flood) are issued as t
 
 ### Refresh & resilience
 
-Alerts move fast, so they are **re-fetched every 2 minutes** while a location stays loaded and **cached per coordinate for 2 minutes** to coalesce the refresh ticks into a single network call. The alert fetch is best-effort: if it fails or returns nothing, the banner simply stays hidden and the rest of the app is unaffected.
+Alerts move fast, so they are **re-fetched every 2 minutes** while a location stays loaded and **cached per coordinate for 2 minutes** to coalesce the refresh ticks into a single network call. Two refinements keep the experience stable:
+
+- **No needless redraws.** Each refresh is compared (by alert id) against what's already on screen; if nothing has changed, the banner, map areas, and any open popup are left exactly as you left them — a banner you collapsed or a card you expanded is never reset out from under you on the next tick.
+- **Failure-tolerant.** A timed-out or unreachable alert feed is treated as "temporarily unknown" rather than "no alerts", so the alerts currently on screen stay put and the next tick simply retries — a brief network hiccup never blanks an active warning. (On the very first load with no prior data, nothing is shown until the feed responds.)
 
 ---
 

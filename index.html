@@ -1991,29 +1991,33 @@ const ALERTS_TTL_MS = 2 * 60 * 1000;      // 2 minutes
  * the larger county/zone-based products (most watches) — and returns only those
  * that contain the point.  That is exactly "what dangerous weather affects here".
  *
- * Results are cached per rounded coordinate for ALERTS_TTL_MS.  Any failure
- * resolves to an empty array so a flaky alerts feed never blocks the map or the
- * station data — alerts are strictly supplementary.
+ * Results are cached per rounded coordinate for ALERTS_TTL_MS. A failed or
+ * timed-out fetch resolves to **null** (not an empty array) so callers can tell
+ * "the feed is momentarily unreachable" apart from "there are genuinely no alerts
+ * here" — and keep the current display instead of blanking active warnings on a
+ * transient hiccup. Alerts are strictly supplementary, so failure never throws.
  *
  * @param   {number} lat
  * @param   {number} lon
- * @returns {Promise<Object[]>} Array of GeoJSON alert Features (possibly empty)
+ * @returns {Promise<Object[]|null>} alert Features (possibly empty) on success, null on failure
  */
 async function fetchAlerts(lat, lon) {
   const key    = `${lat.toFixed(4)},${lon.toFixed(4)}`;
-  const cached  = alertsCache.get(key);
+  const cached = alertsCache.get(key);
   if (cached && Date.now() - cached.ts < ALERTS_TTL_MS) return cached.alerts;
 
-  let alerts = [];
+  let alerts = null;
   try {
     const res = await fetchWithTimeout(
       `https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`);
     if (res.ok) alerts = (await res.json()).features || [];
   } catch (e) {
-    alerts = [];   // supplementary data — swallow and show "no alerts".
+    alerts = null;   // network/timeout — signal failure rather than "no alerts".
   }
 
-  alertsCache.set(key, { alerts, ts: Date.now() });
+  // Cache only a successful fetch; on failure return null so the caller keeps the
+  // current display and we retry on the next refresh tick.
+  if (alerts !== null) alertsCache.set(key, { alerts, ts: Date.now() });
   return alerts;
 }
 
@@ -2459,6 +2463,26 @@ const alertAreaGroup = L.layerGroup().addTo(map);
 let   alertAreaSeq   = 0;
 const zoneGeomCache  = new Map();   // zone URL → GeoJSON geometry | null
 
+/* Signature of the alert set currently on screen. The 2-minute refresh loop
+   compares against this and skips re-rendering when nothing has changed — so the
+   user's banner state (collapsed/expanded, which card is open) and any open map
+   area popup survive the tick instead of being reset every two minutes. */
+let lastAlertSignature = null;
+
+/**
+ * Build a stable signature of an alert set from its ids. The NWS assigns a fresh
+ * id whenever an alert is issued, updated, or replaced, so a matching id set means
+ * the displayed alerts are genuinely unchanged.
+ * @param   {Object[]} features
+ * @returns {string}
+ */
+function alertsSignature(features) {
+  return (features || [])
+    .map(f => f.id || f.properties?.id || `${f.properties?.event}@${f.properties?.expires}`)
+    .sort()
+    .join('|');
+}
+
 /**
  * Classify an alert into one of four visual severity buckets used for colour and
  * sort order.  Driven by the NWS `event` name first (so the two life-threatening
@@ -2786,6 +2810,7 @@ function clearAlerts() {
   alertBanner.className = '';
   alertBanner.innerHTML = '';
   clearAlertAreas();
+  lastAlertSignature = null;   // next render is for a new area — always draw it
   stationRecords.forEach(rec => rec.el.classList.remove('alerted'));
 }
 
@@ -2805,9 +2830,14 @@ async function loadAlertsForArea(lat, lon, gen) {
   const alerts = await fetchAlerts(lat, lon);
   if (gen != null && gen !== searchGeneration) return;   // superseded by a newer search
 
-  renderAlertBanner(alerts);
-  flagStationsInAlerts(alerts);
-  renderAlertAreas(alerts);
+  // alerts === null means the feed was unreachable on this first load — leave the
+  // (already-cleared) banner and map empty and let the refresh loop retry shortly.
+  if (alerts) {
+    renderAlertBanner(alerts);
+    flagStationsInAlerts(alerts);
+    renderAlertAreas(alerts);
+    lastAlertSignature = alertsSignature(alerts);   // baseline for the refresh loop
+  }
 
   // Keep alerts current while this location stays loaded. The cache TTL gates the
   // real network calls, so re-running on this interval is cheap.
@@ -2823,6 +2853,14 @@ async function refreshAlerts() {
   const lat = currentLat, lon = currentLon;
   const alerts = await fetchAlerts(lat, lon);
   if (lat !== currentLat || lon !== currentLon) return;
+  if (alerts === null) return;   // transient feed failure — keep current display, retry next tick
+
+  // Nothing changed since the last render → leave the banner, map areas, and any
+  // open popup exactly as the user left them.
+  const sig = alertsSignature(alerts);
+  if (sig === lastAlertSignature) return;
+  lastAlertSignature = sig;
+
   renderAlertBanner(alerts);
   flagStationsInAlerts(alerts);
   renderAlertAreas(alerts);
@@ -3011,8 +3049,6 @@ dragPinBtn.addEventListener('keydown', e => {
     console.error('[WX.MAP] keydown handler error:', err);
   }
 });
-
-
 
 /** Remove the dropped pin marker from the map. */
 function removeDragPin() {
@@ -3366,7 +3402,6 @@ function initMobile() {
   function setTapMode(active) {
     tapModeActive = active;
     tapPlaceBanner.classList.toggle('active', active);
-    dragPinBtn.style.borderColor = active ? 'var(--accent2)' : '';
     tapPinBtn.classList.toggle('active', active);
     tapPinBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
 
@@ -3378,10 +3413,9 @@ function initMobile() {
     }
   }
 
-  /* Toggle mode when the mobile pin button is pressed */
-  const toggleTapMode = () => setTapMode(!tapModeActive);
-  dragPinBtn.addEventListener('click', toggleTapMode);
-  tapPinBtn.addEventListener('click', toggleTapMode);
+  /* Toggle mode when the mobile pin button is pressed. The drag-pin is hidden on
+     touch devices, so only the tap-pin button drives this. */
+  tapPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
 
   /*
    * Wait for the Leaflet map to be available in the outer DOMContentLoaded

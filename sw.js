@@ -29,7 +29,7 @@
  * the bottom-left version badge, so the badge always reflects the version actually
  * running. Keep APP_VERSION in sync with APP_VERSION_FALLBACK in index.html.
  */
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2';
 const CACHE_NAME  = `wxmap-v${APP_VERSION}`;
 
 /* App-shell URLs precached at install so the app works offline on first launch. */
@@ -111,13 +111,20 @@ self.addEventListener('fetch', event => {
 async function networkFirst(req) {
   try {
     const res = await fetch(req);
-    const cache = await caches.open(CACHE_NAME);
-    cache.put(req, res.clone()).catch(() => {});
+    // Refresh the cached document, but store it under a SINGLE canonical key
+    // (./index.html) rather than the request URL. Every navigation — including
+    // bookmarked/shared ?lat=…&long=… links — renders the same index.html, so
+    // caching per URL would pile up identical copies. Only cache a successful (2xx)
+    // response so a transient 5xx is never persisted as the offline fallback.
+    if (res.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put('./index.html', res.clone()).catch(() => {});
+    }
     return res;
   } catch (err) {
+    // Offline — serve the cached app shell regardless of the navigation's query string.
     const cache = await caches.open(CACHE_NAME);
-    return (await cache.match(req)) ||
-           (await cache.match('./index.html')) ||
+    return (await cache.match('./index.html')) ||
            (await cache.match('./')) ||
            Response.error();
   }

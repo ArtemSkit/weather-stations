@@ -1285,7 +1285,7 @@ if ('serviceWorker' in navigator) {
    so the badge flips to the new number the moment an update takes over. Before any
    worker controls the page we show APP_VERSION_FALLBACK so there's never a blank.
    ═════════════════════════════════════════════════════════════════════════════ */
-const APP_VERSION_FALLBACK = '1.0.1';   // keep in sync with APP_VERSION in sw.js
+const APP_VERSION_FALLBACK = '1.0.2';   // keep in sync with APP_VERSION in sw.js
 
 function setVersionBadge(v) {
   const el = document.getElementById('app-version');
@@ -2277,6 +2277,18 @@ async function doStationRefresh(stationId) {
   } catch (e) {
     if (activeStationId === stationId) {
       document.getElementById('update-time').textContent = 'Error fetching data';
+      // If the very first fetch failed we're still showing the loading skeleton —
+      // swap it for an error so the panel doesn't hang forever on "Fetching…". The
+      // .station-loading marker is kept, so a later successful tick still replaces
+      // this; once real data has rendered (no skeleton present) a refresh error
+      // leaves the good data untouched and only the footer note changes.
+      const body = document.getElementById('popup-body');
+      if (body.querySelector('.station-loading')) {
+        body.innerHTML =
+          `<div class="station-loading" style="text-align:center;color:var(--red);font-size:0.7rem;padding:20px 0">
+             Couldn't load observations — retrying…
+           </div>`;
+      }
     }
   } finally {
     dotEl.classList.remove('refreshing');
@@ -2310,7 +2322,7 @@ async function openStation(stationId, stationName, markerEl) {
   document.getElementById('popup-id').textContent    = stationId;
   document.getElementById('popup-name').textContent  = stationName || '—';
   document.getElementById('popup-body').innerHTML    =
-    `<div style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
+    `<div class="station-loading" style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
        Fetching observations…
      </div>`;
 
@@ -2758,7 +2770,9 @@ async function fetchZoneGeometry(url) {
   if (zoneGeomCache.has(url)) return zoneGeomCache.get(url);
   let geom = null;
   try {
-    const res = await fetch(url);
+    // Use the timeout wrapper so a hung zone endpoint resolves (to null) instead of
+    // leaving this alert's area silently undrawn while the Promise.all awaits it.
+    const res = await fetchWithTimeout(url);
     if (res.ok) geom = (await res.json()).geometry || null;
   } catch { geom = null; }   // zone outlines are supplementary — never block on failure
   zoneGeomCache.set(url, geom);
@@ -3314,7 +3328,7 @@ fabLocate.addEventListener('click', () => {
       document.getElementById('popup-id').textContent   = stationParam;
       document.getElementById('popup-name').textContent  = stName;
       document.getElementById('popup-body').innerHTML =
-        `<div style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
+        `<div class="station-loading" style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
            Loading…
          </div>`;
       renderWeather(data, stationParam, stName);

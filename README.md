@@ -186,7 +186,7 @@ The popup footer shows:
 
 **To change the refresh interval:** click the number in the footer, type a new value (minimum 10 s), and press Enter or click away. The new interval takes effect immediately.
 
-The pulsing dot indicates a refresh in progress; steady green means data is current.
+The pulsing dot indicates a refresh in progress; steady green means data is current. If an observation fetch fails the footer reads **Error fetching data**; when the *first* load fails the panel shows a brief "couldn't load — retrying" note rather than hanging on the loading state, and the next successful tick fills in the data.
 
 ---
 
@@ -297,7 +297,7 @@ The service worker uses a hybrid strategy tuned for a single-file app:
 
 | Request | Strategy | Why |
 |---|---|---|
-| HTML document (navigation) | **Network-first** | Always serves the latest `index.html` when online; falls back to the cached copy offline |
+| HTML document (navigation) | **Network-first** | Always serves the latest `index.html` when online; offline it falls back to a single cached copy stored under one canonical key, so opening many bookmarked `?lat=…` links never bloats the cache. Only successful (2xx) responses are cached |
 | Same-origin assets (`manifest.json`, …) | **Cache-first** | Instant loads; the cache is filled from the network on first fetch |
 | Cross-origin (NOAA API, OSM tiles, Google Fonts, unpkg CDN) | **Pass-through** | Never cached — live data and third-party assets always go straight to the network |
 

@@ -17,7 +17,20 @@
  * older strategies are purged on activate.
  */
 
-const CACHE_NAME = 'wxmap-v3';
+/*
+ * Single source of truth for the app version. It is woven into CACHE_NAME so that
+ * bumping it changes THIS FILE'S BYTES — which is exactly what makes the browser
+ * detect a new service worker and run the in-app update flow (install → wait →
+ * "update available" banner → activate → reload). Without a change here, a deploy
+ * that only touches index.html is invisible to an installed standalone PWA until a
+ * cold relaunch, so always bump APP_VERSION on release.
+ *
+ * The page also asks the active worker for this value (GET_VERSION) to show it in
+ * the bottom-left version badge, so the badge always reflects the version actually
+ * running. Keep APP_VERSION in sync with APP_VERSION_FALLBACK in index.html.
+ */
+const APP_VERSION = '1.0.0';
+const CACHE_NAME  = `wxmap-v${APP_VERSION}`;
 
 /* App-shell URLs precached at install so the app works offline on first launch. */
 const SHELL_URLS = [
@@ -57,9 +70,19 @@ self.addEventListener('activate', event => {
 
 /* ── Message handler: the page tells a waiting worker to take over immediately. ── */
 self.addEventListener('message', event => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
+  const data = event.data;
+  if (!data) return;
+
+  // The page tells a waiting worker to take over immediately (user accepted update).
+  if (data.type === 'SKIP_WAITING') {
     console.info('[SW] SKIP_WAITING received — activating new version');
     self.skipWaiting();
+  }
+
+  // The page asks which version is running so it can show it in the version badge.
+  // Reply on the MessageChannel port the page supplied with the request.
+  if (data.type === 'GET_VERSION' && event.ports && event.ports[0]) {
+    event.ports[0].postMessage(APP_VERSION);
   }
 });
 

@@ -223,6 +223,10 @@
   /* Dark-mode tile filter — desaturate + hue-rotate to match the UI palette */
   .leaflet-tile-pane { filter: brightness(0.7) saturate(0.6) hue-rotate(190deg); }
 
+  /* Lift the bottom-left zoom control so it clears the version badge in the corner.
+     (The mobile media query lifts it further to clear the FAB.) */
+  .leaflet-control-zoom { margin-bottom: 34px !important; }
+
   /* Override Leaflet control colours */
   .leaflet-control-zoom a {
     background: var(--surface) !important;
@@ -408,6 +412,54 @@
     line-height: 1.5; white-space: pre-line;   /* preserve NWS paragraph breaks */
   }
 
+  /* ════════════════════════════════════════════════════════════════════════════
+     ALERT AREA OVERLAY  (map polygons — see renderAlertAreas())
+     Each active alert with a geographic footprint is drawn as a coloured polygon.
+     A small always-on chip names the event; hovering or tapping the area opens a
+     popup with severity and the in-effect time window. Colours are hashed per
+     alert so overlapping areas stay visually distinct.
+     ════════════════════════════════════════════════════════════════════════════ */
+
+  /* Always-on event chip centred on each alert polygon. */
+  .leaflet-tooltip.alert-area-label {
+    background: rgba(10,14,23,0.82);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 0.6rem;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  }
+  /* Leaflet draws a little caret on directional tooltips — hide it for these chips. */
+  .leaflet-tooltip.alert-area-label::before { display: none !important; }
+
+  /* Dark-theme styling for the alert detail popup. Scoped via the .wx-alert-popup
+     class so it never affects any other Leaflet popup. */
+  .wx-alert-popup .leaflet-popup-content-wrapper {
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  }
+  .wx-alert-popup .leaflet-popup-tip { background: var(--surface); border: 1px solid var(--border); }
+  .wx-alert-popup .leaflet-popup-content { margin: 10px 12px; font-family: 'Space Mono', monospace; }
+  .wx-alert-popup a.leaflet-popup-close-button { color: var(--text-muted); }
+  .wx-alert-popup a.leaflet-popup-close-button:hover { color: var(--red); }
+  .wx-alert-pop-event {
+    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 0.82rem;
+    letter-spacing: 0.04em; display: block; margin-bottom: 4px;
+  }
+  .wx-alert-pop-meta {
+    font-size: 0.56rem; color: var(--text-muted); text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 6px;
+  }
+  .wx-alert-pop-when { font-size: 0.62rem; color: var(--text); margin-bottom: 6px; line-height: 1.5; }
+  .wx-alert-pop-when b { color: var(--accent); font-weight: 700; }
+  .wx-alert-pop-head { font-size: 0.62rem; color: var(--text); line-height: 1.45; margin-bottom: 6px; }
+  .wx-alert-pop-area { font-size: 0.56rem; color: var(--text-muted); line-height: 1.4; }
+
   /* Header row: station ID + full name on the left, close button on the right */
   .popup-header {
     background: var(--surface2);
@@ -566,6 +618,29 @@
     cursor: wait;
   }
   #fab-locate:focus  { box-shadow: 0 0 0 3px rgba(0,212,255,0.35); }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     APP VERSION BADGE  (bottom-left corner)
+     Tiny, muted, click-through label showing the running build version. Sits below
+     the lifted zoom control; see refreshVersionBadge() for how the text is set.
+     ════════════════════════════════════════════════════════════════════════════ */
+  #app-version {
+    position: fixed;
+    left:   calc(8px + var(--safe-left));
+    bottom: calc(6px + var(--safe-bottom));
+    z-index: 800;                    /* above the map, below panels/banners */
+    font-family: 'Space Mono', monospace;
+    font-size: 0.58rem;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    background: rgba(10,14,23,0.6);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 6px;
+    pointer-events: none;            /* never intercept map interaction */
+    user-select: none;
+    opacity: 0.75;
+  }
 
   /* ════════════════════════════════════════════════════════════════════════════
      MODAL DIALOG — used for the Geocodio API key prompt
@@ -1028,6 +1103,14 @@
   </button>
 </main>
 
+<!--
+  App version badge — tiny build-version label pinned to the bottom-left corner.
+  Filled in by refreshVersionBadge() from the active service worker (GET_VERSION),
+  falling back to APP_VERSION_FALLBACK. Body-level (not inside <main>) so its fixed
+  positioning is relative to the viewport and never clipped by the map's overflow.
+-->
+<div id="app-version" aria-hidden="true"></div>
+
 <!-- Toast notification (error / info messages) -->
 <div id="toast" role="alert" aria-live="assertive"></div>
 
@@ -1129,7 +1212,10 @@ if ('serviceWorker' in navigator) {
     const announceUpdate = () =>
       window.dispatchEvent(new CustomEvent('wx-app-update-ready'));
 
-    navigator.serviceWorker.register('./sw.js', { scope: './' })
+    // updateViaCache:'none' forces the browser to byte-check sw.js (and its imports)
+    // against the network on every update() instead of trusting the HTTP cache — so
+    // a freshly deployed worker is always noticed promptly.
+    navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' })
       .then(reg => {
         swRegistration = reg;
         console.info('[WX.MAP] Service worker registered (PWA enabled)');
@@ -1150,12 +1236,27 @@ if ('serviceWorker' in navigator) {
           });
         });
 
-        // Poll for updates: once now, then every 30 minutes.
-        const checkForUpdates = () =>
+        // Ask the browser to re-check sw.js for a newer version. Throttled so the
+        // visibility/focus triggers below can't hammer the network.
+        let lastCheck = 0;
+        const checkForUpdates = () => {
+          const now = Date.now();
+          if (now - lastCheck < 60 * 1000) return;   // at most once per minute
+          lastCheck = now;
           reg.update().catch(err =>
             console.warn('[WX.MAP] Update check failed:', err.message));
+        };
+
+        // Check now, on a periodic timer, and — crucially for an installed PWA that
+        // stays open for days — every time the user returns to the app. Re-opening a
+        // backgrounded standalone window then promptly pulls any available update,
+        // instead of waiting out the 30-minute timer.
         checkForUpdates();
         setInterval(checkForUpdates, 30 * 60 * 1000);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') checkForUpdates();
+        });
+        window.addEventListener('focus', checkForUpdates);
       })
       .catch(err =>
         console.error('[WX.MAP] Service worker registration failed:', err));
@@ -1174,6 +1275,40 @@ if ('serviceWorker' in navigator) {
   })();
 } else {
   console.warn('[WX.MAP] Service workers not supported — offline & update features disabled');
+}
+
+/* ═════════════════════════════════════════════════════════════════════════════
+   APP VERSION BADGE  (bottom-left)
+   ─────────────────────────────────────────────────────────────────────────────
+   Shows which release is running so it's visible at a glance (and in bug reports).
+   The authoritative value is reported by the ACTIVE service worker (GET_VERSION),
+   so the badge flips to the new number the moment an update takes over. Before any
+   worker controls the page we show APP_VERSION_FALLBACK so there's never a blank.
+   ═════════════════════════════════════════════════════════════════════════════ */
+const APP_VERSION_FALLBACK = '1.0.0';   // keep in sync with APP_VERSION in sw.js
+
+function setVersionBadge(v) {
+  const el = document.getElementById('app-version');
+  if (el) el.textContent = 'v' + v;
+}
+
+function refreshVersionBadge() {
+  setVersionBadge(APP_VERSION_FALLBACK);   // show something immediately, no flash
+  const ctrl = navigator.serviceWorker && navigator.serviceWorker.controller;
+  if (!ctrl) return;                       // no worker yet → keep the fallback
+  try {
+    const ch   = new MessageChannel();
+    const stop = setTimeout(() => { ch.port1.onmessage = null; }, 1500);  // give up quietly
+    ch.port1.onmessage = e => { clearTimeout(stop); if (e.data) setVersionBadge(e.data); };
+    ctrl.postMessage({ type: 'GET_VERSION' }, [ch.port2]);
+  } catch (_) { /* messaging unsupported — fallback already shown */ }
+}
+
+refreshVersionBadge();
+// After an update activates, a new worker takes control — refresh the badge so it
+// reflects the version now actually running (covers the first-install claim too).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', refreshVersionBadge);
 }
 
 /* ═════════════════════════════════════════════════════════════════════════════
@@ -2314,6 +2449,16 @@ let alertsTimer = null;
 /** Cached banner element (lives above the script, so it always resolves). */
 const alertBanner = document.getElementById('alert-banner');
 
+/* ── Alert AREA overlay state (map polygons) ──────────────────────────────────
+   alertAreaGroup holds every alert polygon currently drawn on the map.
+   alertAreaSeq guards late, asynchronous zone-geometry draws so a result from an
+   earlier render can never paint onto a newer one.
+   zoneGeomCache memoises the separate NWS zone-geometry lookups used to outline
+   zone-only alerts that arrive without an inline polygon. */
+const alertAreaGroup = L.layerGroup().addTo(map);
+let   alertAreaSeq   = 0;
+const zoneGeomCache  = new Map();   // zone URL → GeoJSON geometry | null
+
 /**
  * Classify an alert into one of four visual severity buckets used for colour and
  * sort order.  Driven by the NWS `event` name first (so the two life-threatening
@@ -2486,11 +2631,161 @@ function flagStationsInAlerts(features) {
   });
 }
 
-/** Clear the banner, station flags, and refresh loop (e.g. when a new search starts). */
+/* ─────────────────────────────────────────────────────────────────────────────
+   ALERT AREA OVERLAY  (draw each alert's footprint on the map)
+   ─────────────────────────────────────────────────────────────────────────────
+   The NWS alerts feed is GeoJSON: storm-based warnings (tornado, severe
+   thunderstorm, flash-flood…) carry an inline Polygon/MultiPolygon footprint,
+   while many zone-based products (winter storm, heat, wind…) arrive with
+   geometry:null and instead list affectedZones URLs whose own GeoJSON holds the
+   county/forecast-zone outline. We draw both — inline geometry immediately, zone
+   geometry after a best-effort lookup. Each area gets a hashed distinct colour, an
+   always-on event label, and a hover/tap popup with severity and the time window.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** Deterministic 0–359 hue from any string, so each alert keeps a stable, distinct colour. */
+function alertHue(seed) {
+  let h = 0;
+  const s = String(seed || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+
+/* Short, readable map labels for the common NWS events (key is lower-cased event). */
+const ALERT_SHORT_LABELS = {
+  'tornado warning': 'TORNADO',          'tornado watch': 'TORNADO WATCH',
+  'severe thunderstorm warning': 'SEVERE T-STORM', 'severe thunderstorm watch': 'T-STORM WATCH',
+  'flash flood warning': 'FLASH FLOOD',  'flash flood watch': 'FLASH FLOOD WATCH',
+  'flood warning': 'FLOOD',              'flood advisory': 'FLOOD ADVISORY',
+  'winter storm warning': 'WINTER STORM','winter storm watch': 'WINTER STORM WATCH',
+  'winter weather advisory': 'WINTER WX','ice storm warning': 'ICE STORM',
+  'blizzard warning': 'BLIZZARD',        'high wind warning': 'HIGH WIND',
+  'wind advisory': 'WIND',               'excessive heat warning': 'EXTREME HEAT',
+  'heat advisory': 'HEAT',               'hurricane warning': 'HURRICANE',
+  'hurricane watch': 'HURRICANE WATCH',  'tropical storm warning': 'TROPICAL STORM',
+  'storm surge warning': 'STORM SURGE',  'red flag warning': 'FIRE WEATHER',
+  'dense fog advisory': 'DENSE FOG',     'special weather statement': 'WX STATEMENT',
+};
+
+/** Map a full NWS event name to a short label (falls back to a trimmed upper-case event). */
+function shortAlertLabel(event) {
+  const e   = (event || 'Alert').trim();
+  const hit = ALERT_SHORT_LABELS[e.toLowerCase()];
+  if (hit) return hit;
+  const up = e.toUpperCase();
+  return up.length > 22 ? up.slice(0, 21) + '…' : up;
+}
+
+/** Format an alert timestamp as a compact date+time, e.g. "Jun 2, 3:45 PM CDT". */
+function formatWhen(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
+  });
+}
+
+/** Build the rich popup HTML shown when an alert area is hovered or tapped. */
+function alertAreaPopupHtml(props, color) {
+  const event = escapeHtml(props.event || 'Weather alert');
+  // Severity / urgency / certainty give a quick read on how serious + imminent it is.
+  const meta  = [props.severity, props.urgency, props.certainty]
+    .filter(v => v && v !== 'Unknown').map(escapeHtml).join(' · ');
+  // Prefer the real hazard window (onset→ends); fall back to effective→expires.
+  const start = formatWhen(props.onset || props.effective || props.sent);
+  const end   = formatWhen(props.ends  || props.expires);
+  const head  = props.headline ? `<div class="wx-alert-pop-head">${escapeHtml(props.headline)}</div>` : '';
+  const area  = props.areaDesc ? `<div class="wx-alert-pop-area">${escapeHtml(props.areaDesc)}</div>` : '';
+  return `
+    <span class="wx-alert-pop-event" style="color:${color}">${event}</span>
+    ${meta ? `<div class="wx-alert-pop-meta">${meta}</div>` : ''}
+    <div class="wx-alert-pop-when">In effect:<br><b>${start}</b> &rarr; <b>${end}</b></div>
+    ${head}${area}`;
+}
+
+/** Draw one alert geometry (Polygon/MultiPolygon) with label, popup, and hover. */
+function addAlertGeometryToMap(geom, props, color, label) {
+  // L.geoJSON understands Polygon, MultiPolygon, and interior holes directly.
+  const layer = L.geoJSON(geom, {
+    style: { color, weight: 2, opacity: 0.95, fillColor: color, fillOpacity: 0.18 }
+  });
+
+  // Always-on chip naming the event, tinted to the area's colour. Non-interactive
+  // so hover/click pass straight through to the polygon underneath.
+  layer.bindTooltip(`<span style="color:${color}">${escapeHtml(label)}</span>`, {
+    permanent: true, direction: 'center', className: 'alert-area-label', interactive: false
+  });
+
+  // Hover/tap detail popup. autoPan is off so a hover never yanks the map around.
+  layer.bindPopup(alertAreaPopupHtml(props, color), {
+    className: 'wx-alert-popup', autoPan: false, maxWidth: 260
+  });
+
+  // Desktop hover: brighten the area and reveal details; restore on mouse-out
+  // unless the user has pinned the popup open with a click/tap.
+  layer.on('mouseover', () => { layer.setStyle({ weight: 3, fillOpacity: 0.32 }); layer.openPopup(); });
+  layer.on('mouseout',  () => { layer.setStyle({ weight: 2, fillOpacity: 0.18 }); if (!layer._wxPinned) layer.closePopup(); });
+  layer.on('click',     () => { layer._wxPinned = true; layer.openPopup(); });
+
+  alertAreaGroup.addLayer(layer);
+}
+
+/** Best-effort fetch of a single NWS zone's GeoJSON geometry (memoised, never throws). */
+async function fetchZoneGeometry(url) {
+  if (zoneGeomCache.has(url)) return zoneGeomCache.get(url);
+  let geom = null;
+  try {
+    const res = await fetch(url);
+    if (res.ok) geom = (await res.json()).geometry || null;
+  } catch { geom = null; }   // zone outlines are supplementary — never block on failure
+  zoneGeomCache.set(url, geom);
+  return geom;
+}
+
+/** Remove every alert polygon from the map (and invalidate any in-flight zone draws). */
+function clearAlertAreas() {
+  alertAreaSeq++;            // any pending zone-geometry draw now sees a stale seq
+  alertAreaGroup.clearLayers();
+}
+
+/**
+ * Draw the footprint of every active alert. Inline geometry is drawn immediately;
+ * zone-only alerts have their outline fetched and drawn afterwards (best effort,
+ * guarded so a slow fetch can't paint onto a newer render).
+ * @param {Object[]} features - GeoJSON alert Features from fetchAlerts()
+ */
+function renderAlertAreas(features) {
+  clearAlertAreas();
+  const seq = alertAreaSeq;
+  (features || []).forEach(f => {
+    const p     = f.properties || {};
+    // Hash the stable alert id (fall back to event) so colours persist across refreshes.
+    const color = `hsl(${alertHue(f.id || p.id || p.event)} 85% 62%)`;
+    const label = shortAlertLabel(p.event);
+
+    if (f.geometry) {
+      addAlertGeometryToMap(f.geometry, p, color, label);   // storm-based: inline polygon
+      return;
+    }
+    // Zone-only product: resolve every affected zone's outline, then draw them as a
+    // SINGLE layer (one GeometryCollection) so the alert gets just one label and one
+    // popup — not one per county. Guarded so a slow lookup can't paint a stale render.
+    const zones = Array.isArray(p.affectedZones) ? p.affectedZones : [];
+    if (!zones.length) return;
+    Promise.all(zones.map(fetchZoneGeometry)).then(geoms => {
+      if (seq !== alertAreaSeq) return;                     // superseded by a newer render
+      const parts = geoms.filter(Boolean);
+      if (!parts.length) return;                            // no outlines resolved — skip
+      addAlertGeometryToMap({ type: 'GeometryCollection', geometries: parts }, p, color, label);
+    });
+  });
+}
+
+/** Clear the banner, map areas, station flags, and refresh loop (e.g. when a new search starts). */
 function clearAlerts() {
   if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
   alertBanner.className = '';
   alertBanner.innerHTML = '';
+  clearAlertAreas();
   stationRecords.forEach(rec => rec.el.classList.remove('alerted'));
 }
 
@@ -2512,6 +2807,7 @@ async function loadAlertsForArea(lat, lon, gen) {
 
   renderAlertBanner(alerts);
   flagStationsInAlerts(alerts);
+  renderAlertAreas(alerts);
 
   // Keep alerts current while this location stays loaded. The cache TTL gates the
   // real network calls, so re-running on this interval is cheap.
@@ -2529,6 +2825,7 @@ async function refreshAlerts() {
   if (lat !== currentLat || lon !== currentLon) return;
   renderAlertBanner(alerts);
   flagStationsInAlerts(alerts);
+  renderAlertAreas(alerts);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

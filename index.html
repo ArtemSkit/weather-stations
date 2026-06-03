@@ -630,16 +630,18 @@
     bottom: calc(6px + var(--safe-bottom));
     z-index: 800;                    /* above the map, below panels/banners */
     font-family: 'Space Mono', monospace;
-    font-size: 0.58rem;
+    font-size: 0.66rem;              /* a touch larger so it's actually readable */
+    font-weight: 700;
     letter-spacing: 0.06em;
-    color: var(--text-muted);
-    background: rgba(10,14,23,0.6);
-    border: 1px solid var(--border);
+    /* High-contrast accent text on a near-solid chip so it stands out against the
+       busy, dark-filtered map tiles instead of blending into them. */
+    color: var(--accent);
+    background: rgba(10,14,23,0.92);
+    border: 1px solid var(--accent);
     border-radius: 3px;
-    padding: 2px 6px;
+    padding: 3px 7px;
     pointer-events: none;            /* never intercept map interaction */
     user-select: none;
-    opacity: 0.75;
   }
 
   /* ════════════════════════════════════════════════════════════════════════════
@@ -1285,7 +1287,7 @@ if ('serviceWorker' in navigator) {
    so the badge flips to the new number the moment an update takes over. Before any
    worker controls the page we show APP_VERSION_FALLBACK so there's never a blank.
    ═════════════════════════════════════════════════════════════════════════════ */
-const APP_VERSION_FALLBACK = '1.0.3';   // keep in sync with APP_VERSION in sw.js
+const APP_VERSION_FALLBACK = '1.0.4';   // keep in sync with APP_VERSION in sw.js
 
 function setVersionBadge(v) {
   const el = document.getElementById('app-version');

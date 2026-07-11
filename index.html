@@ -11,7 +11,7 @@
   ║  • NOAA Weather.gov public API — station list + live observations.          ║
   ║  • Nominatim (OSM) — free ZIP→coordinates geocoding.                        ║
   ║  • Geocodio API — street address geocoding (API key required, stored        ║
-  ║    in a browser cookie so the user is only prompted once).                  ║
+  ║    in localStorage so the user is only prompted once).                      ║
   ║  • Service Worker (external sw.js) — offline caching for the app shell      ║
   ║    so it loads even without a network connection; also delivers updates.    ║
   ║  • Web App Manifest (external manifest.json) — enables the browser's        ║
@@ -270,7 +270,7 @@
   }
 
   /*
-   * Tier-2 "in the danger zone" highlight.
+   * Tier-3 "in the danger zone" highlight.
    * Added by flagStationsInAlerts() when a station's coordinates fall inside an
    * active NWS warning polygon (e.g. a tornado or flash-flood warning). The
    * pulsing red ring is drawn as a ::after pseudo-element so it layers on top of
@@ -747,9 +747,6 @@
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-left:   env(safe-area-inset-left,   0px);
     --safe-right:  env(safe-area-inset-right,  0px);
-
-    /* Bottom sheet sizing (overridden in JS when popup opens on mobile) */
-    --sheet-peek:  0px;
   }
 
   /* Prevent tap-highlight flash on touch */
@@ -779,6 +776,20 @@
     animation: slideIn 0.2s ease;
   }
   #tap-place-banner.active { display: block; }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     TOUCH-ONLY CONTROL SWAP
+     Drag-and-drop isn't available on touch screens, so the drag-pin is replaced by
+     the tap-to-place button. Deliberately gated on (pointer: coarse) alone — NOT
+     the width-based mobile query below — because a narrow desktop window is still
+     mouse-driven: it must keep the drag-pin and never show the tap button. The
+     button's click handler in initMobile() is gated on the SAME (pointer: coarse)
+     condition, so visibility and behaviour can never disagree.
+     ════════════════════════════════════════════════════════════════════════════ */
+  @media (pointer: coarse) {
+    #drag-pin    { display: none !important; }
+    #tap-pin-btn { display: flex !important; }
+  }
 
   /* ════════════════════════════════════════════════════════════════════════════
      MOBILE STYLES  (≤ 640 px wide OR coarse pointer — touch screens)
@@ -827,9 +838,6 @@
       flex-shrink: 0;
     }
 
-    /* Drag-pin is not draggable on touch devices; replace with tap-to-place button */
-    #drag-pin { display: none !important; }
-    #tap-pin-btn { display: flex !important; }
     #tap-pin-btn.active { border-color: var(--accent2); }
 
     /* ── Leaflet zoom controls — move to left side, clear of FAB ── */
@@ -897,8 +905,10 @@
     /* Temperature number: slightly smaller to fit mobile width */
     .weather-temp { font-size: 2rem; }
 
-    /* ── Toast: rise above bottom sheet when open ── */
-    main.sheet-open #toast {
+    /* ── Toast: rise above bottom sheet when open ──
+       #toast is a following sibling of <main> (not a descendant), so the
+       sibling combinator is required for sheet-open to reach it. */
+    main.sheet-open ~ #toast {
       bottom: calc(70vh + 8px) !important;
     }
 
@@ -951,7 +961,6 @@
 
     /* ── Toast: add safe area inset ── */
     #toast { bottom: calc(20px + var(--safe-bottom)); }
-    main.sheet-open #toast { bottom: calc(70vh + 8px) !important; }
   }
 </style>
 </head>
@@ -1139,7 +1148,7 @@
 <!-- ════════════════════════════════════════════════════════════════
      GEOCODIO API KEY MODAL
      Shown once when the user first performs an address search.
-     The key is persisted in a browser cookie so subsequent searches
+     The key is persisted in localStorage so subsequent searches
      skip this prompt.
      ════════════════════════════════════════════════════════════════ -->
 <div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
@@ -1149,10 +1158,10 @@
       To look up street addresses, WX.MAP uses the
       <strong style="color:var(--text)">Geocodio geocoding API</strong>.
       Please enter your API key below.<br><br>
-      Your key will be stored <em>only in this browser</em> as a cookie and
+      Your key will be stored <em>only in this browser</em> (localStorage) and
       will never be sent anywhere except directly to Geocodio.
       You can get a free key at
-      <a href="https://www.geocod.io/" target="_blank"
+      <a href="https://www.geocod.io/" target="_blank" rel="noopener noreferrer"
          style="color:var(--accent)">geocod.io</a>.
     </p>
     <input
@@ -1287,7 +1296,7 @@ if ('serviceWorker' in navigator) {
    so the badge flips to the new number the moment an update takes over. Before any
    worker controls the page we show APP_VERSION_FALLBACK so there's never a blank.
    ═════════════════════════════════════════════════════════════════════════════ */
-const APP_VERSION_FALLBACK = '1.0.4';   // keep in sync with APP_VERSION in sw.js
+const APP_VERSION_FALLBACK = '1.0.5';   // keep in sync with APP_VERSION in sw.js
 
 function setVersionBadge(v) {
   const el = document.getElementById('app-version');
@@ -1329,7 +1338,9 @@ if ('serviceWorker' in navigator) {
 function getBrowserInfo() {
   const ua = navigator.userAgent.toLowerCase();
   if (ua.includes('edg')) return 'Edge';
-  if (ua.includes('chrome') && ua.includes('brave')) return 'Brave';
+  // Brave stopped identifying itself in the UA string years ago; the only reliable
+  // signal is the navigator.brave object it injects.
+  if (navigator.brave && ua.includes('chrome')) return 'Brave';
   if (ua.includes('chrome') && !ua.includes('chromium')) return 'Chrome';
   if (ua.includes('opr/') || ua.includes('opera')) return 'Opera';
   if (ua.includes('firefox')) return 'Firefox';
@@ -1488,7 +1499,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 /**
  * Geocodio API key.  Not declared as a constant because it may be populated
- * at runtime from a browser cookie or from the key-entry modal dialog.
+ * at runtime from localStorage or from the key-entry modal dialog.
  * @type {string}
  */
 let geocodioApiKey = '';
@@ -1501,7 +1512,7 @@ let geocodioApiKey = '';
 let stationMarkers = [];
 
 /**
- * Per-station records used by the Tier-2 alert flagging.  One entry per plotted
+ * Per-station records used by the Tier-3 alert flagging.  One entry per plotted
  * marker: its badge element (so the .alerted class can be toggled) plus its
  * coordinates (so it can be point-in-polygon tested against warning polygons).
  * Rebuilt alongside stationMarkers on every loadStationsAt() call.
@@ -1695,13 +1706,16 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15_000) {
  * Convert a US ZIP code to geographic coordinates using the Nominatim API
  * (OpenStreetMap's free geocoding service — no key required).
  *
- * @param   {string} zip  - 5-digit ZIP code
+ * @param   {string} zip  - 5-digit ZIP code, optionally with a "-NNNN" extension
  * @returns {Promise<{ lat: number, lon: number }>}
  * @throws  {Error} if the ZIP is not found or the request fails
  */
 async function zipToCoords(zip) {
+  // OSM stores US postcodes as plain 5-digit ZIPs, so a ZIP+4 ("22201-1234")
+  // would find nothing — query with the 5-digit prefix only.
+  const zip5 = zip.slice(0, 5);
   const url = `https://nominatim.openstreetmap.org/search`
-            + `?postalcode=${encodeURIComponent(zip)}&country=US&format=json&limit=1`;
+            + `?postalcode=${encodeURIComponent(zip5)}&country=US&format=json&limit=1`;
   const res = await fetchWithTimeout(url, { headers: { 'Accept-Language': 'en' } });
   if (!res.ok) throw new Error('ZIP geocoding request failed');
   const data = await res.json();
@@ -1714,9 +1728,9 @@ async function zipToCoords(zip) {
  *
  * Before making the request this function:
  *   1. Checks whether geocodioApiKey is set.
- *   2. If not, reads the cookie "wxmap_geocodio_key".
+ *   2. If not, loads the persisted key (localStorage / legacy cookie).
  *   3. If still empty, prompts the user via the modal dialog, persists the key
- *      in a cookie, then continues.
+ *      in localStorage, then continues.
  *
  * @param   {string} address  - Free-form address string
  * @returns {Promise<{ lat: number, lon: number }>}
@@ -1724,7 +1738,7 @@ async function zipToCoords(zip) {
  *                  user cancels the prompt
  */
 async function addressToCoords(address) {
-  // ── Ensure we have an API key (cookie → prompt fallback) ──
+  // ── Ensure we have an API key (stored key → prompt fallback) ──
   await ensureGeocodioApiKey();
 
   const url = `https://api.geocod.io/v1.9/geocode`
@@ -1749,14 +1763,22 @@ async function addressToCoords(address) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   7. COOKIE HELPERS
+   7. API-KEY STORAGE HELPERS
+   ─────────────────────────────────────────────────────────────────────────────
+   The Geocodio API key persists in localStorage, which stays strictly inside the
+   browser. (Releases before 1.0.5 used a cookie — but cookies ride along on every
+   HTTP request to the hosting server, silently sending the key somewhere the user
+   was told it would never go. The legacy cookie is migrated then deleted below.)
+   Where localStorage is blocked (some WebViews / privacy modes) the cookie is
+   kept as the persistence fallback so the user isn't re-prompted every session.
    ───────────────────────────────────────────────────────────────────────────── */
 
-/** Name of the cookie used to persist the Geocodio API key. */
-const GEOCODIO_COOKIE_NAME = 'wxmap_geocodio_key';
+/** localStorage key (and legacy cookie name) under which the Geocodio API key is stored. */
+const GEOCODIO_KEY_NAME = 'wxmap_geocodio_key';
 
 /**
- * Read a single cookie value by name.
+ * Read a single cookie value by name. Only used to migrate the legacy
+ * pre-1.0.5 cookie that stored the Geocodio API key.
  *
  * @param   {string}      name
  * @returns {string|null}       Decoded cookie value, or null if absent
@@ -1769,8 +1791,8 @@ function getCookie(name) {
 }
 
 /**
- * Write a cookie.  Defaults to a 1-year expiry, SameSite=Strict.
- * Not HttpOnly (must be JS-readable) and not Secure (may run on file://).
+ * Write a directory-scoped cookie (1-year expiry, SameSite=Strict). Only used as
+ * the persistence fallback when localStorage is blocked — see saveStoredApiKey().
  *
  * @param {string} name
  * @param {string} value
@@ -1778,21 +1800,66 @@ function getCookie(name) {
  */
 function setCookie(name, value, daysToExpire = 365) {
   const expires = new Date(Date.now() + daysToExpire * 86_400_000).toUTCString();
-  // Scope the cookie to this app's directory (not the whole origin) so sibling
-  // projects sharing the host — e.g. other GitHub Pages sites — never receive it.
   const path = location.pathname.replace(/[^/]*$/, '') || '/';
   document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires};path=${path};SameSite=Strict`;
 }
 
 /**
- * Delete a cookie. Uses the same directory-scoped path as setCookie() so the
- * cookie that was written is actually the one that gets cleared.
+ * Delete a cookie. Uses the same directory-scoped path the cookie was written
+ * with, so the cookie that exists is actually the one that gets cleared.
  *
  * @param {string} name
  */
 function deleteCookie(name) {
   const path = location.pathname.replace(/[^/]*$/, '') || '/';
   document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=${path};SameSite=Strict`;
+}
+
+/**
+ * Load the persisted Geocodio API key.
+ * Prefers localStorage; falls back once to the legacy cookie, migrating it into
+ * localStorage and deleting it so the key stops being sent to the hosting server.
+ * localStorage access is wrapped in try/catch — some privacy modes block it, in
+ * which case the key simply lives in memory for the session.
+ *
+ * @returns {string|null}
+ */
+function loadStoredApiKey() {
+  try {
+    const stored = localStorage.getItem(GEOCODIO_KEY_NAME);
+    if (stored) return stored;
+  } catch (_) { /* storage blocked — fall through to the legacy cookie */ }
+
+  const legacy = getCookie(GEOCODIO_KEY_NAME);
+  if (legacy) {
+    // Delete the cookie only once the key has actually landed in localStorage —
+    // if storage is blocked the cookie stays as the sole persisted copy.
+    if (saveStoredApiKey(legacy)) deleteCookie(GEOCODIO_KEY_NAME);
+  }
+  return legacy;
+}
+
+/**
+ * Persist the Geocodio API key. localStorage is preferred (never attached to HTTP
+ * requests); where it is blocked (some WebViews / privacy modes) the key falls
+ * back to the directory-scoped cookie so it still survives across sessions.
+ *
+ * @param   {string}  key
+ * @returns {boolean}      true if the key landed in localStorage,
+ *                         false if the cookie fallback was used instead
+ */
+function saveStoredApiKey(key) {
+  try { localStorage.setItem(GEOCODIO_KEY_NAME, key); return true; }
+  catch (_) {
+    setCookie(GEOCODIO_KEY_NAME, key);
+    return false;
+  }
+}
+
+/** Remove the persisted Geocodio API key (localStorage + any legacy cookie). */
+function removeStoredApiKey() {
+  try { localStorage.removeItem(GEOCODIO_KEY_NAME); } catch (_) { /* ignore */ }
+  deleteCookie(GEOCODIO_KEY_NAME);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1804,13 +1871,13 @@ function deleteCookie(name) {
    ───────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Forget the current Geocodio API key (memory + cookie). Called when Geocodio
- * rejects the key (HTTP 403) so the user is re-prompted on the next address
- * search instead of being stuck with a bad key forever.
+ * Forget the current Geocodio API key (memory + persisted copy). Called when
+ * Geocodio rejects the key (HTTP 403) so the user is re-prompted on the next
+ * address search instead of being stuck with a bad key forever.
  */
 function clearGeocodioApiKey() {
   geocodioApiKey = '';
-  deleteCookie(GEOCODIO_COOKIE_NAME);
+  removeStoredApiKey();
 }
 
 /**
@@ -1818,9 +1885,9 @@ function clearGeocodioApiKey() {
  *
  * Resolution order:
  *   1. geocodioApiKey already set in memory → resolve immediately.
- *   2. Cookie exists → read key, update geocodioApiKey, resolve.
+ *   2. Persisted key exists (localStorage / legacy cookie) → load it, resolve.
  *   3. Neither → show the modal dialog and wait.
- *      • Confirm: save key to cookie + geocodioApiKey, resolve.
+ *      • Confirm: persist the key + set geocodioApiKey, resolve.
  *      • Cancel:  reject with a user-visible error.
  *
  * @returns {Promise<void>}
@@ -1829,10 +1896,10 @@ function ensureGeocodioApiKey() {
   // Fast path — key already in memory
   if (geocodioApiKey) return Promise.resolve();
 
-  // Cookie fallback
-  const fromCookie = getCookie(GEOCODIO_COOKIE_NAME);
-  if (fromCookie) {
-    geocodioApiKey = fromCookie;
+  // Persisted-key fallback
+  const stored = loadStoredApiKey();
+  if (stored) {
+    geocodioApiKey = stored;
     return Promise.resolve();
   }
 
@@ -1850,7 +1917,7 @@ function ensureGeocodioApiKey() {
       }
       modalApiKey.style.borderColor = '';
       geocodioApiKey = key;
-      setCookie(GEOCODIO_COOKIE_NAME, key);
+      saveStoredApiKey(key);
       cleanup();
       resolve();
     }
@@ -2145,6 +2212,12 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
     .filter(Boolean)
     .join(', ');
 
+  /* Free-text observation fields come from an external feed and are interpolated
+     into innerHTML below — escape them, same policy as the alert renderer. */
+  const descSafe  = escapeHtml(p.textDescription || '—');
+  const cloudSafe = escapeHtml(cloudStr || '');
+  const pwxSafe   = escapeHtml(pwx);
+
   /* ── Update popup header and footer ── */
   document.getElementById('popup-id').textContent   = stationId;
   document.getElementById('popup-name').textContent  = stationName || p.stationName || '—';
@@ -2188,9 +2261,9 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
     ? `<div class="weather-item full">
          <div class="weather-item-label">Sky${pwx ? ' / Weather' : ''}</div>
          <div class="weather-item-value">
-           ${cloudStr || ''}
+           ${cloudSafe}
            ${pwx ? (cloudStr ? '<br>' : '') +
-             '<span style="font-size:0.75rem;color:var(--text-muted)">' + pwx + '</span>'
+             '<span style="font-size:0.75rem;color:var(--text-muted)">' + pwxSafe + '</span>'
              : ''}
          </div>
        </div>`
@@ -2201,7 +2274,7 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
     <div class="weather-main">
       <div class="temp-col">
         ${tempHTML}
-        <div class="weather-desc">${p.textDescription || '—'}</div>
+        <div class="weather-desc">${descSafe}</div>
       </div>
     </div>
     <div class="weather-grid">
@@ -2334,6 +2407,10 @@ async function openStation(stationId, stationName, markerEl) {
   // first fetch was in flight — only start the live-refresh timer if this station
   // is still the active one, otherwise we'd leak an orphaned interval.
   if (activeStationId !== stationId) return;
+  // Re-opening the SAME station while its first fetch was in flight passes the
+  // guard above in both calls — clear any timer the earlier call already started
+  // so two intervals never stack.
+  if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(() => doStationRefresh(stationId), refreshInterval);
 }
 
@@ -2353,7 +2430,7 @@ document.getElementById('popup-close').addEventListener('click', () => {
 function clearStations() {
   stationMarkers.forEach(m => map.removeLayer(m));
   stationMarkers = [];
-  stationRecords = [];   // drop the Tier-2 flagging records too
+  stationRecords = [];   // drop the Tier-3 flagging records too
 }
 
 /**
@@ -2392,8 +2469,8 @@ function plotStations(geoJSON) {
     if (!coords) return;                         // skip any feature without a location
     const [lng, lat] = coords;                   // GeoJSON order is [lng, lat]
     const el = makeStationMarker(f.properties.stationIdentifier, f.properties.name, lat, lng);
-    // Remember each marker so flagStationsInAlerts() can later test it against
-    // the active warning polygons and toggle its .alerted ring.
+    // Remember each marker so flagStationsInAlerts() (Tier 3) can later test it
+    // against the active warning polygons and toggle its .alerted ring.
     stationRecords.push({ el, lat, lng });
   });
 }
@@ -2450,11 +2527,13 @@ async function loadStationsAt(lat, lon) {
    ─────────────────────────────────────────────────────────────────────────────
    Alerts are area-based, not station-based: the NWS issues them for polygons or
    county/forecast zones, never for individual observation stations.  So they are
-   anchored to the searched location, displayed two ways:
+   anchored to the searched location, displayed three ways:
 
      • Tier 1 — a banner listing every active alert affecting the area, colour-
        coded and ranked by severity (renderAlertBanner).
-     • Tier 2 — a pulsing red ring on any station marker that falls inside an
+     • Tier 2 — each alert's geographic footprint drawn on the map as a coloured
+       polygon with a label and detail popup (renderAlertAreas).
+     • Tier 3 — a pulsing red ring on any station marker that falls inside an
        active warning POLYGON, since storm-based warnings can cover only part of
        a city and so apply to some stations but not others (flagStationsInAlerts).
    ───────────────────────────────────────────────────────────────────────────── */
@@ -2653,7 +2732,7 @@ function alertRings(feature) {
 }
 
 /**
- * Tier 2 — flag every station marker that falls inside an active warning polygon.
+ * Tier 3 — flag every station marker that falls inside an active warning polygon.
  * Stations inside a danger polygon get the pulsing red .alerted ring; all others
  * are cleared.  Zone-only alerts (no polygon) are intentionally ignored here —
  * they apply area-wide and are conveyed by the banner alone.
@@ -3088,7 +3167,7 @@ function removeDragPin() {
  *
  * @param   {number} lat
  * @param   {number} lng
- * @returns {{ icon: L.DivIcon, coordStr: string }}
+ * @returns {L.DivIcon}
  */
 function buildPinIcon(lat, lng) {
   const coordStr = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
@@ -3098,14 +3177,11 @@ function buildPinIcon(lat, lng) {
     <div class="dropped-pin-coords">${coordStr}</div>
     <div class="dropped-pin-icon">📍</div>
   `;
-  return {
-    // The emoji is horizontally centred in the 90 px-wide icon (flex align-items:center)
-    // and sits at the bottom of the ~47 px-tall content, so the pin's tip is at
-    // (width/2, content-bottom) = (45, 47). Anchoring there makes the tip sit exactly
-    // on the marked coordinate instead of ~29 px to its right.
-    icon: L.divIcon({ html: wrap, className: '', iconSize: [90, 52], iconAnchor: [45, 47] }),
-    coordStr
-  };
+  // The emoji is horizontally centred in the 90 px-wide icon (flex align-items:center)
+  // and sits at the bottom of the ~47 px-tall content, so the pin's tip is at
+  // (width/2, content-bottom) = (45, 47). Anchoring there makes the tip sit exactly
+  // on the marked coordinate instead of ~29 px to its right.
+  return L.divIcon({ html: wrap, className: '', iconSize: [90, 52], iconAnchor: [45, 47] });
 }
 
 /**
@@ -3125,7 +3201,7 @@ function placeDragPin(lat, lng) {
 
     removeDragPin();
 
-    const { icon } = buildPinIcon(lat, lng);
+    const icon = buildPinIcon(lat, lng);
     droppedPinMarker = L.marker([lat, lng], { icon, draggable: true, zIndexOffset: 500 }).addTo(map);
 
     // Double-click to remove
@@ -3233,10 +3309,8 @@ fabLocate.addEventListener('click', () => {
 
       const { latitude: lat, longitude: lng } = position.coords;
 
-      // Snap the map view to the device location
-      map.flyTo([lat, lng], 12, { duration: 1.2 });
-
-      // Place a pin and kick off the station search
+      // Place a pin and kick off the station search — loadStationsAt (reached
+      // via triggerPinSearch) pans the map to the location itself.
       placeDragPin(lat, lng);
     },
 
@@ -3305,11 +3379,16 @@ fabLocate.addEventListener('click', () => {
 
   /* ── ?station=KSAT — direct station lookup ── */
   if (stationParam) {
+    // Capture the generation before fetching: if the user starts a normal search
+    // while this (up to 15 s) fetch is in flight, loadStationsAt bumps it and this
+    // stale deep-link result must not hijack their session (popup, timer, markers).
+    const gen = searchGeneration;
     try {
       setStatus('loading', 'LOADING STATION…');
       showOverlay(`Fetching station ${stationParam}…`);
 
       const data   = await fetchObservations(stationParam);
+      if (gen !== searchGeneration) return;       // superseded by a user search
       const coords = data.geometry?.coordinates;  // GeoJSON: [lng, lat]
       if (!coords) throw new Error('No coordinates in station response');
 
@@ -3319,35 +3398,22 @@ fabLocate.addEventListener('click', () => {
       const stName = data.properties?.stationName || stationParam;
       const iconEl = makeStationMarker(stationParam, stName, lat, lng);
       // This path builds its single marker directly (not via plotStations), so
-      // register it for Tier-2 alert flagging by hand.
+      // register it for Tier-3 alert flagging by hand.
       stationRecords = [{ el: iconEl, lat, lng }];
 
       hideOverlay();
       setStatus('ok', stationParam);
 
-      // Open the popup immediately with the already-fetched data
-      if (refreshTimer)   { clearInterval(refreshTimer); refreshTimer = null; }
-      if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); }
-      activeMarkerEl  = iconEl;
-      iconEl.classList.add('active');
-      activeStationId = stationParam;
+      // Reuse the standard open flow (loading skeleton → observation + forecast
+      // PoP fetch → render → guarded live-refresh timer) instead of duplicating
+      // its bookkeeping here; the fetch above was only needed to locate the
+      // station before a marker existed to click. Fire-and-forget, exactly like
+      // a marker click.
+      openStation(stationParam, stName, iconEl);
 
-      popupPanel.style.display = 'block';
-      document.getElementById('popup-id').textContent   = stationParam;
-      document.getElementById('popup-name').textContent  = stName;
-      document.getElementById('popup-body').innerHTML =
-        `<div class="station-loading" style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
-           Loading…
-         </div>`;
-      renderWeather(data, stationParam, stName);
-
-      // Start the live-refresh timer
-      refreshTimer = setInterval(() => doStationRefresh(stationParam), refreshInterval);
-
-      // Show dangerous-weather alerts for the station's location too. Pass the
-      // current searchGeneration so that if the user starts a normal search while
-      // this fetch is still in flight, the stale result is discarded.
-      loadAlertsForArea(lat, lng, searchGeneration);
+      // Show dangerous-weather alerts for the station's location too (a stale
+      // result is discarded via the same generation guard).
+      loadAlertsForArea(lat, lng, gen);
 
     } catch (e) {
       hideOverlay();
@@ -3377,46 +3443,39 @@ initMobile(); // Initialize mobile-specific features
 /* ─────────────────────────────────────────────────────────────────────────────
    MOBILE ENHANCEMENTS — added for PWA mobile optimisation
    ─────────────────────────────────────────────────────────────────────────────
-   • Detects touch/coarse-pointer devices.
-   • Shows tap-pin-btn (replaces drag-pin on touch).
-   • Implements "tap-to-place" mode: one map click places the search pin.
-   • Toggles main.sheet-open when the popup panel is shown/hidden so the FAB
-     shifts above the bottom sheet.
+   • Tracks main.sheet-open on ALL devices — the bottom-sheet CSS is width- or
+     pointer-driven (≤640 px OR coarse pointer), so a narrow desktop window uses
+     the sheet too and its FAB/toast lift rules must still fire.
+   • On coarse-pointer (touch) devices only — the same gate as the CSS block that
+     swaps the drag-pin for the tap button — wires up "tap-to-place" mode and
+     swipe-down-to-dismiss for the bottom sheet.
    ───────────────────────────────────────────────────────────────────────────── */
 function initMobile() {
-  const isTouchDevice = () =>
-    window.matchMedia('(pointer: coarse)').matches ||
-    ('ontouchstart' in window) ||
-    navigator.maxTouchPoints > 0;
-
-  if (!isTouchDevice()) return;   // desktop — nothing to do
-
-  /* ── Show touch-specific controls ── */
-  const dragPinBtn      = document.getElementById('drag-pin');
-  const tapPinBtn       = document.getElementById('tap-pin-btn');
-  const tapPlaceBanner = document.getElementById('tap-place-banner');
-  const mainEl         = document.querySelector('main');
-
-  dragPinBtn.draggable = false;
-  dragPinBtn.style.display = 'none';
-  tapPinBtn.style.display = 'flex';
-
-  /* Ensure accessible state for the tap-pin button */
-  tapPinBtn.setAttribute('aria-pressed', 'false');
-
-  /* ── Patch popup open/close to toggle sheet-open on <main> ── */
+  const mainEl      = document.querySelector('main');
   const _popupPanel = document.getElementById('popup-panel');
   const _popupClose = document.getElementById('popup-close');
 
   /**
-   * Observe display changes on #popup-panel so we can add / remove
-   * the sheet-open class on <main> without touching the existing JS.
+   * Observe display changes on #popup-panel so sheet-aware CSS (FAB and toast
+   * lifted above the sheet) can react on every device where the sheet layout
+   * can apply — not just touch ones.
    */
   const sheetObserver = new MutationObserver(() => {
     const isVisible = _popupPanel.style.display === 'block';
     mainEl.classList.toggle('sheet-open', isVisible);
   });
   sheetObserver.observe(_popupPanel, { attributes: true, attributeFilter: ['style'] });
+
+  /* ── Touch-specific features below. Gated on (pointer: coarse) — deliberately
+        the SAME condition as the CSS that shows #tap-pin-btn, so the button is
+        never visible without its click handler or vice versa. ── */
+  if (!window.matchMedia('(pointer: coarse)').matches) return;
+
+  const tapPinBtn      = document.getElementById('tap-pin-btn');
+  const tapPlaceBanner = document.getElementById('tap-place-banner');
+
+  /* Ensure accessible state for the tap-pin button (the CSS makes it visible) */
+  tapPinBtn.setAttribute('aria-pressed', 'false');
 
   /* ── Tap-to-place mode ── */
   let tapModeActive = false;

@@ -40,7 +40,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
 | **Shareable URLs** | Every search updates the address bar — bookmark or share |
-| **Geocodio address lookup** | Street-address geocoding; API key stored in a browser cookie |
+| **Geocodio address lookup** | Street-address geocoding; API key stored in the browser's localStorage |
 | **PWA** | Installable, offline-capable, and self-updating via Service Worker |
 | **Version badge** | Running app version shown in the bottom-left corner, reported live by the active Service Worker |
 
@@ -190,7 +190,7 @@ The pulsing dot indicates a refresh in progress; steady green means data is curr
 
 ### On mobile
 
-On touch devices the popup becomes a **bottom sheet**. Scroll its content freely; to dismiss it, swipe **down from the top of the sheet** (a swipe that starts mid-scroll just scrolls the content and won't close it), or tap the **✕** button.
+On touch devices (and any window ≤ 640 px wide) the popup becomes a **bottom sheet**. Scroll its content freely; to dismiss it, swipe **down from the top of the sheet** (a swipe that starts mid-scroll just scrolls the content and won't close it — touch devices only), or tap the **✕** button.
 
 ---
 
@@ -267,7 +267,7 @@ Street-address geocoding uses the [Geocodio API](https://www.geocod.io/), which 
 
 1. The first time you search by street address, a **modal dialog** appears.
 2. Enter your Geocodio API key and click **Save & Continue**.
-3. The key is saved in a **browser cookie** (`wxmap_geocodio_key`, 1-year expiry).
+3. The key is saved in the browser's **localStorage** (`wxmap_geocodio_key`).
 4. All future address searches use the stored key automatically — you won't be prompted again.
 
 ### Getting a key
@@ -276,10 +276,12 @@ Visit [geocod.io](https://www.geocod.io/) and sign up for a free account. The fr
 
 ### Key storage
 
-- Stored **only in your browser** as a cookie.
-- The cookie is scoped to this app's own path, so other sites sharing the same host (e.g. other GitHub Pages projects) never receive it.
-- Never sent to anyone except Geocodio's geocoding endpoint.
-- To remove it, clear your browser cookies for this page.
+- Stored **only in your browser**, in localStorage — it never leaves the device except in requests to Geocodio's geocoding endpoint.
+- Unlike a cookie, localStorage is never attached to HTTP requests, so the key is not sent to the server hosting the app either. (Versions before 1.0.5 stored the key in a cookie; it is migrated to localStorage — and the cookie deleted — automatically on first use.)
+- If the browser blocks localStorage (some WebViews and privacy modes), the key falls back to a cookie scoped to this app's directory so you still aren't re-prompted every session.
+- Browser storage is **per-origin**: if the app is hosted on a shared origin (e.g. GitHub Pages project sites under `username.github.io`), other pages on that origin can technically access it. That was equally true of the old cookie — same-origin pages are never isolated from each other — so host the app on its own origin if strict key isolation matters.
+- If Geocodio rejects the key (HTTP 403), it is cleared automatically and you are re-prompted on the next address search.
+- To remove it manually, clear this page's site data (or run `localStorage.removeItem('wxmap_geocodio_key')` in the browser console).
 
 ---
 

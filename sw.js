@@ -29,7 +29,7 @@
  * the bottom-left version badge, so the badge always reflects the version actually
  * running. Keep APP_VERSION in sync with APP_VERSION_FALLBACK in index.html.
  */
-const APP_VERSION = '1.0.4';
+const APP_VERSION = '1.0.5';
 const CACHE_NAME  = `wxmap-v${APP_VERSION}`;
 
 /* App-shell URLs precached at install so the app works offline on first launch. */

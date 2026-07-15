@@ -7,7 +7,7 @@
   ║  Architecture overview                                                      ║
   ║  ─────────────────────                                                      ║
   ║  • Single HTML file — no build step, no bundler, no framework.              ║
-  ║  • Leaflet.js (CDN) — interactive map tiles from OpenStreetMap.             ║
+  ║  • Vendored Leaflet.js — interactive map tiles from OpenStreetMap.           ║
   ║  • NOAA Weather.gov public API — station list + live observations.          ║
   ║  • Nominatim (OSM) — free ZIP→coordinates geocoding.                        ║
   ║  • Geocodio API — street address geocoding (API key required, stored        ║
@@ -29,8 +29,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="WX.MAP">
 <meta name="mobile-web-app-capable" content="yes">
-<!-- Prevent double-tap zoom on iOS -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<!-- Keep the layout fitted while allowing browser zoom for accessibility. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 
 <!-- Favicon (inline SVG data-URI) — avoids a 404 for /favicon.ico and gives the tab an icon -->
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20192%20192'%3E%3Crect%20width='192'%20height='192'%20rx='45'%20fill='%230a0e17'/%3E%3Ctext%20x='96'%20y='135'%20font-size='120'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E">
@@ -45,8 +45,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
 
-<!-- Leaflet CSS -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<!-- Leaflet is vendored so the map shell can initialize without a CDN connection. -->
+<link rel="stylesheet" href="./leaflet.css"/>
 
 <title>WX.MAP — Weather Station Finder</title>
 <style>
@@ -63,7 +63,7 @@
     --accent:    #00d4ff;   /* primary highlight (cyan)                */
     --accent2:   #ff6b35;   /* secondary highlight (orange) for pins   */
     --text:      #e2eaf6;   /* primary readable text                   */
-    --text-muted:#5a7a9a;   /* secondary / label text                  */
+    --text-muted:#6689ab;   /* secondary text; keeps ≥4.5:1 contrast   */
     --green:     #00ff9d;   /* OK / live status                        */
     --yellow:    #ffd700;   /* loading / refreshing state              */
     --red:       #ff4757;   /* error state, close hover                */
@@ -213,6 +213,16 @@
   .status-bar.error   .dot { background: var(--red); }
 
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* Preserve state cues while respecting users who disable non-essential motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 
   /* ════════════════════════════════════════════════════════════════════════════
      MAP AREA
@@ -415,7 +425,7 @@
   /* ════════════════════════════════════════════════════════════════════════════
      ALERT AREA OVERLAY  (map polygons — see renderAlertAreas())
      Each active alert with a geographic footprint is drawn as a coloured polygon.
-     A small always-on chip names the event; hovering or tapping the area opens a
+     A small always-on chip names the event; clicking or tapping the area opens a
      popup with severity and the in-effect time window. Colours are hashed per
      alert so overlapping areas stay visually distinct.
      ════════════════════════════════════════════════════════════════════════════ */
@@ -443,22 +453,49 @@
     border: 1px solid var(--border); border-radius: 6px;
     box-shadow: 0 8px 40px rgba(0,0,0,0.6);
   }
-  .wx-alert-popup .leaflet-popup-tip { background: var(--surface); border: 1px solid var(--border); }
-  .wx-alert-popup .leaflet-popup-content { margin: 10px 12px; font-family: 'Space Mono', monospace; }
-  .wx-alert-popup a.leaflet-popup-close-button { color: var(--text-muted); }
+  .wx-alert-popup .leaflet-popup-tip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    /* The tip is decorative; clicks at its anchor must reach the alert polygon
+       underneath so an exact second click toggles the popup closed. */
+    pointer-events: none;
+  }
+  .wx-alert-popup .leaflet-popup-content {
+    margin: 14px 16px;
+    max-height: min(55vh, 360px);
+    overflow-y: auto;
+    font-family: 'Space Mono', monospace;
+  }
+  .wx-alert-popup a.leaflet-popup-close-button {
+    width: 32px; height: 32px;
+    color: var(--text-muted);
+    font-size: 20px;
+    line-height: 30px;
+  }
   .wx-alert-popup a.leaflet-popup-close-button:hover { color: var(--red); }
+  .wx-alert-popup a.leaflet-popup-close-button:focus-visible {
+    color: var(--text);
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .wx-alert-pop-event {
-    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 0.82rem;
+    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1rem;
     letter-spacing: 0.04em; display: block; margin-bottom: 4px;
   }
   .wx-alert-pop-meta {
-    font-size: 0.56rem; color: var(--text-muted); text-transform: uppercase;
+    font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase;
     letter-spacing: 0.08em; margin-bottom: 6px;
   }
-  .wx-alert-pop-when { font-size: 0.62rem; color: var(--text); margin-bottom: 6px; line-height: 1.5; }
+  .wx-alert-pop-when { font-size: 0.875rem; color: var(--text); margin-bottom: 8px; line-height: 1.55; }
   .wx-alert-pop-when b { color: var(--accent); font-weight: 700; }
-  .wx-alert-pop-head { font-size: 0.62rem; color: var(--text); line-height: 1.45; margin-bottom: 6px; }
-  .wx-alert-pop-area { font-size: 0.56rem; color: var(--text-muted); line-height: 1.4; }
+  .wx-alert-pop-head { font-size: 0.875rem; color: var(--text); line-height: 1.55; margin-bottom: 8px; }
+  .wx-alert-pop-area { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
+
+  @media (pointer: coarse) {
+    .wx-alert-popup a.leaflet-popup-close-button {
+      width: 44px; height: 44px; line-height: 42px;
+    }
+  }
 
   /* Header row: station ID + full name on the left, close button on the right */
   .popup-header {
@@ -674,7 +711,7 @@
     font-size: 0.72rem; color: var(--text-muted);
     line-height: 1.6; margin-bottom: 14px;
   }
-  #modal-box input[type="text"] {
+  #modal-api-key {
     width: 100%;
     background: var(--bg); border: 1px solid var(--border);
     border-radius: var(--radius); color: var(--text);
@@ -682,7 +719,7 @@
     padding: 8px 12px; outline: none;
     transition: border-color 0.2s; margin-bottom: 14px;
   }
-  #modal-box input[type="text"]:focus { border-color: var(--accent); }
+  #modal-api-key:focus { border-color: var(--accent); }
   .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
   .modal-actions button {
     border-radius: var(--radius); padding: 7px 16px;
@@ -920,7 +957,7 @@
     }
 
     /* Bigger modal inputs for touch */
-    #modal-box input[type="text"] {
+    #modal-api-key {
       height: 48px;
       font-size: 16px !important;
       padding: 0 14px;
@@ -1037,7 +1074,7 @@
      MAIN MAP AREA
      ════════════════════════════════════════════════════════════════ -->
 <main>
-  <div id="map" role="application" aria-label="Interactive weather station map"></div>
+  <div id="map" role="region" aria-label="Interactive weather station map"></div>
 
   <!-- Full-map loading overlay shown during async operations -->
   <div id="map-overlay" role="status" aria-live="polite">
@@ -1158,17 +1195,18 @@
       To look up street addresses, WX.MAP uses the
       <strong style="color:var(--text)">Geocodio geocoding API</strong>.
       Please enter your API key below.<br><br>
-      Your key will be stored <em>only in this browser</em> (localStorage) and
-      will never be sent anywhere except directly to Geocodio.
+      Your key is stored in localStorage when available and otherwise kept only
+      for this browser session. It is sent only to Geocodio.
       You can get a free key at
       <a href="https://www.geocod.io/" target="_blank" rel="noopener noreferrer"
          style="color:var(--accent)">geocod.io</a>.
     </p>
     <input
-      type="text"
+      type="password"
       id="modal-api-key"
       placeholder="Paste your Geocodio API key here…"
       autocomplete="off"
+      aria-label="Geocodio API key"
     />
     <div class="modal-actions">
       <button id="modal-cancel">Cancel</button>
@@ -1177,8 +1215,8 @@
   </div>
 </div>
 
-<!-- Leaflet JS (must precede the inline script that references L) -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Vendored Leaflet JS (must precede the inline script that references L) -->
+<script src="./leaflet.js"></script>
 
 <script>
 /* ═════════════════════════════════════════════════════════════════════════════
@@ -1191,14 +1229,12 @@
      2. If sw.js changed, the new worker installs and parks in the "waiting" state.
         The old worker keeps controlling the page so the current session is not
         disrupted mid-use.
-     3. We surface an update banner. When the user accepts (or automatically after
-        a short delay in an installed/standalone window) we message the WAITING
-        worker to skipWaiting → it activates → 'controllerchange' fires → we reload
-        exactly once so the page runs the freshly-cached assets.
+     3. We surface an update banner. Only when the user accepts do we message the
+        WAITING worker to skipWaiting → it activates → 'controllerchange' fires →
+        we reload exactly once so the page runs the freshly-cached assets.
 
-   The document itself is served network-first by the worker (see sw.js), so an
-   ordinary reload while online always pulls the latest HTML — making updates
-   reliable even before the worker swap completes.
+   The document and its vendored runtime are served from one atomically installed
+   shell (see sw.js), so a reload cannot mix files from different releases.
    ═════════════════════════════════════════════════════════════════════════════ */
 if ('serviceWorker' in navigator) {
   (() => {
@@ -1272,13 +1308,15 @@ if ('serviceWorker' in navigator) {
       .catch(err =>
         console.error('[WX.MAP] Service worker registration failed:', err));
 
-    // Activate the waiting worker. Exposed globally so the update banner (and the
-    // standalone auto-refresh) can trigger the swap. 'controllerchange' performs
-    // the reload; the timeout is only a safety net if that event never fires.
+    // Activate the waiting worker. 'controllerchange' performs the reload; the
+    // timeout is only a safety net if that event never fires.
     window.__wxActivateUpdate = () => {
-      const worker = (swRegistration && swRegistration.waiting) ||
-                     navigator.serviceWorker.controller;
-      if (worker) worker.postMessage({ type: 'SKIP_WAITING' });
+      const worker = swRegistration && swRegistration.waiting;
+      if (!worker) {
+        console.warn('[WX.MAP] Update activation requested without a waiting worker');
+        return;
+      }
+      worker.postMessage({ type: 'SKIP_WAITING' });
       setTimeout(() => {
         if (!reloading) { reloading = true; window.location.reload(); }
       }, 3000);
@@ -1296,7 +1334,7 @@ if ('serviceWorker' in navigator) {
    so the badge flips to the new number the moment an update takes over. Before any
    worker controls the page we show APP_VERSION_FALLBACK so there's never a blank.
    ═════════════════════════════════════════════════════════════════════════════ */
-const APP_VERSION_FALLBACK = '1.0.5';   // keep in sync with APP_VERSION in sw.js
+const APP_VERSION_FALLBACK = '1.0.8';   // keep in sync with APP_VERSION in sw.js
 
 function setVersionBadge(v) {
   const el = document.getElementById('app-version');
@@ -1328,10 +1366,9 @@ if ('serviceWorker' in navigator) {
    when the PWA meets installability criteria. This handler unifies all PWA events.
 
    Browser Compatibility Notes:
-   - Chrome/Edge/Firefox: Full support via beforeinstallprompt
-   - Opera: Supports beforeinstallprompt (usually)
-   - Brave: May block beforeinstallprompt for privacy; requires user action/trust
-   - Safari iOS: No beforeinstallprompt; use "Add to Home Screen" (native iOS feature)
+   - Chromium browsers: support beforeinstallprompt (subject to install criteria)
+   - Firefox/Safari: no beforeinstallprompt; use their platform installation UI
+   - Privacy-focused browsers may suppress the event or require extra engagement
    ═════════════════════════════════════════════════════════════════════════════ */
 
 /** Detect browser user agent for troubleshooting */
@@ -1393,15 +1430,6 @@ window.addEventListener('wx-app-update-ready', () => {
   // Use onclick (not addEventListener) so a repeated event can never stack handlers.
   refreshBtn.onclick = () => window.__wxActivateUpdate();
   dismissBtn.onclick = () => { banner.style.display = 'none'; };
-
-  // In an installed/standalone window, apply the update automatically after a
-  // short grace period so the app stays current with minimal disruption.
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
-                       window.navigator.standalone === true;
-  if (isStandalone) {
-    console.info('[WX.MAP] Standalone mode — auto-applying update in 5 s');
-    setTimeout(() => window.__wxActivateUpdate(), 5000);
-  }
 });
 
 // Track successful installations
@@ -1451,7 +1479,7 @@ window.addEventListener('load', () => {
  *  4.  Refresh-interval editor
  *  5.  Input-type detection & coordinate parsing
  *  6.  Geocoding helpers (ZIP via Nominatim, address via Geocodio)
- *  7.  Cookie helpers
+ *  7.  API-key storage helpers (including legacy-cookie migration)
  *  8.  Geocodio API-key prompt (modal dialog)
  *  9.  Weather API helpers (station list, latest observation)
  * 10.  Unit-conversion helpers
@@ -1486,9 +1514,18 @@ window._wxmap = map;   // expose for mobile tap-to-place
 L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  // Keep Leaflet's complete BSD notice discoverable in every hosted or local copy.
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · <a href="./LEAFLET-LICENSE.txt" target="_blank" rel="license noopener">Leaflet license</a>',
   maxZoom: 18
 }).addTo(map);
+
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+/** Move the map without animation when the user has requested reduced motion. */
+function moveMapTo(lat, lon, zoom) {
+  if (prefersReducedMotion.matches) map.setView([lat, lon], zoom);
+  else map.flyTo([lat, lon], zoom, { duration: 1.2 });
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────
    2. APPLICATION STATE
@@ -1503,6 +1540,8 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
  * @type {string}
  */
 let geocodioApiKey = '';
+let apiKeyPromptPromise = null;
+let cancelApiKeyPrompt = null;
 
 /**
  * Array of currently plotted Leaflet marker objects for weather stations.
@@ -1528,10 +1567,26 @@ let stationRecords = [];
 let activeStationId = null;
 
 /**
+ * Identifies one specific panel opening, including re-opening the same ICAO id.
+ * Incrementing it invalidates requests from an earlier panel lifetime.
+ */
+let stationOpenGeneration = 0;
+
+/**
  * setInterval handle for the live-refresh loop, or null when no loop is active.
  * @type {number|null}
  */
 let refreshTimer = null;
+
+/**
+ * In-flight refresh for the active station. Repeated timer ticks for the same
+ * station share this Promise instead of launching overlapping NOAA requests.
+ * A newly selected station may start immediately; stale results are guarded by
+ * both station id and panel generation so an A → B → A sequence stays safe.
+ * @type {{ stationId: string, generation: number, promise: Promise<void> }|null}
+ */
+let stationRefreshRequest = null;
+let stationRefreshActivityCount = 0;
 
 /**
  * The DOM element (.station-marker div) for the currently highlighted marker.
@@ -1554,9 +1609,9 @@ let refreshInterval = 60_000;
 let droppedPinMarker = null;
 
 /**
- * Monotonic counter incremented on every loadStationsAt() call. A slow earlier
- * request compares its captured value against this and bails out if a newer
- * search has started, so stale results can never overwrite fresh ones.
+ * Monotonic search-intent counter allocated before geocoding or permission waits.
+ * Every async stage compares its captured value against this counter so a slow
+ * earlier search can never overwrite a newer one.
  * @type {number}
  */
 let searchGeneration = 0;
@@ -1600,7 +1655,9 @@ function setStatus(state, msg) {
 function showToast(msg) {
   toast.textContent = msg;
   toast.classList.add('visible');
-  setTimeout(() => toast.classList.remove('visible'), 3500);
+  // A previous toast must not hide a newer message when its older timer expires.
+  clearTimeout(showToast.dismissTimer);
+  showToast.dismissTimer = setTimeout(() => toast.classList.remove('visible'), 3500);
 }
 
 /**
@@ -1635,8 +1692,13 @@ intervalInput.addEventListener('change', () => {
   // If a station is currently active, restart the timer immediately at the
   // new interval so the change takes effect without waiting for the next tick.
   if (activeStationId && refreshTimer) {
+    const stationId = activeStationId;
+    const generation = stationOpenGeneration;
     clearInterval(refreshTimer);
-    refreshTimer = setInterval(() => doStationRefresh(activeStationId), refreshInterval);
+    refreshTimer = setInterval(
+      () => doStationRefresh(stationId, generation),
+      refreshInterval
+    );
   }
 });
 
@@ -1679,26 +1741,50 @@ function parseCoords(raw) {
    ───────────────────────────────────────────────────────────────────────────── */
 
 /**
- * fetch() with an automatic timeout. A hung request (slow API, flaky network)
- * would otherwise leave the UI stuck in a loading state forever, so we abort it
- * after `timeoutMs` and surface a clear, user-facing message.
+ * Fetch and parse a JSON response with one timeout covering both headers and body.
+ * Clearing the timer before response.json() finishes would let a stalled body keep
+ * the UI loading forever even though the HTTP headers arrived promptly.
  *
  * @param   {string}      url
  * @param   {RequestInit} [options={}]
  * @param   {number}      [timeoutMs=15000]
- * @returns {Promise<Response>}
+ * @returns {Promise<{ response: Response, data: Object|null }>}
  * @throws  {Error} 'Request timed out…' on abort, or the underlying network error
  */
-async function fetchWithTimeout(url, options = {}, timeoutMs = 15_000) {
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15_000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (error) {
+      // Preserve a useful HTTP status for non-JSON error pages, but an abort or a
+      // malformed successful API response remains a real request failure.
+      if (error.name === 'AbortError' || response.ok) throw error;
+    }
+    return { response, data };
   } catch (err) {
     if (err.name === 'AbortError') throw new Error('Request timed out — please try again');
     throw err;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Accept linked API URLs only when they stay on NWS's HTTPS origin and expected
+ * endpoint family. External response fields must not become arbitrary fetches.
+ */
+function isTrustedNwsApiUrl(rawUrl, requiredPathPrefix) {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'https:' && url.hostname === 'api.weather.gov' &&
+           url.port === '' && url.username === '' && url.password === '' &&
+           url.pathname.startsWith(requiredPathPrefix);
+  } catch {
+    return false;
   }
 }
 
@@ -1716,9 +1802,9 @@ async function zipToCoords(zip) {
   const zip5 = zip.slice(0, 5);
   const url = `https://nominatim.openstreetmap.org/search`
             + `?postalcode=${encodeURIComponent(zip5)}&country=US&format=json&limit=1`;
-  const res = await fetchWithTimeout(url, { headers: { 'Accept-Language': 'en' } });
+  const { response: res, data } = await fetchJsonWithTimeout(
+    url, { headers: { 'Accept-Language': 'en' } });
   if (!res.ok) throw new Error('ZIP geocoding request failed');
-  const data = await res.json();
   if (!data.length) throw new Error(`ZIP code "${zip}" not found`);
   return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
 }
@@ -1733,26 +1819,28 @@ async function zipToCoords(zip) {
  *      in localStorage, then continues.
  *
  * @param   {string} address  - Free-form address string
+ * @param   {number} generation - Search generation allowed to issue the request
  * @returns {Promise<{ lat: number, lon: number }>}
  * @throws  {Error} if the address is not found, the key is rejected, or the
  *                  user cancels the prompt
  */
-async function addressToCoords(address) {
+async function addressToCoords(address, generation) {
   // ── Ensure we have an API key (stored key → prompt fallback) ──
   await ensureGeocodioApiKey();
+  // Several address searches may share one key prompt. Only the newest is allowed
+  // to spend an API request after that prompt resolves.
+  if (generation !== searchGeneration) throw new Error('Search superseded');
 
   const url = `https://api.geocod.io/v1.9/geocode`
             + `?q=${encodeURIComponent(address)}&api_key=${encodeURIComponent(geocodioApiKey)}&limit=1`;
-  const res = await fetchWithTimeout(url);
-
   // Geocodio returns a JSON { error } body on 4xx (e.g. 422 = "Could not
   // geocode address, zip code or city/state are required"). Read it once and
   // surface that message instead of an opaque status code.
-  const data = await res.json().catch(() => null);
+  const { response: res, data } = await fetchJsonWithTimeout(url);
 
   if (!res.ok) {
-    // 403 = invalid/forbidden key → clear it so the user is re-prompted next time.
-    if (res.status === 403) clearGeocodioApiKey();
+    // Authentication failures mean the stored key should be replaced next time.
+    if (res.status === 401 || res.status === 403) clearGeocodioApiKey();
     const reason = data?.error || `HTTP ${res.status}`;
     throw new Error(`Geocodio: ${reason}`);
   }
@@ -1766,11 +1854,9 @@ async function addressToCoords(address) {
    7. API-KEY STORAGE HELPERS
    ─────────────────────────────────────────────────────────────────────────────
    The Geocodio API key persists in localStorage, which stays strictly inside the
-   browser. (Releases before 1.0.5 used a cookie — but cookies ride along on every
-   HTTP request to the hosting server, silently sending the key somewhere the user
-   was told it would never go. The legacy cookie is migrated then deleted below.)
-   Where localStorage is blocked (some WebViews / privacy modes) the cookie is
-   kept as the persistence fallback so the user isn't re-prompted every session.
+   browser. Releases before 1.0.5 used a cookie, which browsers attach to requests
+   for the hosting origin. Legacy cookies are therefore migrated when possible and
+   always deleted; if localStorage is blocked, the key remains in memory only.
    ───────────────────────────────────────────────────────────────────────────── */
 
 /** localStorage key (and legacy cookie name) under which the Geocodio API key is stored. */
@@ -1787,21 +1873,10 @@ function getCookie(name) {
   const match = document.cookie
     .split('; ')
     .find(row => row.startsWith(name + '='));
-  return match ? decodeURIComponent(match.split('=')[1]) : null;
-}
-
-/**
- * Write a directory-scoped cookie (1-year expiry, SameSite=Strict). Only used as
- * the persistence fallback when localStorage is blocked — see saveStoredApiKey().
- *
- * @param {string} name
- * @param {string} value
- * @param {number} [daysToExpire=365]
- */
-function setCookie(name, value, daysToExpire = 365) {
-  const expires = new Date(Date.now() + daysToExpire * 86_400_000).toUTCString();
-  const path = location.pathname.replace(/[^/]*$/, '') || '/';
-  document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires};path=${path};SameSite=Strict`;
+  if (!match) return null;
+  const raw = match.slice(name.length + 1); // preserve any '=' characters in the value
+  try { return decodeURIComponent(raw); }
+  catch (_) { return raw; } // a malformed legacy value must not prevent app startup
 }
 
 /**
@@ -1818,9 +1893,9 @@ function deleteCookie(name) {
 /**
  * Load the persisted Geocodio API key.
  * Prefers localStorage; falls back once to the legacy cookie, migrating it into
- * localStorage and deleting it so the key stops being sent to the hosting server.
- * localStorage access is wrapped in try/catch — some privacy modes block it, in
- * which case the key simply lives in memory for the session.
+ * localStorage and deleting the cookie so the key stops reaching the hosting
+ * server. When storage is blocked, the legacy value is returned for this session
+ * and the cookie is still deleted for privacy.
  *
  * @returns {string|null}
  */
@@ -1832,28 +1907,24 @@ function loadStoredApiKey() {
 
   const legacy = getCookie(GEOCODIO_KEY_NAME);
   if (legacy) {
-    // Delete the cookie only once the key has actually landed in localStorage —
-    // if storage is blocked the cookie stays as the sole persisted copy.
-    if (saveStoredApiKey(legacy)) deleteCookie(GEOCODIO_KEY_NAME);
+    saveStoredApiKey(legacy);
+    deleteCookie(GEOCODIO_KEY_NAME);
   }
   return legacy;
 }
 
 /**
  * Persist the Geocodio API key. localStorage is preferred (never attached to HTTP
- * requests); where it is blocked (some WebViews / privacy modes) the key falls
- * back to the directory-scoped cookie so it still survives across sessions.
+ * requests). Where it is blocked, the caller keeps the key in memory for the
+ * current session instead of falling back to a cookie that would leak to the host.
  *
  * @param   {string}  key
- * @returns {boolean}      true if the key landed in localStorage,
- *                         false if the cookie fallback was used instead
+ * @returns {boolean}      true if the key landed in localStorage; false when
+ *                         storage is blocked and the key remains memory-only
  */
 function saveStoredApiKey(key) {
   try { localStorage.setItem(GEOCODIO_KEY_NAME, key); return true; }
-  catch (_) {
-    setCookie(GEOCODIO_KEY_NAME, key);
-    return false;
-  }
+  catch (_) { return false; }
 }
 
 /** Remove the persisted Geocodio API key (localStorage + any legacy cookie). */
@@ -1872,7 +1943,7 @@ function removeStoredApiKey() {
 
 /**
  * Forget the current Geocodio API key (memory + persisted copy). Called when
- * Geocodio rejects the key (HTTP 403) so the user is re-prompted on the next
+ * Geocodio rejects the key (HTTP 401 or 403) so the user is re-prompted on the next
  * address search instead of being stuck with a bad key forever.
  */
 function clearGeocodioApiKey() {
@@ -1903,9 +1974,15 @@ function ensureGeocodioApiKey() {
     return Promise.resolve();
   }
 
+  // Concurrent address searches reuse one dialog and one set of event handlers.
+  if (apiKeyPromptPromise) return apiKeyPromptPromise;
+
   // Prompt the user via the modal
-  return new Promise((resolve, reject) => {
+  apiKeyPromptPromise = new Promise((resolve, reject) => {
+    const previouslyFocused = document.activeElement;
     modalApiKey.value = '';
+    // A previous empty submission must not leave a later prompt looking invalid.
+    modalApiKey.style.borderColor = '';
     modalOverlay.classList.add('visible');
     modalApiKey.focus();
 
@@ -1928,21 +2005,39 @@ function ensureGeocodioApiKey() {
     }
 
     function onKeydown(e) {
-      if (e.key === 'Enter')  onConfirm();
+      if (e.key === 'Enter' && e.target === modalApiKey) onConfirm();
       if (e.key === 'Escape') onCancel();
+      if (e.key !== 'Tab') return;
+
+      // Keep keyboard focus inside the modal until the user confirms or cancels.
+      const focusable = [modalApiKey, modalCancel, modalConfirm];
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
 
     function cleanup() {
       modalOverlay.classList.remove('visible');
       modalConfirm.removeEventListener('click',   onConfirm);
       modalCancel .removeEventListener('click',   onCancel);
-      modalApiKey .removeEventListener('keydown', onKeydown);
+      modalOverlay.removeEventListener('keydown', onKeydown);
+      apiKeyPromptPromise = null;
+      cancelApiKeyPrompt = null;
+      // Return users to the control that opened the dialog whenever it still exists.
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
     }
 
     modalConfirm.addEventListener('click',   onConfirm);
     modalCancel .addEventListener('click',   onCancel);
-    modalApiKey .addEventListener('keydown', onKeydown);
+    modalOverlay.addEventListener('keydown', onKeydown);
+    cancelApiKeyPrompt = onCancel;
   });
+  return apiKeyPromptPromise;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1962,9 +2057,9 @@ async function fetchStations(lat, lon) {
   const url = `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}/stations`;
   // The browser always sends its own User-Agent and ignores any custom one
   // (User-Agent is a forbidden fetch header), so there's no point setting it.
-  const res = await fetchWithTimeout(url);
+  const { response: res, data } = await fetchJsonWithTimeout(url);
   if (!res.ok) throw new Error(`NOAA stations API returned HTTP ${res.status}`);
-  return res.json();
+  return data;
 }
 
 /**
@@ -1976,12 +2071,12 @@ async function fetchStations(lat, lon) {
  * @throws  {Error} on non-2xx response
  */
 async function fetchObservations(stationId) {
-  const url = `https://api.weather.gov/stations/${stationId}/observations/latest`;
+  const url = `https://api.weather.gov/stations/${encodeURIComponent(stationId)}/observations/latest`;
   // The browser always sends its own User-Agent and ignores any custom one
   // (User-Agent is a forbidden fetch header), so there's no point setting it.
-  const res = await fetchWithTimeout(url);
+  const { response: res, data } = await fetchJsonWithTimeout(url);
   if (!res.ok) throw new Error(`NOAA observations API returned HTTP ${res.status}`);
-  return res.json();
+  return data;
 }
 
 /* Cache of real forecast PoP keyed by station id.  A forecast changes slowly, so
@@ -1989,6 +2084,14 @@ async function fetchObservations(stationId) {
    could exhaust the NOAA rate budget.  Entries expire after FORECAST_TTL_MS. */
 const forecastPoPCache = new Map();   // stationId → { pop: number|null, ts: number }
 const FORECAST_TTL_MS  = 10 * 60 * 1000;  // 10 minutes
+const FORECAST_CACHE_LIMIT = 100;
+
+/** Store a cache entry with insertion-order eviction to bound long-lived PWA memory. */
+function setBoundedCache(cache, key, value, limit) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > limit) cache.delete(cache.keys().next().value);
+}
 
 /**
  * Fetch the real probability of precipitation for the current hour at a location.
@@ -2020,17 +2123,17 @@ async function fetchForecastPoP(lat, lon, stationId) {
     // Step 1 — turn the coordinate into a forecast grid. The /points response tells
     // us which Weather Forecast Office and grid cell this location belongs to, and
     // hands back the ready-made hourly-forecast URL for that cell.
-    const ptRes = await fetchWithTimeout(
+    const { response: ptRes, data: pointData } = await fetchJsonWithTimeout(
       `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
     if (!ptRes.ok) throw new Error(`NOAA points API returned HTTP ${ptRes.status}`);
-    const hourlyUrl = (await ptRes.json()).properties?.forecastHourly;
+    const hourlyUrl = pointData.properties?.forecastHourly;
 
     // Step 2 — fetch that hourly forecast. periods[0] is the current hour; its
     // probabilityOfPrecipitation is the real PoP we want (0–100, or null).
-    if (hourlyUrl) {
-      const fcRes = await fetchWithTimeout(hourlyUrl);
+    if (hourlyUrl && isTrustedNwsApiUrl(hourlyUrl, '/gridpoints/')) {
+      const { response: fcRes, data: forecastData } = await fetchJsonWithTimeout(hourlyUrl);
       if (!fcRes.ok) throw new Error(`NOAA forecast API returned HTTP ${fcRes.status}`);
-      const period = (await fcRes.json()).properties?.periods?.[0];
+      const period = forecastData.properties?.periods?.[0];
       const v = period?.probabilityOfPrecipitation?.value;
       pop = v != null ? Math.round(v) : null;
     }
@@ -2040,25 +2143,149 @@ async function fetchForecastPoP(lat, lon, stationId) {
   }
 
   // Cache even a null result so a missing/failed forecast isn't retried every tick.
-  forecastPoPCache.set(stationId, { pop, ts: Date.now() });
+  setBoundedCache(forecastPoPCache, stationId, { pop, ts: Date.now() }, FORECAST_CACHE_LIMIT);
   return pop;
 }
 
-/* Cache of active alerts keyed by rounded "lat,lon".  Alerts move quickly (a
-   tornado warning can be issued or expire within minutes), so the TTL is short —
-   far shorter than the forecast cache — yet long enough to coalesce the periodic
-   refresh ticks and the initial search into a single network hit. */
-const alertsCache   = new Map();          // "lat,lon" → { alerts: Feature[], ts: number }
+/* Point and state alert feeds use the same short TTL. This keeps nearby polygons
+   current without multiplying requests during the two-minute refresh loop. */
+const pointAlertsCache = new Map();       // "lat,lon" → { alerts: Feature[], ts: number }
+const stateAlertsCache = new Map();       // state code → { alerts: Feature[], ts: number }
+const alertStateCache  = new Map();       // "lat,lon" → two-letter state code
+// Completed-value caches above enforce TTLs; these maps coalesce concurrent misses.
+const pointAlertsRequests = new Map();
+const stateAlertsRequests = new Map();
+const alertStateRequests  = new Map();
 const ALERTS_TTL_MS = 2 * 60 * 1000;      // 2 minutes
+const STATE_ALERTS_STALE_MAX_MS = 30 * 60 * 1000;
+const ALERTS_CACHE_LIMIT = 50;
+const STATE_ALERTS_CACHE_LIMIT = 10;
+const ALERT_STATE_CACHE_LIMIT = 100;
+
+/** Return the coordinate bounding box for any polygonal GeoJSON geometry. */
+function alertGeometryBounds(geometry) {
+  if (!geometry) return null;
+  const bounds = { west: Infinity, south: Infinity, east: -Infinity, north: -Infinity };
+
+  function visit(value) {
+    if (!Array.isArray(value)) return;
+    if (value.length >= 2 && Number.isFinite(value[0]) && Number.isFinite(value[1])) {
+      bounds.west = Math.min(bounds.west, value[0]);
+      bounds.south = Math.min(bounds.south, value[1]);
+      bounds.east = Math.max(bounds.east, value[0]);
+      bounds.north = Math.max(bounds.north, value[1]);
+      return;
+    }
+    value.forEach(visit);
+  }
+
+  if (geometry.type === 'GeometryCollection') {
+    (geometry.geometries || []).forEach(part => {
+      const partBounds = alertGeometryBounds(part);
+      if (!partBounds) return;
+      visit([[partBounds.west, partBounds.south], [partBounds.east, partBounds.north]]);
+    });
+  } else {
+    visit(geometry.coordinates);
+  }
+  return Number.isFinite(bounds.west) ? bounds : null;
+}
+
+/** Return whether a polygon's filled area actually intersects the map viewport. */
+function geometryIntersectsBounds(geometry, viewport) {
+  const bounds = alertGeometryBounds(geometry);
+  if (!bounds || !viewport) return false;
+  const boxesOverlap = bounds.east >= viewport.west && bounds.west <= viewport.east &&
+                       bounds.north >= viewport.south && bounds.south <= viewport.north;
+  if (!boxesOverlap) return false;
+  if (geometry.type === 'GeometryCollection') {
+    return (geometry.geometries || []).some(part => geometryIntersectsBounds(part, viewport));
+  }
+
+  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] :
+                   geometry.type === 'MultiPolygon' ? geometry.coordinates : [];
+  const corners = [
+    [viewport.west, viewport.south], [viewport.west, viewport.north],
+    [viewport.east, viewport.south], [viewport.east, viewport.north]
+  ];
+  const pointInViewport = point => Array.isArray(point) &&
+    point[0] >= viewport.west && point[0] <= viewport.east &&
+    point[1] >= viewport.south && point[1] <= viewport.north;
+
+  // Liang-Barsky clipping detects a ring edge crossing the rectangle even when
+  // neither the polygon nor viewport contains a vertex of the other.
+  function segmentIntersectsViewport(start, end) {
+    if (!Array.isArray(start) || !Array.isArray(end)) return false;
+    const dx = end[0] - start[0], dy = end[1] - start[1];
+    const p = [-dx, dx, -dy, dy];
+    const q = [
+      start[0] - viewport.west, viewport.east - start[0],
+      start[1] - viewport.south, viewport.north - start[1]
+    ];
+    let minimum = 0, maximum = 1;
+    for (let i = 0; i < p.length; i++) {
+      if (p[i] === 0) {
+        if (q[i] < 0) return false;
+        continue;
+      }
+      const ratio = q[i] / p[i];
+      if (p[i] < 0) minimum = Math.max(minimum, ratio);
+      else maximum = Math.min(maximum, ratio);
+      if (minimum > maximum) return false;
+    }
+    return true;
+  }
+
+  return polygons.some(rings => {
+    if (!Array.isArray(rings) || !rings.length) return false;
+    if (corners.some(corner => pointInAlertPolygon(corner[0], corner[1], rings))) return true;
+    return rings.some(ring => Array.isArray(ring) && ring.some((point, index) =>
+      pointInViewport(point) || segmentIntersectsViewport(point, ring[(index + 1) % ring.length])
+    ));
+  });
+}
 
 /**
- * Fetch the active NWS watches/warnings/advisories affecting a coordinate.
+ * Keep every point alert, then add only same-state alerts with inline polygons
+ * that actually intersect the searched map view. Zone-only products are excluded;
+ * resolving an entire state's zone inventory would be unnecessarily expensive.
+ */
+function mergeVisibleAlerts(pointAlerts, regionalAlerts, viewport) {
+  const merged = new Map();
+  const keyFor = feature => feature.id || feature.properties?.id ||
+    `${feature.properties?.event}@${feature.properties?.expires}`;
+
+  (pointAlerts || []).forEach(feature => merged.set(keyFor(feature), feature));
+  (regionalAlerts || []).forEach(feature => {
+    if (!feature.geometry || !geometryIntersectsBounds(feature.geometry, viewport)) return;
+    const key = keyFor(feature);
+    if (!merged.has(key)) merged.set(key, feature);
+  });
+  return [...merged.values()];
+}
+
+/** Calculate the map bounds produced by centering this search at zoom level 10. */
+function alertViewportBounds(lat, lon) {
+  const zoom = 10;
+  const halfSize = map.getSize().divideBy(2);
+  const center = map.project([lat, lon], zoom);
+  const northWest = map.unproject(center.subtract(halfSize), zoom);
+  const southEast = map.unproject(center.add(halfSize), zoom);
+  return {
+    west: northWest.lng, south: southEast.lat,
+    east: southEast.lng, north: northWest.lat
+  };
+}
+
+/**
+ * Fetch the point-specific part of the active NWS alert set.
  *
  * Endpoint: GET https://api.weather.gov/alerts/active?point={lat},{lon}
  * The NWS resolves the point against every active alert's area — both the small
  * storm-based polygons (tornado, severe thunderstorm, flash-flood warnings) and
  * the larger county/zone-based products (most watches) — and returns only those
- * that contain the point.  That is exactly "what dangerous weather affects here".
+ * that contain the point. A separate cached regional feed supplements this with
+ * nearby inline polygons that are visible in the initial map viewport.
  *
  * Results are cached per rounded coordinate for ALERTS_TTL_MS. A failed or
  * timed-out fetch resolves to **null** (not an empty array) so callers can tell
@@ -2070,24 +2297,132 @@ const ALERTS_TTL_MS = 2 * 60 * 1000;      // 2 minutes
  * @param   {number} lon
  * @returns {Promise<Object[]|null>} alert Features (possibly empty) on success, null on failure
  */
-async function fetchAlerts(lat, lon) {
+async function fetchPointAlerts(lat, lon) {
   const key    = `${lat.toFixed(4)},${lon.toFixed(4)}`;
-  const cached = alertsCache.get(key);
+  const cached = pointAlertsCache.get(key);
   if (cached && Date.now() - cached.ts < ALERTS_TTL_MS) return cached.alerts;
+  if (pointAlertsRequests.has(key)) return pointAlertsRequests.get(key);
 
-  let alerts = null;
+  const request = (async () => {
+    let alerts = null;
+    try {
+      const { response: res, data } = await fetchJsonWithTimeout(
+        `https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`);
+      if (res.ok && Array.isArray(data?.features)) {
+        // Validate entries once at the network boundary so one malformed item
+        // cannot break sorting, signatures, polygon checks, or rendering later.
+        alerts = data.features.filter(feature => feature &&
+          typeof feature === 'object' && feature.properties &&
+          typeof feature.properties === 'object');
+      }
+    } catch (e) {
+      alerts = null;   // network/timeout — signal failure rather than "no alerts".
+    }
+
+    // Cache only a successful fetch; on failure return null so the caller keeps the
+    // current display and we retry on the next refresh tick.
+    if (alerts !== null) {
+      setBoundedCache(pointAlertsCache, key, { alerts, ts: Date.now() }, ALERTS_CACHE_LIMIT);
+    }
+    return alerts;
+  })();
+  pointAlertsRequests.set(key, request);
   try {
-    const res = await fetchWithTimeout(
-      `https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`);
-    if (res.ok) alerts = (await res.json()).features || [];
-  } catch (e) {
-    alerts = null;   // network/timeout — signal failure rather than "no alerts".
+    return await request;
+  } finally {
+    if (pointAlertsRequests.get(key) === request) pointAlertsRequests.delete(key);
   }
+}
 
-  // Cache only a successful fetch; on failure return null so the caller keeps the
-  // current display and we retry on the next refresh tick.
-  if (alerts !== null) alertsCache.set(key, { alerts, ts: Date.now() });
-  return alerts;
+/** Resolve the two-letter state containing a coordinate through the NWS points API. */
+async function fetchAlertState(lat, lon) {
+  const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+  if (alertStateCache.has(key)) return alertStateCache.get(key);
+  if (alertStateRequests.has(key)) return alertStateRequests.get(key);
+
+  const request = (async () => {
+    try {
+      const { response: res, data } = await fetchJsonWithTimeout(
+        `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
+      if (!res.ok) return null;
+      const state = data.properties?.relativeLocation?.properties?.state;
+      if (!/^[A-Z]{2}$/.test(state || '')) return null;
+      setBoundedCache(alertStateCache, key, state, ALERT_STATE_CACHE_LIMIT);
+      return state;
+    } catch {
+      return null;
+    }
+  })();
+  alertStateRequests.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (alertStateRequests.get(key) === request) alertStateRequests.delete(key);
+  }
+}
+
+/** Fetch and cache one state's active-alert index; stale data bridges transient failures. */
+async function fetchStateAlerts(state) {
+  const cached = stateAlertsCache.get(state);
+  if (cached && Date.now() - cached.ts < ALERTS_TTL_MS) return cached.alerts;
+  if (stateAlertsRequests.has(state)) return stateAlertsRequests.get(state);
+
+  // A recent snapshot is safer than temporarily deleting nearby alerts, but never
+  // preserve it indefinitely or retain products whose own validity has ended.
+  const now = Date.now();
+  const fallbackAlerts = cached && now - cached.ts <= STATE_ALERTS_STALE_MAX_MS
+    ? cached.alerts.filter(feature => {
+        const end = feature.properties?.ends || feature.properties?.expires;
+        const endTime = Date.parse(end || '');
+        return !Number.isFinite(endTime) || endTime > now;
+      })
+    : null;
+
+  const request = (async () => {
+    try {
+      const { response: res, data } = await fetchJsonWithTimeout(
+        `https://api.weather.gov/alerts/active?area=${encodeURIComponent(state)}`);
+      if (!res.ok) {
+        const retryable = res.status === 0 || res.status === 408 || res.status === 425 ||
+                          res.status === 429 || res.status >= 500;
+        return retryable ? fallbackAlerts : null;
+      }
+      if (!Array.isArray(data?.features)) return fallbackAlerts;
+      // Keep the completed cache schema-safe; every downstream renderer assumes
+      // each feature has an object-valued properties payload.
+      const alerts = data.features.filter(feature => feature &&
+        typeof feature === 'object' && feature.properties &&
+        typeof feature.properties === 'object');
+      setBoundedCache(stateAlertsCache, state, { alerts, ts: Date.now() }, STATE_ALERTS_CACHE_LIMIT);
+      return alerts;
+    } catch {
+      return fallbackAlerts;
+    }
+  })();
+  stateAlertsRequests.set(state, request);
+  try {
+    return await request;
+  } finally {
+    if (stateAlertsRequests.get(state) === request) stateAlertsRequests.delete(state);
+  }
+}
+
+/**
+ * Fetch alerts affecting the searched point plus inline polygons visible nearby.
+ * Regional lookups are best-effort: the original point feed remains usable if the
+ * state metadata or state alert index cannot be reached.
+ */
+async function fetchAlerts(lat, lon) {
+  const [pointAlerts, state] = await Promise.all([
+    fetchPointAlerts(lat, lon),
+    fetchAlertState(lat, lon)
+  ]);
+  if (pointAlerts === null) return null;
+  if (!state) return pointAlerts;
+
+  const regionalAlerts = await fetchStateAlerts(state);
+  if (regionalAlerts === null) return pointAlerts;
+  return mergeVisibleAlerts(pointAlerts, regionalAlerts, alertViewportBounds(lat, lon));
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2318,26 +2653,53 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
    ─────────────────────────────────────────────────────────────────────────────
    doStationRefresh() is called both immediately (when a station is opened) and
    on a repeating interval driven by refreshInterval.  It is a no-op if
-   activeStationId no longer matches, preventing stale updates from overwriting
-   data for a station that has since been changed or closed.
+   the station id or panel generation no longer matches, preventing stale updates
+   from overwriting a station that has since been changed, closed, or re-opened.
    ───────────────────────────────────────────────────────────────────────────── */
 
 /**
  * Fetch fresh observation data for stationId and re-render the popup.
- * Guards against race conditions by checking activeStationId before and after
- * the async fetch.
+ * Guards against race conditions by checking the station's panel generation
+ * before and after each asynchronous step.
  *
  * @param {string} stationId
+ * @param {number} generation
  */
-async function doStationRefresh(stationId) {
-  if (activeStationId !== stationId) return;  // station was closed/changed
+async function doStationRefresh(stationId, generation) {
+  if (!isActiveStation(stationId, generation)) return;
+
+  // A timer can fire again before a slow observation+forecast request completes.
+  // Reuse the existing request so responses cannot race or duplicate API traffic.
+  if (stationRefreshRequest?.stationId === stationId &&
+      stationRefreshRequest.generation === generation) {
+    return stationRefreshRequest.promise;
+  }
+
+  const promise = refreshStationData(stationId, generation);
+  stationRefreshRequest = { stationId, generation, promise };
+  try {
+    await promise;
+  } finally {
+    if (stationRefreshRequest?.promise === promise) stationRefreshRequest = null;
+  }
+}
+
+/** True only while the exact station-panel lifetime that started a request is open. */
+function isActiveStation(stationId, generation) {
+  return activeStationId === stationId && stationOpenGeneration === generation;
+}
+
+/** Execute one observation/forecast refresh; doStationRefresh provides single-flight control. */
+async function refreshStationData(stationId, generation) {
+  if (!isActiveStation(stationId, generation)) return;
 
   const dotEl = document.getElementById('update-dot');
+  stationRefreshActivityCount++;
   dotEl.classList.add('refreshing');
 
   try {
     const data = await fetchObservations(stationId);
-    if (activeStationId !== stationId) return;   // closed while fetching
+    if (!isActiveStation(stationId, generation)) return;
 
     // Real forecast PoP for the station's own coordinates (best-effort, cached).
     // GeoJSON geometry is [lon, lat]; a missing/failed forecast resolves to null.
@@ -2345,12 +2707,12 @@ async function doStationRefresh(stationId) {
     const coords = data.geometry?.coordinates;
     if (Array.isArray(coords) && coords.length >= 2) {
       precipPct = await fetchForecastPoP(coords[1], coords[0], stationId);
-      if (activeStationId !== stationId) return;  // closed while fetching forecast
+      if (!isActiveStation(stationId, generation)) return;
     }
 
     renderWeather(data, stationId, document.getElementById('popup-name').textContent, precipPct);
   } catch (e) {
-    if (activeStationId === stationId) {
+    if (isActiveStation(stationId, generation)) {
       document.getElementById('update-time').textContent = 'Error fetching data';
       // If the very first fetch failed we're still showing the loading skeleton —
       // swap it for an error so the panel doesn't hang forever on "Fetching…". The
@@ -2366,7 +2728,8 @@ async function doStationRefresh(stationId) {
       }
     }
   } finally {
-    dotEl.classList.remove('refreshing');
+    stationRefreshActivityCount = Math.max(0, stationRefreshActivityCount - 1);
+    dotEl.classList.toggle('refreshing', stationRefreshActivityCount > 0);
   }
 }
 
@@ -2389,6 +2752,8 @@ async function openStation(stationId, stationName, markerEl) {
   if (refreshTimer)    { clearInterval(refreshTimer); refreshTimer = null; }
   if (activeMarkerEl)  { activeMarkerEl.classList.remove('active'); }
 
+  const generation = ++stationOpenGeneration;
+
   activeMarkerEl = markerEl;
   if (markerEl) markerEl.classList.add('active');
 
@@ -2401,23 +2766,27 @@ async function openStation(stationId, stationName, markerEl) {
        Fetching observations…
      </div>`;
 
-  await doStationRefresh(stationId);
+  await doStationRefresh(stationId, generation);
 
   // The user may have closed the panel or opened a different station while the
   // first fetch was in flight — only start the live-refresh timer if this station
   // is still the active one, otherwise we'd leak an orphaned interval.
-  if (activeStationId !== stationId) return;
+  if (!isActiveStation(stationId, generation)) return;
   // Re-opening the SAME station while its first fetch was in flight passes the
   // guard above in both calls — clear any timer the earlier call already started
   // so two intervals never stack.
   if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(() => doStationRefresh(stationId), refreshInterval);
+  refreshTimer = setInterval(
+    () => doStationRefresh(stationId, generation),
+    refreshInterval
+  );
 }
 
 /** Close the popup and stop the refresh timer. */
 document.getElementById('popup-close').addEventListener('click', () => {
   popupPanel.style.display = 'none';
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  stationOpenGeneration++;
   activeStationId = null;
   if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
 });
@@ -2450,7 +2819,11 @@ function makeStationMarker(id, name, lat, lng) {
   iconEl.title       = name;
 
   const icon   = L.divIcon({ html: iconEl, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
-  const marker = L.marker([lat, lng], { icon }).addTo(map);
+  const marker = L.marker([lat, lng], {
+    icon,
+    title: name,
+    alt: `${id} — ${name}`
+  }).addTo(map);
   marker.on('click', () => openStation(id, name, iconEl));
   stationMarkers.push(marker);
   return iconEl;
@@ -2489,18 +2862,25 @@ function plotStations(geoJSON) {
  * @param {number} lat
  * @param {number} lon
  */
-async function loadStationsAt(lat, lon) {
-  // Tag this search so a slower earlier request can't overwrite the results of a
-  // newer one if the user searches again before the first fetch resolves.
-  const gen = ++searchGeneration;
+async function loadStationsAt(lat, lon, gen = ++searchGeneration) {
+  // Callers that geocode first allocate and pass their generation before awaiting.
+  // Direct coordinate/pin calls use the default, which starts a generation here.
 
   // Drop any alerts from the previous area so a stale banner isn't shown for the
   // new location while its stations and alerts are being fetched.
   clearAlerts();
 
+  // Invalidate the old station panel immediately. Its request must not repaint
+  // while the new location is still waiting on the station feed.
+  popupPanel.style.display = 'none';
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  stationOpenGeneration++;
+  activeStationId = null;
+  if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
+
   setStatus('loading', 'FETCHING STATIONS…');
   overlayText.textContent = 'Fetching weather stations…';
-  map.flyTo([lat, lon], 10, { duration: 1.2 });
+  moveMapTo(lat, lon, 10);
 
   const data  = await fetchStations(lat, lon);
   if (gen !== searchGeneration) return;          // superseded by a newer search
@@ -2509,12 +2889,6 @@ async function loadStationsAt(lat, lon) {
   const count = (data.features || []).length;
   setStatus('ok', `${count} STATION${count !== 1 ? 'S' : ''}`);
   hideOverlay();
-
-  // Close any open station popup
-  popupPanel.style.display = 'none';
-  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-  activeStationId = null;
-  if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
 
   // Fetch and display any active dangerous-weather alerts for this area, then keep
   // them refreshed on a timer.  Fire-and-forget: alerts are supplementary and must
@@ -2527,10 +2901,11 @@ async function loadStationsAt(lat, lon) {
    ─────────────────────────────────────────────────────────────────────────────
    Alerts are area-based, not station-based: the NWS issues them for polygons or
    county/forecast zones, never for individual observation stations.  So they are
-   anchored to the searched location, displayed three ways:
+   anchored to the searched point and its initial map viewport, displayed three ways:
 
-     • Tier 1 — a banner listing every active alert affecting the area, colour-
-       coded and ranked by severity (renderAlertBanner).
+     • Tier 1 — a banner listing alerts affecting the point plus nearby inline
+       polygons visible in the initial map view, colour-coded and ranked by
+       severity (renderAlertBanner).
      • Tier 2 — each alert's geographic footprint drawn on the map as a coloured
        polygon with a label and detail popup (renderAlertAreas).
      • Tier 3 — a pulsing red ring on any station marker that falls inside an
@@ -2553,8 +2928,51 @@ const alertBanner = document.getElementById('alert-banner');
    zoneGeomCache memoises the separate NWS zone-geometry lookups used to outline
    zone-only alerts that arrive without an inline polygon. */
 const alertAreaGroup = L.layerGroup().addTo(map);
+const alertAreaLayers = [];          // rendered layers plus metadata used for deterministic stacking
+// A single alert may contain several rendered paths. Map each SVG element to its
+// owning GeoJSON layer so every piece of that logical alert shares toggle state.
+const alertAreaOwners = new WeakMap();
+let activeAlertAreaOwner = null;
+// A partial zone lookup is retried even when the NWS alert ids have not changed.
+let alertAreasNeedRetry = false;
 let   alertAreaSeq   = 0;
-const zoneGeomCache  = new Map();   // zone URL → GeoJSON geometry | null
+const zoneGeomCache  = new Map();   // zone URL → in-flight/resolved geometry Promise
+const ZONE_GEOM_CACHE_LIMIT = 200;
+const ZONE_FETCH_CONCURRENCY = 6;
+const zoneFetchQueue = [];
+let zoneFetchActive = 0;
+
+/**
+ * Apply the alert-popup click contract before Leaflet handles the click:
+ * - the active area toggles closed and consumes the event;
+ * - a different area continues to Leaflet so it replaces and repositions the popup;
+ * - every other outside click closes the popup normally.
+ */
+function handleAlertPopupClickAway(event) {
+  const popup = document.querySelector('.wx-alert-popup');
+  if (!popup) return;
+  const target = event.target;
+  if (popup.contains(target)) return;
+
+  const clickedAlertArea = target?.closest?.('.wx-alert-area');
+  const clickedAlertOwner = clickedAlertArea ? alertAreaOwners.get(clickedAlertArea) : null;
+  if (clickedAlertArea && clickedAlertOwner !== activeAlertAreaOwner) {
+    return; // Leaflet closes the previous popup and opens this area's at the click.
+  }
+
+  map.closePopup();
+  if (clickedAlertArea) event.stopPropagation();
+}
+
+/** Close an alert popup on Escape even when keyboard focus is outside the map. */
+function handleAlertPopupEscape(event) {
+  if (event.key === 'Escape' && document.querySelector('.wx-alert-popup')) {
+    map.closePopup();
+  }
+}
+
+document.addEventListener('click', handleAlertPopupClickAway, { capture: true });
+document.addEventListener('keydown', handleAlertPopupEscape);
 
 /* Signature of the alert set currently on screen. The 2-minute refresh loop
    compares against this and skips re-rendering when nothing has changed — so the
@@ -2597,9 +3015,30 @@ function alertClass(props) {
   return 'info';
 }
 
-/* Sort keys: class first (crit→info), then NWS severity, then soonest expiry. */
+/* Sort keys: class first (crit→info), then NWS severity, urgency, certainty, and expiry. */
 const ALERT_CLASS_RANK = { crit: 0, warn: 1, watch: 2, info: 3 };
 const ALERT_SEV_WEIGHT = { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3, Unknown: 4 };
+const ALERT_URGENCY_WEIGHT = { Immediate: 0, Expected: 1, Future: 2, Past: 3, Unknown: 4 };
+const ALERT_CERTAINTY_WEIGHT = { Observed: 0, Likely: 1, Possible: 2, Unlikely: 3, Unknown: 4 };
+
+/** Compare two alert property objects from most to least dangerous. */
+function compareAlertDanger(a, b) {
+  const classA = ALERT_CLASS_RANK[alertClass(a)] ?? 9;
+  const classB = ALERT_CLASS_RANK[alertClass(b)] ?? 9;
+  if (classA !== classB) return classA - classB;
+
+  const severityA = ALERT_SEV_WEIGHT[a.severity] ?? 9;
+  const severityB = ALERT_SEV_WEIGHT[b.severity] ?? 9;
+  if (severityA !== severityB) return severityA - severityB;
+
+  const urgencyA = ALERT_URGENCY_WEIGHT[a.urgency] ?? 9;
+  const urgencyB = ALERT_URGENCY_WEIGHT[b.urgency] ?? 9;
+  if (urgencyA !== urgencyB) return urgencyA - urgencyB;
+
+  const certaintyA = ALERT_CERTAINTY_WEIGHT[a.certainty] ?? 9;
+  const certaintyB = ALERT_CERTAINTY_WEIGHT[b.certainty] ?? 9;
+  return certaintyA - certaintyB;
+}
 
 /**
  * Order alerts most-dangerous-first so the banner leads with what matters.
@@ -2609,10 +3048,8 @@ const ALERT_SEV_WEIGHT = { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3, Unknown
 function sortAlerts(features) {
   return features.slice().sort((a, b) => {
     const pa = a.properties || {}, pb = b.properties || {};
-    const ca = ALERT_CLASS_RANK[alertClass(pa)], cb = ALERT_CLASS_RANK[alertClass(pb)];
-    if (ca !== cb) return ca - cb;
-    const sa = ALERT_SEV_WEIGHT[pa.severity] ?? 9, sb = ALERT_SEV_WEIGHT[pb.severity] ?? 9;
-    if (sa !== sb) return sa - sb;
+    const dangerOrder = compareAlertDanger(pa, pb);
+    if (dangerOrder !== 0) return dangerOrder;
     return new Date(pa.expires || 0) - new Date(pb.expires || 0);
   });
 }
@@ -2662,7 +3099,7 @@ function renderAlertBanner(features) {
   const cards = sorted.map(f => {
     const p       = f.properties || {};
     const cls     = alertClass(p);
-    const expires = p.expires ? `until ${formatTime(p.expires)}` : '';
+    const expires = p.expires ? `until ${formatWhen(p.expires)}` : '';
     const detail  = [p.description, p.instruction].filter(Boolean).join('\n\n');
     return `
       <div class="alert-card alert-${cls}">
@@ -2717,18 +3154,23 @@ function pointInPolygon(lng, lat, ring) {
 }
 
 /**
- * Extract the outer ring(s) of an alert's geometry.  Most watches are zone-only
- * (no geometry) and yield nothing here; storm-based warnings carry a Polygon or
- * MultiPolygon footprint.
+ * Extract complete polygons from an alert geometry. Each polygon is an array whose
+ * first ring is the outer boundary and remaining rings are excluded holes.
  * @param   {Object} feature
- * @returns {number[][][]} array of outer rings
+ * @returns {number[][][][]} array of polygons
  */
-function alertRings(feature) {
+function alertPolygons(feature) {
   const geom = feature && feature.geometry;
   if (!geom) return [];
-  if (geom.type === 'Polygon')      return [geom.coordinates[0]];           // outer ring only
-  if (geom.type === 'MultiPolygon') return geom.coordinates.map(p => p[0]); // outer ring of each part
+  if (geom.type === 'Polygon')      return [geom.coordinates];
+  if (geom.type === 'MultiPolygon') return geom.coordinates;
   return [];
+}
+
+/** Test a point against one GeoJSON polygon, excluding any interior holes. */
+function pointInAlertPolygon(lng, lat, rings) {
+  if (!rings?.length || !pointInPolygon(lng, lat, rings[0])) return false;
+  return !rings.slice(1).some(hole => pointInPolygon(lng, lat, hole));
 }
 
 /**
@@ -2739,11 +3181,16 @@ function alertRings(feature) {
  * @param {Object[]} features
  */
 function flagStationsInAlerts(features) {
-  const rings = [];
-  (features || []).forEach(f => alertRings(f).forEach(r => rings.push(r)));
+  const polygons = [];
+  (features || []).forEach(f => {
+    // A red danger ring means an issued warning, not a watch or advisory polygon.
+    const event = (f.properties?.event || '').toLowerCase();
+    if (!event.includes('warning')) return;
+    alertPolygons(f).forEach(polygon => polygons.push(polygon));
+  });
 
   stationRecords.forEach(rec => {
-    const inside = rings.some(ring => pointInPolygon(rec.lng, rec.lat, ring));
+    const inside = polygons.some(rings => pointInAlertPolygon(rec.lng, rec.lat, rings));
     rec.el.classList.toggle('alerted', inside);
   });
 }
@@ -2757,7 +3204,7 @@ function flagStationsInAlerts(features) {
    geometry:null and instead list affectedZones URLs whose own GeoJSON holds the
    county/forecast-zone outline. We draw both — inline geometry immediately, zone
    geometry after a best-effort lookup. Each area gets a hashed distinct colour, an
-   always-on event label, and a hover/tap popup with severity and the time window.
+   always-on event label, and a click/tap popup with severity and the time window.
    ───────────────────────────────────────────────────────────────────────────── */
 
 /** Deterministic 0–359 hue from any string, so each alert keeps a stable, distinct colour. */
@@ -2766,6 +3213,64 @@ function alertHue(seed) {
   const s = String(seed || '');
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % 360;
+}
+
+/**
+ * Approximate a GeoJSON footprint's area in coordinate-space units. All compared
+ * alerts occupy the same local map, so this is sufficient for relative stacking;
+ * holes are subtracted and GeometryCollections cover resolved zone-only products.
+ */
+function alertGeometryArea(geometry) {
+  if (!geometry) return 0;
+
+  function ringArea(ring) {
+    if (!Array.isArray(ring) || ring.length < 3) return 0;
+    let twiceArea = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const current = ring[i];
+      const next = ring[(i + 1) % ring.length];
+      twiceArea += current[0] * next[1] - next[0] * current[1];
+    }
+    return Math.abs(twiceArea) / 2;
+  }
+
+  if (geometry.type === 'Polygon') {
+    const [outer = [], ...holes] = geometry.coordinates || [];
+    return Math.max(0, ringArea(outer) - holes.reduce((sum, ring) => sum + ringArea(ring), 0));
+  }
+  if (geometry.type === 'MultiPolygon') {
+    return (geometry.coordinates || []).reduce((sum, coordinates) =>
+      sum + alertGeometryArea({ type: 'Polygon', coordinates }), 0);
+  }
+  if (geometry.type === 'GeometryCollection') {
+    return (geometry.geometries || []).reduce((sum, part) => sum + alertGeometryArea(part), 0);
+  }
+  return 0;
+}
+
+/**
+ * Sort bottom-to-top by footprint size so a smaller, more specific alert remains
+ * clickable above a broad watch or advisory. Equal-area layers use danger priority
+ * so the most urgent alert owns an otherwise indistinguishable overlap.
+ */
+function compareAlertAreaStack(a, b) {
+  const areaOrder = alertGeometryArea(b.geometry) - alertGeometryArea(a.geometry);
+  if (areaOrder !== 0) return areaOrder;
+
+  const dangerOrder = compareAlertDanger(a.props, b.props);
+  if (dangerOrder !== 0) return -dangerOrder;
+
+  // Zone geometries resolve asynchronously. A content-derived tie-breaker keeps
+  // equal-risk layers in one order instead of letting network timing choose.
+  const keyA = `${a.props.event || ''}|${a.props.expires || ''}|${a.props.areaDesc || ''}`;
+  const keyB = `${b.props.event || ''}|${b.props.expires || ''}|${b.props.areaDesc || ''}`;
+  return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
+}
+
+/** Reapply SVG order after every synchronous or delayed zone-layer addition. */
+function restackAlertAreaLayers() {
+  alertAreaLayers.sort(compareAlertAreaStack);
+  alertAreaLayers.forEach(entry => entry.layer.bringToFront());
 }
 
 /* Short, readable map labels for the common NWS events (key is lower-cased event). */
@@ -2801,7 +3306,7 @@ function formatWhen(ts) {
   });
 }
 
-/** Build the rich popup HTML shown when an alert area is hovered or tapped. */
+/** Build the rich popup HTML shown when an alert area is clicked or tapped. */
 function alertAreaPopupHtml(props, color) {
   const event = escapeHtml(props.event || 'Weather alert');
   // Severity / urgency / certainty give a quick read on how serious + imminent it is.
@@ -2819,50 +3324,126 @@ function alertAreaPopupHtml(props, color) {
     ${head}${area}`;
 }
 
-/** Draw one alert geometry (Polygon/MultiPolygon) with label, popup, and hover. */
+/** Draw one alert geometry (Polygon/MultiPolygon) with label and click popup. */
 function addAlertGeometryToMap(geom, props, color, label) {
   // L.geoJSON understands Polygon, MultiPolygon, and interior holes directly.
   const layer = L.geoJSON(geom, {
-    style: { color, weight: 2, opacity: 0.95, fillColor: color, fillOpacity: 0.18 }
+    style: {
+      color, weight: 2, opacity: 0.95, fillColor: color, fillOpacity: 0.18,
+      className: 'wx-alert-area'
+    }
   });
 
-  // Always-on chip naming the event, tinted to the area's colour. Non-interactive
-  // so hover/click pass straight through to the polygon underneath.
-  layer.bindTooltip(`<span style="color:${color}">${escapeHtml(label)}</span>`, {
+  // Leaflet's bindPopup supplies the click/tap listener. Keeping that single
+  // built-in listener avoids duplicate opens while autoPan prevents map movement.
+  layer.bindPopup(alertAreaPopupHtml(props, color), {
+    className: 'wx-alert-popup', autoPan: false, maxWidth: 320
+  });
+
+  alertAreaGroup.addLayer(layer);
+
+  // GeometryCollections add an intermediate FeatureGroup, so descend until each
+  // public Path element can be mapped to the parent layer representing one alert.
+  // Track the largest child as the single label host; binding on the FeatureGroup
+  // would make Leaflet duplicate the permanent label onto every county/zone path.
+  let labelLayer = null;
+  let labelLayerArea = -1;
+  function registerAreaPath(areaLayer) {
+    if (typeof areaLayer.eachLayer === 'function') {
+      areaLayer.eachLayer(registerAreaPath);
+      return;
+    }
+
+    const areaElement = areaLayer.getElement?.();
+    if (!areaElement) return;
+    alertAreaOwners.set(areaElement, layer);
+
+    const bounds = areaLayer.getBounds?.();
+    const southWest = bounds?.getSouthWest?.();
+    const northEast = bounds?.getNorthEast?.();
+    const boundsArea = southWest && northEast
+      ? Math.abs((northEast.lng - southWest.lng) * (northEast.lat - southWest.lat))
+      : 0;
+    if (!labelLayer || boundsArea > labelLayerArea) {
+      labelLayer = areaLayer;
+      labelLayerArea = boundsArea;
+    }
+
+    areaLayer.on('popupopen', () => { activeAlertAreaOwner = layer; });
+    areaLayer.on('popupclose', () => {
+      if (activeAlertAreaOwner === layer) activeAlertAreaOwner = null;
+    });
+  }
+  layer.eachLayer(registerAreaPath);
+
+  // The chip is non-interactive so pointer events reach the selected polygon.
+  labelLayer?.bindTooltip(`<span style="color:${color}">${escapeHtml(label)}</span>`, {
     permanent: true, direction: 'center', className: 'alert-area-label', interactive: false
   });
 
-  // Hover/tap detail popup. autoPan is off so a hover never yanks the map around.
-  layer.bindPopup(alertAreaPopupHtml(props, color), {
-    className: 'wx-alert-popup', autoPan: false, maxWidth: 260
-  });
-
-  // Desktop hover: brighten the area and reveal details; restore on mouse-out
-  // unless the user has pinned the popup open with a click/tap.
-  layer.on('mouseover', () => { layer.setStyle({ weight: 3, fillOpacity: 0.32 }); layer.openPopup(); });
-  layer.on('mouseout',  () => { layer.setStyle({ weight: 2, fillOpacity: 0.18 }); if (!layer._wxPinned) layer.closePopup(); });
-  layer.on('click',     () => { layer._wxPinned = true; layer.openPopup(); });
-
-  alertAreaGroup.addLayer(layer);
+  alertAreaLayers.push({ layer, props, geometry: geom });
+  restackAlertAreaLayers();
 }
 
-/** Best-effort fetch of a single NWS zone's GeoJSON geometry (memoised, never throws). */
-async function fetchZoneGeometry(url) {
+/** Start queued zone requests while preserving one global concurrency ceiling. */
+function drainZoneFetchQueue() {
+  while (zoneFetchActive < ZONE_FETCH_CONCURRENCY && zoneFetchQueue.length) {
+    const task = zoneFetchQueue.shift();
+    zoneFetchActive++;
+    task().finally(() => {
+      zoneFetchActive--;
+      drainZoneFetchQueue();
+    });
+  }
+}
+
+/**
+ * Best-effort fetch of one NWS zone's GeoJSON geometry (memoised, never rejects).
+ * Returns undefined for retryable failures and null when the zone permanently has
+ * no usable geometry, allowing refreshes to retry only requests that may recover.
+ */
+function fetchZoneGeometry(url) {
+  // affectedZones is external feed data. Reject unexpected origins before they
+  // can make the browser contact an attacker-controlled or local-network host.
+  if (!isTrustedNwsApiUrl(url, '/zones/')) return Promise.resolve(null);
   if (zoneGeomCache.has(url)) return zoneGeomCache.get(url);
-  let geom = null;
-  try {
-    // Use the timeout wrapper so a hung zone endpoint resolves (to null) instead of
-    // leaving this alert's area silently undrawn while the Promise.all awaits it.
-    const res = await fetchWithTimeout(url);
-    if (res.ok) geom = (await res.json()).geometry || null;
-  } catch { geom = null; }   // zone outlines are supplementary — never block on failure
-  zoneGeomCache.set(url, geom);
-  return geom;
+
+  let resolveRequest;
+  const request = new Promise(resolve => { resolveRequest = resolve; });
+
+  // Cache the Promise itself so concurrent alerts sharing a zone share one request.
+  setBoundedCache(zoneGeomCache, url, request, ZONE_GEOM_CACHE_LIMIT);
+  // Newer alert renders go to the front, so a large stale area cannot delay the
+  // current location behind all of its not-yet-started zone requests.
+  zoneFetchQueue.unshift(async () => {
+    let geom;
+    try {
+      const { response: res, data } = await fetchJsonWithTimeout(url);
+      if (res.ok) {
+        geom = data?.geometry || null;
+      } else if (res.status !== 408 && res.status !== 425 &&
+                 res.status !== 429 && res.status < 500) {
+        // Retrying a permanent client error (most commonly an expired zone URL)
+        // on every alert tick only churns layers and can close an open popup.
+        geom = null;
+      }
+    } catch {
+      // Zone outlines are supplementary; the alert banner remains usable without one.
+    }
+    // Only transient failures are evicted. Cache permanent absence so refreshes do
+    // not repeatedly fetch the same unavailable zone and rebuild all alert layers.
+    if (geom === undefined && zoneGeomCache.get(url) === request) zoneGeomCache.delete(url);
+    resolveRequest(geom);
+  });
+  drainZoneFetchQueue();
+  return request;
 }
 
 /** Remove every alert polygon from the map (and invalidate any in-flight zone draws). */
 function clearAlertAreas() {
   alertAreaSeq++;            // any pending zone-geometry draw now sees a stale seq
+  activeAlertAreaOwner = null;
+  alertAreaLayers.length = 0;
   alertAreaGroup.clearLayers();
 }
 
@@ -2874,6 +3455,7 @@ function clearAlertAreas() {
  */
 function renderAlertAreas(features) {
   clearAlertAreas();
+  alertAreasNeedRetry = false;
   const seq = alertAreaSeq;
   (features || []).forEach(f => {
     const p     = f.properties || {};
@@ -2895,8 +3477,14 @@ function renderAlertAreas(features) {
     Promise.all(zones.map(fetchZoneGeometry)).then(geoms => {
       if (seq !== alertAreaSeq) return;                     // superseded by a newer render
       const parts = geoms.filter(Boolean);
+      if (geoms.some(geom => geom === undefined)) alertAreasNeedRetry = true;
       if (!parts.length) return;                            // no outlines resolved — skip
       addAlertGeometryToMap({ type: 'GeometryCollection', geometries: parts }, p, color, label);
+    }).catch(error => {
+      if (seq !== alertAreaSeq) return;
+      // Keep the banner usable and retry this supplementary map layer next tick.
+      alertAreasNeedRetry = true;
+      console.error('[WX.MAP] Alert zone rendering failed:', error);
     });
   });
 }
@@ -2907,6 +3495,7 @@ function clearAlerts() {
   alertBanner.className = '';
   alertBanner.innerHTML = '';
   clearAlertAreas();
+  currentLat = currentLon = null; // invalidate any refresh already awaiting the network
   lastAlertSignature = null;   // next render is for a new area — always draw it
   stationRecords.forEach(rec => rec.el.classList.remove('alerted'));
 }
@@ -2924,16 +3513,23 @@ async function loadAlertsForArea(lat, lon, gen) {
   currentLon = lon;
   if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
 
-  const alerts = await fetchAlerts(lat, lon);
-  if (gen != null && gen !== searchGeneration) return;   // superseded by a newer search
+  try {
+    const alerts = await fetchAlerts(lat, lon);
+    if (gen != null && gen !== searchGeneration) return;   // superseded by a newer search
 
-  // alerts === null means the feed was unreachable on this first load — leave the
-  // (already-cleared) banner and map empty and let the refresh loop retry shortly.
-  if (alerts) {
-    renderAlertBanner(alerts);
-    flagStationsInAlerts(alerts);
-    renderAlertAreas(alerts);
-    lastAlertSignature = alertsSignature(alerts);   // baseline for the refresh loop
+    // alerts === null means the feed was unreachable on this first load — leave the
+    // (already-cleared) banner and map empty and let the refresh loop retry shortly.
+    if (alerts) {
+      renderAlertBanner(alerts);
+      flagStationsInAlerts(alerts);
+      renderAlertAreas(alerts);
+      lastAlertSignature = alertsSignature(alerts);   // baseline for the refresh loop
+    }
+  } catch (error) {
+    if (gen != null && gen !== searchGeneration) return;
+    // Alerts are supplementary; log unexpected schema/rendering faults and keep
+    // the station search usable while the refresh timer gets another chance.
+    console.error('[WX.MAP] Initial alert rendering failed:', error);
   }
 
   // Keep alerts current while this location stays loaded. The cache TTL gates the
@@ -2943,24 +3539,33 @@ async function loadAlertsForArea(lat, lon, gen) {
 
 /** Re-fetch and re-render alerts for the current location (refresh-loop tick). */
 async function refreshAlerts() {
-  if (currentLat == null) return;
-  // Capture the location for this tick. If the user searches elsewhere while the
-  // fetch is in flight, currentLat/currentLon change and we discard this result so
-  // it can't overwrite the newer area's alerts.
-  const lat = currentLat, lon = currentLon;
-  const alerts = await fetchAlerts(lat, lon);
-  if (lat !== currentLat || lon !== currentLon) return;
-  if (alerts === null) return;   // transient feed failure — keep current display, retry next tick
+  try {
+    if (currentLat == null) return;
+    // Capture the location for this tick. If the user searches elsewhere while the
+    // fetch is in flight, currentLat/currentLon change and we discard this result so
+    // it can't overwrite the newer area's alerts.
+    const lat = currentLat, lon = currentLon;
+    const alerts = await fetchAlerts(lat, lon);
+    if (lat !== currentLat || lon !== currentLon) return;
+    if (alerts === null) return;   // transient feed failure — keep current display, retry next tick
 
-  // Nothing changed since the last render → leave the banner, map areas, and any
-  // open popup exactly as the user left them.
-  const sig = alertsSignature(alerts);
-  if (sig === lastAlertSignature) return;
-  lastAlertSignature = sig;
-
-  renderAlertBanner(alerts);
-  flagStationsInAlerts(alerts);
-  renderAlertAreas(alerts);
+    // Preserve the user's banner/popup state when possible. An incomplete zone draw
+    // is the exception: retry only the map areas while leaving the banner untouched.
+    const sig = alertsSignature(alerts);
+    if (sig === lastAlertSignature) {
+      if (alertAreasNeedRetry) renderAlertAreas(alerts);
+      return;
+    }
+    renderAlertBanner(alerts);
+    flagStationsInAlerts(alerts);
+    renderAlertAreas(alerts);
+    // Commit the signature only after synchronous rendering succeeds. If malformed
+    // data throws, the next timer tick must be allowed to try this payload again.
+    lastAlertSignature = sig;
+  } catch (error) {
+    // setInterval does not observe rejected Promises, so contain and report faults.
+    console.error('[WX.MAP] Alert refresh failed:', error);
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2979,9 +3584,8 @@ async function refreshAlerts() {
 
 /**
  * Serialise the current search input into the page URL.
- * Values are double-encoded: URLSearchParams encodes the key=value separator
- * characters, and the individual values are additionally encodeURIComponent'd
- * to handle slashes, commas, and other address characters gracefully.
+ * URLSearchParams performs the required percent-encoding itself. Passing raw
+ * values avoids non-standard double encoding and keeps shared URLs interoperable.
  *
  * @param {'coords'|'zip'|'address'} type  - Input type from detectInputType()
  * @param {string}                   raw   - Raw search string
@@ -2990,12 +3594,12 @@ function pushQueryParam(type, raw) {
   const params = new URLSearchParams();
   if (type === 'coords') {
     const { lat, lon } = parseCoords(raw);
-    params.set('lat',  encodeURIComponent(lat));
-    params.set('long', encodeURIComponent(lon));
+    params.set('lat',  String(lat));
+    params.set('long', String(lon));
   } else if (type === 'zip') {
-    params.set('zip',  encodeURIComponent(raw.trim()));
+    params.set('zip',  raw.trim());
   } else {
-    params.set('addr', encodeURIComponent(raw.trim()));
+    params.set('addr', raw.trim());
   }
   window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
 }
@@ -3018,7 +3622,13 @@ async function doSearch() {
     return;
   }
 
+  // Allocate the generation before any geocoding await. Otherwise an older slow
+  // address/ZIP lookup can resolve after a newer search and overwrite its intent.
+  const gen = ++searchGeneration;
   const type = detectInputType(raw);
+  // A coordinate/ZIP search replaces an address lookup that may still be waiting
+  // for an API key. Close that obsolete modal instead of blocking the new result.
+  if (type !== 'address' && cancelApiKeyPrompt) cancelApiKeyPrompt();
   pushQueryParam(type, raw);
 
   try {
@@ -3028,23 +3638,26 @@ async function doSearch() {
       const { lat, lon } = parseCoords(raw);
       if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180)
         throw new Error('Invalid coordinates — use lat (-90…90), lon (-180…180)');
-      await loadStationsAt(lat, lon);
+      await loadStationsAt(lat, lon, gen);
 
     } else if (type === 'zip') {
       setStatus('loading', 'LOCATING…');
       showOverlay('Geocoding ZIP code…');
       const { lat, lon } = await zipToCoords(raw);
-      await loadStationsAt(lat, lon);
+      if (gen !== searchGeneration) return;
+      await loadStationsAt(lat, lon, gen);
 
     } else {
       // Street address — requires Geocodio API key
       setStatus('loading', 'GEOCODING…');
       showOverlay('Translating address via Geocodio…');
-      const { lat, lon } = await addressToCoords(raw);
-      await loadStationsAt(lat, lon);
+      const { lat, lon } = await addressToCoords(raw, gen);
+      if (gen !== searchGeneration) return;
+      await loadStationsAt(lat, lon, gen);
     }
 
   } catch (e) {
+    if (gen !== searchGeneration) return;
     hideOverlay();
     setStatus('error', 'ERROR');
     showToast(e.message || 'Something went wrong');
@@ -3202,7 +3815,13 @@ function placeDragPin(lat, lng) {
     removeDragPin();
 
     const icon = buildPinIcon(lat, lng);
-    droppedPinMarker = L.marker([lat, lng], { icon, draggable: true, zIndexOffset: 500 }).addTo(map);
+    droppedPinMarker = L.marker([lat, lng], {
+      icon,
+      draggable: true,
+      zIndexOffset: 500,
+      title: 'Search location pin',
+      alt: 'Draggable search location pin'
+    }).addTo(map);
 
     // Double-click to remove
     droppedPinMarker.on('dblclick', () => {
@@ -3263,12 +3882,14 @@ window.placeDragPin = placeDragPin;   // expose for mobile tap-to-place
  * @param {number} lng
  */
 function triggerPinSearch(lat, lng) {
+  const gen = ++searchGeneration;
   const coordStr = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   zipInput.value = coordStr;
   pushQueryParam('coords', coordStr);
   setStatus('loading', 'LOCATING…');
   showOverlay('Fetching stations for pin location…');
-  loadStationsAt(lat, lng).catch(err => {
+  loadStationsAt(lat, lng, gen).catch(err => {
+    if (gen !== searchGeneration) return;
     hideOverlay();
     setStatus('error', 'ERROR');
     showToast(err.message || 'Something went wrong');
@@ -3294,6 +3915,9 @@ fabLocate.addEventListener('click', () => {
     return;
   }
 
+  // Allocate before the permission prompt; a search started while it is open wins.
+  const gen = ++searchGeneration;
+
   // Visual loading state on the FAB
   fabLocate.classList.add('locating');
   fabLocate.disabled = true;
@@ -3305,6 +3929,7 @@ fabLocate.addEventListener('click', () => {
     position => {
       fabLocate.classList.remove('locating');
       fabLocate.disabled = false;
+      if (gen !== searchGeneration) return;
       hideOverlay();
 
       const { latitude: lat, longitude: lng } = position.coords;
@@ -3318,6 +3943,7 @@ fabLocate.addEventListener('click', () => {
     err => {
       fabLocate.classList.remove('locating');
       fabLocate.disabled = false;
+      if (gen !== searchGeneration) return;
       hideOverlay();
       setStatus('error', 'ERROR');
 
@@ -3350,25 +3976,15 @@ fabLocate.addEventListener('click', () => {
      ?zip=…                → ZIP code search
      ?addr=…               → address search (may prompt for Geocodio key)
 
-   Values are double-encoded when written (pushQueryParam) and double-decoded
-   here to handle special characters in addresses robustly.
+   URLSearchParams decodes the values written by pushQueryParam exactly once.
    ───────────────────────────────────────────────────────────────────────────── */
 
 (async function parseQueryParams() {
   const params = new URLSearchParams(window.location.search);
 
-  /**
-   * Safely retrieve and double-decode a query parameter.
-   * URLSearchParams.get() performs one decodeURIComponent pass; we apply a
-   * second pass to handle values that were stored via encodeURIComponent.
-   *
-   * @param   {string}      key
-   * @returns {string|null}
-   */
+  /** Retrieve a decoded query parameter through URLSearchParams. */
   function safeDecodeParam(key) {
-    const raw = params.get(key);
-    if (raw === null) return null;
-    try { return decodeURIComponent(raw); } catch { return raw; }
+    return params.get(key);
   }
 
   const stationParam = safeDecodeParam('station');
@@ -3380,9 +3996,9 @@ fabLocate.addEventListener('click', () => {
   /* ── ?station=KSAT — direct station lookup ── */
   if (stationParam) {
     // Capture the generation before fetching: if the user starts a normal search
-    // while this (up to 15 s) fetch is in flight, loadStationsAt bumps it and this
+    // while this (up to 15 s) fetch is in flight, that newer search bumps it and this
     // stale deep-link result must not hijack their session (popup, timer, markers).
-    const gen = searchGeneration;
+    const gen = ++searchGeneration;
     try {
       setStatus('loading', 'LOADING STATION…');
       showOverlay(`Fetching station ${stationParam}…`);
@@ -3393,7 +4009,7 @@ fabLocate.addEventListener('click', () => {
       if (!coords) throw new Error('No coordinates in station response');
 
       const [lng, lat] = coords;
-      map.flyTo([lat, lng], 12, { duration: 1.2 });
+      moveMapTo(lat, lng, 12);
 
       const stName = data.properties?.stationName || stationParam;
       const iconEl = makeStationMarker(stationParam, stName, lat, lng);
@@ -3416,6 +4032,7 @@ fabLocate.addEventListener('click', () => {
       loadAlertsForArea(lat, lng, gen);
 
     } catch (e) {
+      if (gen !== searchGeneration) return;
       hideOverlay();
       setStatus('error', 'ERROR');
       showToast(e.message || 'Failed to load station');

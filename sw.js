@@ -2,18 +2,19 @@
  * WX.MAP Service Worker
  * ─────────────────────
  * Caching strategy:
- *   • Navigation (the HTML document) → NETWORK-FIRST. While online the freshest
- *     index.html is always served, so deploys are picked up on the next reload;
- *     the cached copy is only used as an offline fallback.
- *   • Other same-origin assets (manifest, etc.) → CACHE-FIRST with network fill.
- *   • Cross-origin requests (NOAA API, OSM tiles, Google Fonts, unpkg CDN) are
+ *   • Navigation (the HTML document) → APP-SHELL CACHE. HTML and its vendored
+ *     runtime change together only after the user accepts an installed update.
+ *   • Declared same-origin shell assets → CACHE-FIRST.
+ *   • Other same-origin traffic → pass-through, so future private/dynamic data is
+ *     never persisted accidentally.
+ *   • Cross-origin requests (NOAA API, OSM tiles, Google Fonts) are
  *     left untouched and go straight to the network — never cached here.
  *
  * Updates: a new worker installs and waits (it does NOT skipWaiting on its own)
  * so the running session is never disrupted mid-use. The page asks it to activate
  * via a SKIP_WAITING message when the user accepts the update banner.
  *
- * Bump CACHE_NAME whenever the caching logic itself changes so stale caches from
+ * Bump APP_VERSION whenever the caching logic or shell changes so stale caches from
  * older strategies are purged on activate.
  */
 
@@ -29,30 +30,41 @@
  * the bottom-left version badge, so the badge always reflects the version actually
  * running. Keep APP_VERSION in sync with APP_VERSION_FALLBACK in index.html.
  */
-const APP_VERSION = '1.0.5';
-const CACHE_NAME  = `wxmap-v${APP_VERSION}`;
+const APP_VERSION = '1.0.8';
+const CACHE_NAME = `wxmap-weather-stations-v${APP_VERSION}`;
+// The legacy alternative is retained only so this release can clean up caches
+// created before the more ownership-specific name was introduced.
+const OWNED_CACHE_PATTERN = /^(?:wxmap-v|wxmap-weather-stations-v)\d+\.\d+\.\d+$/;
 
 /* App-shell URLs precached at install so the app works offline on first launch. */
 const SHELL_URLS = [
-  './',
   './index.html',
-  './manifest.json'
+  './manifest.json',
+  './leaflet.css',
+  './leaflet.js',
+  './LEAFLET-LICENSE.txt',
+  './images/layers.png',
+  './images/layers-2x.png',
+  './images/marker-icon.png'
 ];
+// Updating sw.js bypasses its own HTTP cache, but not the fetches made by addAll.
+// Reload requests ensure a newly versioned worker installs one coherent release.
+const SHELL_REQUESTS = SHELL_URLS.map(url =>
+  new Request(new URL(url, self.location.href).href, { cache: 'reload' })
+);
+const SHELL_ASSET_URLS = new Set(
+  SHELL_URLS.slice(1).map(url => new URL(url, self.location.href).href)
+);
 
 /* ── Install: precache the app shell. No skipWaiting — wait for the page's signal. ── */
 self.addEventListener('install', event => {
   console.info('[SW] Installing…');
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache =>
-      // addAll is atomic; fall back to best-effort individual adds so one missing
-      // asset can't abort the whole install.
-      cache.addAll(SHELL_URLS).catch(() =>
-        Promise.all(SHELL_URLS.map(url =>
-          cache.add(url).catch(err =>
-            console.warn(`[SW] Failed to precache ${url}:`, err.message))
-        ))
-      )
-    ).then(() => console.info('[SW] Install complete (waiting to activate)'))
+    // All shell files are required. If any is unavailable, installation fails and
+    // the last known-good worker/cache continues serving the application.
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(SHELL_REQUESTS))
+      .then(() => console.info('[SW] Install complete (waiting to activate)'))
   );
 });
 
@@ -62,7 +74,10 @@ self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
-        keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
+        // CacheStorage is shared by an origin. Match the complete WX.MAP naming
+        // convention so a similarly prefixed application cannot be deleted.
+        keys.filter(k => OWNED_CACHE_PATTERN.test(k) && k !== CACHE_NAME)
+            .map(k => caches.delete(k))
       ))
       .then(() => self.clients.claim())
   );
@@ -93,41 +108,29 @@ self.addEventListener('fetch', event => {
 
   // Only manage same-origin traffic; everything cross-origin (API/tiles/CDN/fonts)
   // passes through untouched.
-  if (new URL(req.url).origin !== self.location.origin) return;
+  const requestUrl = new URL(req.url);
+  if (requestUrl.origin !== self.location.origin) return;
 
-  if (req.mode === 'navigate') {
-    event.respondWith(networkFirst(req));
-  } else {
+  // Exact shell assets take precedence over the navigation fallback. Browsers use
+  // navigation mode when a user opens the license link, and that request must
+  // return the notice itself rather than the HTML app shell.
+  if (SHELL_ASSET_URLS.has(requestUrl.href)) {
     event.respondWith(cacheFirst(req));
+  } else if (req.mode === 'navigate') {
+    event.respondWith(serveAppShell(req));
   }
 });
 
 /**
- * Network-first: serve fresh from the network and refresh the cache; on failure
- * (offline) fall back to the cached document.
+ * Serve the HTML from the same atomically installed cache as its runtime assets.
+ * The network fallback is only for abnormal cache eviction; normal releases swap
+ * the complete shell through the waiting-worker update flow.
  * @param {Request} req
  * @returns {Promise<Response>}
  */
-async function networkFirst(req) {
-  try {
-    const res = await fetch(req);
-    // Refresh the cached document, but store it under a SINGLE canonical key
-    // (./index.html) rather than the request URL. Every navigation — including
-    // bookmarked/shared ?lat=…&long=… links — renders the same index.html, so
-    // caching per URL would pile up identical copies. Only cache a successful (2xx)
-    // response so a transient 5xx is never persisted as the offline fallback.
-    if (res.ok) {
-      const cache = await caches.open(CACHE_NAME);
-      cache.put('./index.html', res.clone()).catch(() => {});
-    }
-    return res;
-  } catch (err) {
-    // Offline — serve the cached app shell regardless of the navigation's query string.
-    const cache = await caches.open(CACHE_NAME);
-    return (await cache.match('./index.html')) ||
-           (await cache.match('./')) ||
-           Response.error();
-  }
+async function serveAppShell(req) {
+  const cache = await caches.open(CACHE_NAME);
+  return (await cache.match('./index.html')) || fetch(req);
 }
 
 /**
@@ -136,13 +139,13 @@ async function networkFirst(req) {
  * @returns {Promise<Response>}
  */
 async function cacheFirst(req) {
-  const cached = await caches.match(req);
+  // Match only this app's cache; a same-origin app may cache the same request URL.
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(req);
   if (cached) return cached;
 
   const res = await fetch(req);
-  if (res.ok) {
-    const cache = await caches.open(CACHE_NAME);
-    cache.put(req, res.clone()).catch(() => {});
-  }
+  // Only allowlisted public shell assets reach this function.
+  if (res.ok) await cache.put(req, res.clone()).catch(() => {});
   return res;
 }

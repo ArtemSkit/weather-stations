@@ -828,7 +828,8 @@
 
   /* Desktop: while pin mode is on, its banner (which wraps to two lines in
      mid-width windows) would cover the panel's ✕ — start the panel below it.
-     (Phones are unaffected: their bottom sheet uses top: auto !important.) */
+     (Phones are unaffected: their bottom sheet pins top and max-height with
+     !important in the mobile block.) */
   main:has(#tap-place-banner.active) #popup-panel { top: 64px; max-height: calc(100% - 80px); }
 
   /* Desktop: the station panel fills the top-right column and can reach the
@@ -940,7 +941,7 @@
       border-right: none;
       border-bottom: none;
       border-top: 1px solid var(--border);
-      max-height: 70vh;
+      max-height: 70vh !important;   /* beats the desktop pin-mode panel rule */
       overflow-y: auto;
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;

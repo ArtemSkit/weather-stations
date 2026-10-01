@@ -774,6 +774,11 @@ test('refresh interval input: exponent forms, empty field, clamping', () => {
   assert.equal(apply('abc'), 60);
   assert.equal(apply('5'), 10);
   assert.equal(apply('99999'), 3600);
+  // At max/min zoom the useless + or − looks disabled (our colour override is
+  // !important, so Leaflet's own greyed-out style needs restoring), and the
+  // pin-mode banner keeps its text out of a landscape notch.
+  assert.match(html, /\.leaflet-control-zoom a\.leaflet-disabled \{ color: var\(--text-muted\) !important; cursor: default; \}/);
+  assert.match(html, /padding: 7px calc\(12px \+ var\(--safe-right\)\) 7px calc\(12px \+ var\(--safe-left\)\);/);
   // The touch pin button centres its icon like the desktop one.
   assert.match(html, /#tap-pin-btn \{ display: flex !important; align-items: center; justify-content: center; padding: 0; \}/);
 });

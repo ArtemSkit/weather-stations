@@ -1570,7 +1570,8 @@ window.addEventListener('load', () => {
  * ════════════════════════════════════════════════════════════════════════════
  *  WX.MAP — Main Application Script
  *
- *  Entry point: DOMContentLoaded listener at the bottom.
+ *  Entry point: one DOMContentLoaded listener (just below) wraps the whole script;
+ *  startup work (deep-link handling, initMobile) runs at its end.
  *
  *  Module-level outline
  *  ─────────────────────

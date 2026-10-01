@@ -1928,9 +1928,10 @@ function detectInputType(raw) {
   // with a decimal or a degree mark, so "200 S 300 E" (a real Utah address) passes.
   // (\x27 and \x22 are the ASCII minute and second marks.)
   // A letter glued to a number ("29N 98W", "N29") is coordinate-style too; a
-  // spaced one ("10 S 5 E") stays an address. Leftover brackets or a ";" mean a
-  // half-copied coordinate pair: also rejected rather than geocoded.
-  if (/\d/.test(s) && (/^[\d\s.,;+()[\]-]+$/.test(s) ||
+  // spaced one ("10 S 5 E") stays an address. Leftover brackets or another
+  // separator (; : / | {} <>) mean a half-copied coordinate pair: also rejected
+  // rather than geocoded.
+  if (/\d/.test(s) && (/^[\d\s.,;:\/|+(){}[\]<>-]+$/.test(s) ||
       (/\d\.\d|[°′″\x27\x22]|\d[NSEW]|[NSEW]\d/i.test(s) && /^[\d\s.,+\-°\x27′\x22″NSEW]+$/i.test(s)))) return 'badzip';
   return 'address';
 }
@@ -2161,8 +2162,9 @@ async function fetchStations(lat, lon) {
  */
 async function fetchStationPoint(stationId) {
   try {
+    // 4 s, not 15: the deep link waits for this too, and it is only a refinement.
     const { response, data } = await fetchJsonWithTimeout(
-      `https://api.weather.gov/stations/${encodeURIComponent(stationId)}`);
+      `https://api.weather.gov/stations/${encodeURIComponent(stationId)}`, {}, 4000);
     const c = response.ok ? data?.geometry?.coordinates : null;
     return Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]) ? c : null;
   } catch (e) {

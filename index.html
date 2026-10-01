@@ -252,7 +252,7 @@
   .leaflet-tile-pane { filter: brightness(0.7) saturate(0.6) hue-rotate(190deg); }
 
   /* Lift the bottom-left zoom control so it clears the version badge in the corner.
-     (The mobile media query lifts it further to clear the FAB.) */
+     (The mobile media query lifts it further, clear of the larger phone layout.) */
   .leaflet-control-zoom { margin-bottom: 34px !important; }
 
   /* Override Leaflet control colours */
@@ -262,6 +262,9 @@
     border-color: var(--border) !important;
     font-family: 'Space Mono', monospace !important;
   }
+  /* The overrides above beat Leaflet's greyed-out style, so restore it: at the
+     max/min zoom the useless + or − must look disabled. */
+  .leaflet-control-zoom a.leaflet-disabled { color: var(--text-muted) !important; cursor: default; }
   .leaflet-control-attribution {
     background: rgba(10,14,23,0.85) !important;
     color: var(--text-muted) !important;
@@ -813,7 +816,8 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     text-align: center;
-    padding: 7px 12px;
+    /* Side padding clears a landscape notch (viewport-fit=cover). */
+    padding: 7px calc(12px + var(--safe-right)) 7px calc(12px + var(--safe-left));
     z-index: 1150;                       /* above the alert banner while the mode is armed */
     animation: slideIn 0.2s ease;
   }
@@ -1019,9 +1023,6 @@
          the summary chip visible on short landscape phones. */
       max-height: max(4rem, calc(100% - 8px - 180px - var(--safe-bottom)));
     }
-    /* With the bottom sheet open: full width (undo the desktop side-by-side rule)
-       and end above the Locate Me button, which then sits 12px above the sheet
-       (whose real height is --sheet-h) and is 54px tall: 12 + 54 + 8px gap = 74px. */
     /* Pin mode on phones: same idea as the desktop rule above, with phone spacing
        (these selectors match the desktop ones in specificity and come later). */
     main:has(#tap-place-banner.active) #alert-banner {
@@ -1031,6 +1032,9 @@
     main.sheet-open:has(#tap-place-banner.active) #alert-banner {
       max-height: max(4rem, calc(100% - var(--tap-banner-h, 74px) - 8px - var(--sheet-h, 70vh) - 74px));
     }
+    /* With the bottom sheet open: full width (undo the desktop side-by-side rule)
+       and end above the Locate Me button, which then sits 12px above the sheet
+       (whose real height is --sheet-h) and is 54px tall: 12 + 54 + 8px gap = 74px. */
     main.sheet-open #alert-banner {
       max-width: none;
       max-height: max(4rem, calc(100% - 8px - var(--sheet-h, 70vh) - 74px));

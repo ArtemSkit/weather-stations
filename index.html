@@ -364,7 +364,7 @@
     background: var(--surface); color: var(--text);
     border: 1px solid var(--border); border-left: 4px solid var(--red);
     border-radius: 6px; padding: 9px 12px;
-    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.78rem;
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.9rem;
     cursor: pointer; text-align: left; width: 100%;
     box-shadow: 0 8px 40px rgba(0,0,0,0.6);
   }
@@ -403,23 +403,28 @@
     width: 100%; padding: 10px 12px; cursor: pointer; text-align: left;
     background: transparent; border: none;
   }
-  .alert-event   { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 0.78rem; }
-  .alert-expires { font-family: 'Space Mono', monospace; font-size: 0.6rem; color: var(--text-muted); white-space: nowrap; }
+  .alert-event   { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 0.9rem; }
+  .alert-expires { font-family: 'Space Mono', monospace; font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
 
-  /* Card body (description + safety instruction) — collapsed until .open. */
+  /* Card body (description + safety instruction) — collapsed until .open.
+     Tall enough to show a useful chunk of the (now larger) text before scrolling,
+     but capped by the viewport so it never swallows a phone screen. */
   .alert-card-body {
     display: none;
     padding: 0 12px 12px;
-    max-height: 220px; overflow-y: auto;
+    max-height: min(50vh, 320px); overflow-y: auto;
     border-top: 1px solid var(--border);
   }
   .alert-card.open .alert-card-body { display: block; }
+  /* Body text sized to match the alert-area popup (≥ ~13.6px) so it stays
+     readable on phones; the description uses the primary text colour because it
+     is the main content, not secondary metadata. */
   .alert-headline {
-    font-size: 0.68rem; color: var(--text); margin: 10px 0 6px; line-height: 1.45;
+    font-size: 0.9rem; color: var(--text); margin: 10px 0 8px; line-height: 1.5;
   }
   .alert-desc {
-    font-family: 'Space Mono', monospace; font-size: 0.6rem; color: var(--text-muted);
-    line-height: 1.5; white-space: pre-line;   /* preserve NWS paragraph breaks */
+    font-family: 'Space Mono', monospace; font-size: 0.85rem; color: var(--text);
+    line-height: 1.55; white-space: pre-line;   /* keep the paragraph breaks left by unwrapAlertText() */
   }
 
   /* ════════════════════════════════════════════════════════════════════════════
@@ -3067,6 +3072,23 @@ function escapeHtml(s) {
 }
 
 /**
+ * Re-flow NWS alert text for display.  NWS products are hard-wrapped at about
+ * 69 characters, so a single newline is only a line wrap in the middle of a
+ * sentence and becomes a space.  Blank lines are real paragraph breaks and are
+ * kept, as is the line break in front of a "* " or "- " bullet item.
+ * @param   {string} text - raw `description` or `instruction` from the feed
+ * @returns {string} text with paragraphs separated by one blank line
+ */
+function unwrapAlertText(text) {
+  return String(text || '')
+    .replace(/\r\n?/g, '\n')                          // normalise Windows/old-Mac line endings
+    .split(/\n[ \t]*\n+/)                             // split into paragraphs at blank lines
+    .map(para => para.trim().replace(/\n(?![ \t]*[*-] )[ \t]*/g, ' '))   // join wrapped lines
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/**
  * Tier 1 — render the alert banner from a list of alert Features.
  * Hides the banner entirely when there are no active alerts.
  * @param {Object[]} features - GeoJSON alert Features from fetchAlerts()
@@ -3100,7 +3122,8 @@ function renderAlertBanner(features) {
     const p       = f.properties || {};
     const cls     = alertClass(p);
     const expires = p.expires ? `until ${formatWhen(p.expires)}` : '';
-    const detail  = [p.description, p.instruction].filter(Boolean).join('\n\n');
+    // Unwrap each part separately so the NWS hard line wraps don't split sentences.
+    const detail  = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
     return `
       <div class="alert-card alert-${cls}">
         <button class="alert-card-head" type="button" data-role="card" aria-expanded="false">

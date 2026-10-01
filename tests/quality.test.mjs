@@ -273,6 +273,26 @@ test('alert popup opens only on click and keeps readable typography', () => {
   assert.match(html, /\.wx-alert-popup a\.leaflet-popup-close-button:focus-visible/);
 });
 
+test('alert banner text is phone-readable and NWS hard wraps are unwrapped', () => {
+  // Banner body text must stay at least as large as the alert-area popup text.
+  assert.match(html, /\.alert-desc \{[^}]*font-size: 0\.85rem/s);
+  assert.match(html, /\.alert-headline \{[^}]*font-size: 0\.9rem/s);
+
+  const unwrapAlertText = vm.runInNewContext(`(${extractFunction('unwrapAlertText')})`);
+  // Typical NWS product: lines wrapped mid-sentence, paragraphs split by blank lines.
+  const raw = '* WHAT...Southwest winds 15 to 25 mph with gusts up to 45 mph\r\n' +
+    'expected.\r\n\r\n* WHERE...Portions of central and\n  eastern Virginia.\n\n\n' +
+    'Use extra caution\nwhen driving.\n* Secure outdoor objects.';
+  assert.equal(unwrapAlertText(raw),
+    '* WHAT...Southwest winds 15 to 25 mph with gusts up to 45 mph expected.\n\n' +
+    '* WHERE...Portions of central and eastern Virginia.\n\n' +
+    'Use extra caution when driving.\n* Secure outdoor objects.');
+  assert.equal(unwrapAlertText(null), '');
+
+  // The banner must unwrap both parts before joining them.
+  assert.match(extractFunction('renderAlertBanner'), /\.map\(unwrapAlertText\)/);
+});
+
 test('alert popup selection toggles, switches areas, and closes on click-away or Escape', () => {
   let activePopup = null;
   let closeCount = 0;

@@ -336,7 +336,7 @@ WX.MAP is a **no-build app with no package-manager dependencies**. All custom UI
 weather-stations/
 ├── index.html                      (the whole app)
 │   ├── <head>
-│   │   ├── <link rel="manifest">       → manifest.json
+│   │   ├── manifest link (added by script, skipped on file://) → manifest.json
 │   │   ├── inline SVG favicon + apple-touch-icon
 │   │   ├── Google Fonts                (Space Mono, Syne — CDN)
 │   │   └── Leaflet CSS                 (vendored)

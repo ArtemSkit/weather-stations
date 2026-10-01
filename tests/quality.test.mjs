@@ -109,20 +109,23 @@ test('a failed newer search keeps the area that is loading or shown', async () =
     let stationMarkers = [];
     const popupPanel = { style: {} };
     const overlayText = {};
+    let overlayVisible = false;
+    const mapOverlay = { classList: { contains: () => overlayVisible } };
     function clearAlerts() {}
     function clearStations() { stationMarkers = []; }
     function moveMapTo() {}
     function plotStations() { stationMarkers = [1, 2]; log.push('plotted'); }
     function setStatus(state, text) { log.push('status:' + state + ':' + text); }
-    function hideOverlay() { log.push('overlay hidden'); }
+    function hideOverlay() { overlayVisible = false; log.push('overlay hidden'); }
     function showToast(m) { log.push('toast:' + m); }
     function loadAlertsForArea() { log.push('alerts'); }
     ${extractFunction('stationCountLabel')}
+    ${extractFunction('mayUpdateSearchUi')}
     ${extractFunction('reportSearchError')}
     async ${extractFunction('loadStationsAt')}
     return {
       loadStationsAt, reportSearchError,
-      newSearch: () => ++searchGeneration
+      newSearch: () => { overlayVisible = true; return ++searchGeneration; }
     };
   `)(() => new Promise(resolve => { resolveFetch = resolve; }), log);
 
@@ -137,11 +140,31 @@ test('a failed newer search keeps the area that is loading or shown', async () =
   // B then fails before reaching the map: the status describes what is shown.
   h.reportSearchError('ZIP code "00000" not found');
   assert.deepEqual(log.slice(-3), ['overlay hidden', 'toast:ZIP code "00000" not found', 'status:ok:2 STATIONS']);
+
+  // Reverse order: C reaches the map, D starts and FAILS while C still loads (no
+  // markers yet → ERROR). When C's stations land, the status must show them.
+  log.length = 0;
+  const loadC = h.loadStationsAt(3, 4, h.newSearch());
+  h.newSearch();
+  h.reportSearchError('Location access denied.');
+  assert.equal(log.at(-1), 'status:error:ERROR');
+  resolveFetch({ features: [] });
+  assert.equal(await loadC, true);
+  assert.ok(log.includes('status:ok:2 STATIONS'), 'status must not stay on ERROR under plotted stations');
+});
+
+test('the ?station deep link follows the same area rule as searches', () => {
+  const deepLink = html.slice(html.indexOf('if (stationParam) {'), html.indexOf('/* ── Other params ── */'));
+  assert.match(deepLink, /const area = \+\+areaGeneration;/);
+  assert.match(deepLink, /if \(area !== areaGeneration\) return;/);
+  assert.match(deepLink, /if \(mayUpdateSearchUi\(gen\)\) \{/);
+  // Closing the panel only returns focus for keyboard use (no surprise map pan).
+  assert.match(html, /e\.currentTarget\.matches\(':focus-visible'\)/);
 });
 
 test('hidden tabs pause alert polling and hard-reloaded tabs still get updates', () => {
   assert.match(extractFunction('refreshAlerts'), /if \(document\.hidden\) \{ alertsRefreshMissed = true; return; \}/);
-  assert.match(html, /if \(!swContainer\.controller && reg\.active\) skipNextControllerChange = false;/);
+  assert.match(html, /if \(!swContainer\.controller && reg\.active\?\.state === 'activated'\) skipNextControllerChange = false;/);
   assert.match(html, /if \(reg\.waiting && hasActiveWorker\(\)\) announceUpdate\(\);/);
   // One live region for progress (the status bar), and no manifest fetch on file://.
   assert.match(html, /<div id="map-overlay">/);
@@ -1084,7 +1107,7 @@ test('every search path allocates or receives a generation before awaiting', () 
   assert.match(stationLoader, /^function loadStationsAt\(lat, lon, gen\)/);
   assert.match(stationLoader, /const area = \+\+areaGeneration;/);
   assert.match(stationLoader, /if \(area !== areaGeneration\) return false;/);
-  assert.match(stationLoader, /if \(gen === searchGeneration\) \{\s*setStatus\(/);
+  assert.match(stationLoader, /if \(mayUpdateSearchUi\(gen\)\) \{\s*setStatus\(/);
   assert.doesNotMatch(html, /loadStationsAt\(\s*\w+\s*,\s*\w+\s*\)/,
     'every call site must pass its pre-allocated generation');
 

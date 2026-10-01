@@ -434,9 +434,11 @@ These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifes
 | Feature | Chrome | Firefox | Edge | Safari |
 |---|---|---|---|---|
 | Map + search | ✅ | ✅ | ✅ | ✅ |
-| Draggable pin | ✅ | ✅ | ✅ | ✅ |
+| Draggable pin | ✅ | ✅† | ✅ | ✅ |
 | Locate Me (GPS) | ✅* | ✅* | ✅* | ✅* |
 | Service Worker (PWA) | ✅ | ✅ | ✅ | ✅ (iOS 11.3+) |
 | Install UI | ✅ | Android / desktop extension | ✅ | ✅ (Add to Home Screen / Add to Dock) |
 
 \* Requires HTTPS or localhost. Denied in `file://` context on most browsers.
+
+† Older Firefox versions may not start a drag from a button. Clicking the 📍 button and then the map (click-to-place) works in every browser.

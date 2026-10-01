@@ -850,7 +850,8 @@
      ════════════════════════════════════════════════════════════════════════════ */
   @media (pointer: coarse) {
     #drag-pin    { display: none !important; }
-    #tap-pin-btn { display: flex !important; }
+    /* A flex <button> loses the browser's automatic centring of its content. */
+    #tap-pin-btn { display: flex !important; align-items: center; justify-content: center; padding: 0; }
   }
 
   /* ════════════════════════════════════════════════════════════════════════════
@@ -1795,7 +1796,11 @@ const MIN_REFRESH_SECONDS = 10;
 const MAX_REFRESH_SECONDS = 3600;
 
 intervalInput.addEventListener('change', () => {
-  const parsed  = parseInt(intervalInput.value, 10);
+  // Number(), not parseInt(): a number field also accepts forms like "1e3" (1000),
+  // which parseInt would read as 1 — and then clamp to the fastest rate. An empty
+  // field must stay NaN (Number('') is 0, which would also mean "fastest").
+  const raw     = intervalInput.value.trim();
+  const parsed  = raw === '' ? NaN : Math.round(Number(raw));
   // A cleared or garbled field keeps the current interval rather than silently
   // switching to the fastest (most API-hungry) rate.
   const seconds = Number.isNaN(parsed) ? refreshInterval / 1000

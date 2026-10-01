@@ -729,6 +729,27 @@ test('round-9 fixes: narrow header, drag vs click, pin-mode banner, colours, Loc
   assert.match(html, /#fab-locate:focus:not\(:focus-visible\) \{ outline: none; \}/);
 });
 
+test('refresh interval input: exponent forms, empty field, clamping', () => {
+  // Run the real change handler against a stub input.
+  const start = html.indexOf("intervalInput.addEventListener('change', () => {");
+  const body = html.slice(start, html.indexOf('\n});', start) + 4);
+  const apply = value => {
+    const ctx = { intervalInput: { value, addEventListener: (_t, fn) => { ctx.fn = fn; } },
+      refreshInterval: 60_000, activeStationId: null, refreshTimer: null,
+      MIN_REFRESH_SECONDS: 10, MAX_REFRESH_SECONDS: 3600, Math, Number };
+    vm.runInNewContext(body, ctx);
+    ctx.fn();
+    return ctx.refreshInterval / 1000;
+  };
+  assert.equal(apply('1e3'), 1000, '"1e3" is a valid 1000, not 1');
+  assert.equal(apply(''), 60, 'a cleared field keeps the current rate');
+  assert.equal(apply('abc'), 60);
+  assert.equal(apply('5'), 10);
+  assert.equal(apply('99999'), 3600);
+  // The touch pin button centres its icon like the desktop one.
+  assert.match(html, /#tap-pin-btn \{ display: flex !important; align-items: center; justify-content: center; padding: 0; \}/);
+});
+
 test('the hidden toast never makes the page taller than the window', () => {
   // An absolute box parked 80px below the screen let focus() scroll the whole app.
   assert.match(html, /#toast \{[^}]*position: fixed;/);

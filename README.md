@@ -174,7 +174,7 @@ The **⊕ crosshair button** in the bottom-right corner of the map uses your dev
 
 ## Weather Station Popup
 
-Click any station badge on the map to open the info panel. It shows:
+Click any station badge on the map — or focus it with `Tab` and press `Enter` — to open the info panel (`Esc` closes it and returns focus to the badge). It shows:
 
 | Field | Source |
 |---|---|
@@ -313,7 +313,7 @@ WX.MAP is versioned by a single `APP_VERSION` constant that is woven into the se
 3. The complete shell is precached atomically. If any required file is unavailable, installation fails and the last known-good release remains active.
 4. When a changed worker is ready, it **waits** — the running session is never disrupted mid-use.
 5. An **"App update available"** banner slides down from the top with **REFRESH NOW** / **Dismiss**.
-6. **REFRESH NOW** tells the waiting worker to take over and reloads once. **Dismiss** leaves the current interaction and release untouched. Accepting the update in one window reloads every open WX.MAP window, because they all switch to the new release together.
+6. **REFRESH NOW** tells the waiting worker to take over and reloads once. **Dismiss** leaves the current interaction and release untouched. Accepting the update in one window reloads every other open WX.MAP window that was running the old release, because they all switch to the new release together. (A window opened with a hard reload — `Ctrl+Shift+R` — already loaded straight from the network, so it only reloads when you accept the update in that window.)
 7. Caches from previous WX.MAP versions are purged automatically on activation; unrelated same-origin caches are left alone.
 
 > **Releasing a new version:** bump `APP_VERSION` in `sw.js` (and the matching `APP_VERSION_FALLBACK` in `index.html`) so the update flow fires and the version badge reflects the new build.

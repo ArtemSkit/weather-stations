@@ -1462,11 +1462,22 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18
 }).addTo(map);
 
+// Leaflet only re-measures its container on window resize. Also re-measure when the
+// map's own box changes — e.g. a page first laid out while hidden — or the tiles
+// stay drawn for the old (possibly 0×0) size.
+new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-/** Move the map without animation when the user has requested reduced motion. */
+/**
+ * Move the map, animating only when it makes sense: not when the user asked for
+ * reduced motion, and not while the map has no size (e.g. a shared link opened
+ * in a hidden tab or frame). flyTo() divides by the map's size, so on a 0×0 map
+ * it throws "Invalid LatLng object: (NaN, NaN)" and the whole search fails.
+ */
 function moveMapTo(lat, lon, zoom) {
-  if (prefersReducedMotion.matches) map.setView([lat, lon], zoom);
+  const size = map.getSize();
+  if (prefersReducedMotion.matches || !size.x || !size.y) map.setView([lat, lon], zoom);
   else map.flyTo([lat, lon], zoom, { duration: 1.2 });
 }
 

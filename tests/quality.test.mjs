@@ -100,6 +100,24 @@ test('inline scripts compile and document IDs remain unique', () => {
   }
 });
 
+test('links opened in a hidden tab still load (no flyTo on a 0×0 map)', () => {
+  const calls = [];
+  const fakeMap = size => ({
+    getSize: () => size,
+    setView: () => calls.push('setView'),
+    flyTo: () => calls.push('flyTo')
+  });
+  const makeMove = (size, reduced = false) => vm.runInNewContext(`(${extractFunction('moveMapTo')})`, {
+    map: fakeMap(size), prefersReducedMotion: { matches: reduced }
+  });
+  makeMove({ x: 0, y: 0 })(1, 2, 10);       // laid out while hidden: flyTo would throw NaN
+  makeMove({ x: 800, y: 600 })(1, 2, 10);   // normal: animate
+  makeMove({ x: 800, y: 600 }, true)(1, 2, 10);
+  assert.deepEqual(calls, ['setView', 'flyTo', 'setView']);
+  // …and the map re-measures itself once it is actually shown.
+  assert.match(html, /new ResizeObserver\(\(\) => map\.invalidateSize\(\)\)/);
+});
+
 test('search pin works by drop, click, tap, and keyboard', () => {
   // The pin is placed on a real `drop` (Escape-cancelled drags never fire it).
   const pinSection = html.slice(html.indexOf("dragPinBtn.addEventListener('dragstart'"),

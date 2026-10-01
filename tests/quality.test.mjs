@@ -545,6 +545,11 @@ test('Enter that confirms an IME composition does not start a search', () => {
   assert.match(html, /e\.key === 'Enter' && !e\.isComposing\) doSearch\(\);/);
 });
 
+test('the hidden toast never makes the page taller than the window', () => {
+  // An absolute box parked 80px below the screen let focus() scroll the whole app.
+  assert.match(html, /#toast \{[^}]*position: fixed;/);
+});
+
 test('vendored Leaflet and its license match the pinned release', () => {
   const digest = value => createHash('sha256').update(value).digest('base64');
   assert.equal(digest(leafletCss), 'p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=');

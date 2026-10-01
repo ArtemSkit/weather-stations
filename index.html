@@ -733,7 +733,10 @@
      TOAST NOTIFICATION (bottom-centre, slides up)
      ════════════════════════════════════════════════════════════════════════════ */
   #toast {
-    position: absolute; bottom: 20px; left: 50%;
+    /* fixed, not absolute: while hidden it sits 80px below the screen, and an
+       absolute box down there makes the page taller than the window — so moving
+       keyboard focus to a marker near the bottom scrolled the whole app up. */
+    position: fixed; bottom: 20px; left: 50%;
     transform: translateX(-50%) translateY(80px);
     background: var(--surface); border: 1px solid var(--red);
     color: var(--text); padding: 10px 20px;

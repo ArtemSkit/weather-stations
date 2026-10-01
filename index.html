@@ -1880,6 +1880,22 @@ intervalInput.addEventListener('change', () => {
    ───────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * Common cleanup before classifying or parsing search text: pasted minus signs
+ * and dashes (Unicode minus, hyphen variants including the non-breaking one from
+ * Word/Docs, en/em dash, fullwidth) become "-", and one surrounding pair of
+ * brackets is dropped, so a copied "(29.42, -98.49)" or "[29.42, -98.49]" reads
+ * as coordinates instead of an address search that lands in Tacoma, WA.
+ *
+ * @param   {string} raw
+ * @returns {string}
+ */
+function normalizeSearchText(raw) {
+  return raw.trim()
+    .replace(/[‐-―−﹣－]/g, '-')
+    .replace(/^[([]\s*([^()[\]]*?)\s*[)\]]$/, '$1');
+}
+
+/**
  * Classify free-form user input so the correct geocoding path is chosen.
  *
  * Rules (evaluated in order):
@@ -1896,12 +1912,11 @@ intervalInput.addEventListener('change', () => {
  * @returns {'coords'|'zip'|'badzip'|'address'}
  */
 function detectInputType(raw) {
-  // Pasted minus signs and dashes (Unicode minus, hyphen variants including the
-  // non-breaking one from Word/Docs, en/em dash, fullwidth) count as "-".
-  const s = raw.trim().replace(/[‐-―−﹣－]/g, '-');
+  const s = normalizeSearchText(raw);
   if (/^\d{5}([ -]?\d{4})?$/.test(s))                                 return 'zip';
   // A mistyped ZIP that starts with 0 ("00601 12") isn't a coordinate pair either.
-  if (/^0\d{4}(?![\d.])/.test(s))                                     return 'badzip';
+  // Digits and punctuation only after it: "02138 Cambridge MA" is a real address.
+  if (/^0\d{4}(?![\d.])[\d\s,+-]*$/.test(s))                       return 'badzip';
   // Each number: optional sign, at most 3 whole digits after any leading zeros (so
   // "78201 123", a mistyped ZIP+4, isn't taken as coordinates), optional decimals;
   // ".5" and "29." are fine.
@@ -1924,9 +1939,8 @@ function detectInputType(raw) {
  * @returns {{ lat: number, lon: number }}
  */
 function parseCoords(raw) {
-  // Comma and/or spaces between the two numbers; Unicode minus / dashes allowed
-  // (see detectInputType).
-  const parts = raw.trim().replace(/[‐-―−﹣－]/g, '-').split(/[\s,]+/);
+  // Comma and/or spaces between the two numbers (see detectInputType).
+  const parts = normalizeSearchText(raw).split(/[\s,]+/);
   return { lat: parseFloat(parts[0]), lon: parseFloat(parts[1]) };
 }
 
@@ -1944,7 +1958,7 @@ function parseCoords(raw) {
  * @param   {number}      [timeoutMs=15000]
  * @returns {Promise<{ response: Response, data: Object|null }>}
  * @throws  {Error} 'Request timed out…' on abort, 'Network error…' when offline,
- *                  blocked, or answered with non-JSON (original error as \`cause\`)
+ *                  blocked, or answered with non-JSON (original error as `cause`)
  */
 async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15_000) {
   const controller = new AbortController();

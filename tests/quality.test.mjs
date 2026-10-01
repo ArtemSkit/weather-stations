@@ -598,7 +598,7 @@ test('rain chance uses the hour in progress, not an hour that already ended', as
 
 test('shared coordinate links never use exponent notation', () => {
   let written = '';
-  const push = vm.runInNewContext(`(() => { ${extractFunction('parseCoords')} ${extractFunction('pushQueryParam')} return pushQueryParam; })()`, {
+  const push = vm.runInNewContext(`(() => { ${extractFunction('normalizeSearchText')} ${extractFunction('parseCoords')} ${extractFunction('pushQueryParam')} return pushQueryParam; })()`, {
     URLSearchParams, String, Number, parseFloat,
     window: { location: { pathname: '/' }, history: { replaceState: (s, t, url) => { written = url; } } }
   });
@@ -2023,7 +2023,7 @@ test('dismissing an update cannot schedule an automatic reload', () => {
 });
 
 test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are not addresses', () => {
-  const detect = vm.runInNewContext(`(() => { ${extractFunction('detectInputType')} return detectInputType; })()`);
+  const detect = vm.runInNewContext(`(() => { ${extractFunction('normalizeSearchText')} ${extractFunction('detectInputType')} return detectInputType; })()`);
   assert.equal(detect('78201'), 'zip');
   assert.equal(detect('90210-1234'), 'zip');
   assert.equal(detect(' 902101234 '), 'zip');
@@ -2057,11 +2057,17 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   // A 0-leading ZIP typo is a ZIP problem, not "invalid coordinates".
   assert.equal(detect('00601 12'), 'badzip');
   assert.equal(detect('00601'), 'zip');
+  assert.equal(detect('02138 Cambridge MA'), 'address');   // ZIP + city is an address
+  assert.equal(detect('02138, MA'), 'address');
+  // Copied tuples / arrays are coordinates, not an address that lands in Tacoma.
+  assert.equal(detect('(29.42, -98.49)'), 'coords');
+  assert.equal(detect('[29.42, -98.49]'), 'coords');
   // Non-breaking hyphen pasted from Word/Docs works as a minus.
   assert.equal(detect('29.42 ‑98.49'), 'coords');
-  const parse = vm.runInNewContext(`(() => { ${extractFunction('parseCoords')} return parseCoords; })()`);
+  const parse = vm.runInNewContext(`(() => { ${extractFunction('normalizeSearchText')} ${extractFunction('parseCoords')} return parseCoords; })()`);
   assert.deepEqual({ ...parse(' 29.42   -98.49 ') }, { lat: 29.42, lon: -98.49 });
   assert.deepEqual({ ...parse('29.42 , -98.49') }, { lat: 29.42, lon: -98.49 });
+  assert.deepEqual({ ...parse('[29.42, -98.49]') }, { lat: 29.42, lon: -98.49 });
   assert.deepEqual({ ...parse('29.42 −98.49') }, { lat: 29.42, lon: -98.49 });
   assert.equal(detect('29.4, -98.5'), 'coords');
   assert.equal(detect('1600 Pennsylvania Ave'), 'address');

@@ -383,6 +383,7 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
   let activateWork;
   listeners.get('activate')({ waitUntil(promise) { activateWork = promise; } });
   await activateWork;
+  // Both sides sorted the same (as text): "v1.1.10" sorts before "v1.1.2".
   assert.deepEqual(deleted.sort(), [
     'wxmap-v1.0.6',
     'wxmap-v3',
@@ -400,7 +401,7 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
     'wxmap-weather-stations-v1.1.8',
     'wxmap-weather-stations-v1.1.9',
     'wxmap-weather-stations-v1.1.10'
-  ]);
+  ].sort());
 
   const routed = request => {
     let response;

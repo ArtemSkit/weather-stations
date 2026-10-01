@@ -433,12 +433,16 @@
   .alert-card-head:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
 
   .alert-card-head {
-    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    /* Wraps so a long "from … until …" time drops under the event name instead of
+       being clipped by the card (overflow: hidden). */
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 8px;
     width: 100%; padding: 10px 12px; cursor: pointer; text-align: left;
     background: transparent; border: none;
   }
   .alert-event   { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 0.9rem; }
-  .alert-expires { font-family: 'Space Mono', monospace; font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
+  .alert-expires { font-family: 'Space Mono', monospace; font-size: 0.75rem; color: var(--text-muted); }
+  /* Each part ("from …", "until …") stays whole; a narrow card breaks between them. */
+  .alert-when    { white-space: nowrap; }
 
   /* Card body (description + safety instruction) — collapsed until .open.
      Tall enough to show a useful chunk of the (now larger) text before scrolling,
@@ -3433,14 +3437,15 @@ function renderAlertBanner(features) {
     // Show when the hazard ends (see alertEndText). A future start is shown too,
     // so an upcoming alert doesn't read as already in force.
     const startsLater = p.onset && Date.parse(p.onset) > Date.now();
-    const expires = (startsLater ? `from ${formatWhen(p.onset)} ` : '') + alertEndText(p);
+    const expires = [startsLater && `from ${formatWhen(p.onset)}`, alertEndText(p)]
+      .filter(Boolean).map(s => `<span class="alert-when">${escapeHtml(s)}</span>`).join(' ');
     // Unwrap each part separately so the NWS hard line wraps don't split sentences.
     const detail  = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
     return `
       <div class="alert-card alert-${cls}">
         <button class="alert-card-head" type="button" data-role="card" aria-expanded="false">
           <span class="alert-event">${escapeHtml(p.event || 'Weather alert')}</span>
-          <span class="alert-expires">${escapeHtml(expires)}</span>
+          <span class="alert-expires">${expires}</span>
         </button>
         <div class="alert-card-body">
           ${p.headline ? `<p class="alert-headline">${escapeHtml(p.headline)}</p>` : ''}
@@ -3676,7 +3681,8 @@ function alertAreaPopupHtml(props, color) {
     .filter(v => v && v !== 'Unknown').map(escapeHtml).join(' · ');
   // The real hazard window: onset → ends (see alertEndText for alerts without `ends`).
   const start = formatWhen(props.onset || props.effective || props.sent);
-  const end   = props.ends ? formatWhen(props.ends) : alertEndText(props) || '—';
+  // The arrow already means "until", so drop that word ("→ further notice").
+  const end   = alertEndText(props).replace(/^until /, '') || '—';
   const head  = props.headline ? `<div class="wx-alert-pop-head">${escapeHtml(props.headline)}</div>` : '';
   const area  = props.areaDesc ? `<div class="wx-alert-pop-area">${escapeHtml(props.areaDesc)}</div>` : '';
   return `

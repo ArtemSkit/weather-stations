@@ -32,9 +32,10 @@
  */
 const APP_VERSION = '1.1.0';
 const CACHE_NAME = `wxmap-weather-stations-v${APP_VERSION}`;
-// The legacy alternative is retained only so this release can clean up caches
-// created before the more ownership-specific name was introduced.
-const OWNED_CACHE_PATTERN = /^(?:wxmap-v|wxmap-weather-stations-v)\d+\.\d+\.\d+$/;
+// The legacy alternatives are retained only so this release can clean up caches
+// created before the more ownership-specific name was introduced: early releases
+// used "wxmap-v2"/"wxmap-v3", later ones "wxmap-v1.0.x".
+const OWNED_CACHE_PATTERN = /^(?:wxmap-v\d+(?:\.\d+\.\d+)?|wxmap-weather-stations-v\d+\.\d+\.\d+)$/;
 
 /* App-shell URLs precached at install so the app works offline on first launch. */
 const SHELL_URLS = [
@@ -53,8 +54,15 @@ const SHELL_REQUESTS = SHELL_URLS.map(url =>
   new Request(new URL(url, self.location.href).href, { cache: 'reload' })
 );
 const SHELL_ASSET_URLS = new Set(
-  SHELL_URLS.slice(1).map(url => new URL(url, self.location.href).href)
+  SHELL_URLS.filter(url => url !== './index.html')
+    .map(url => new URL(url, self.location.href).href)
 );
+// The only navigations answered with the cached app shell: the scope root and
+// index.html (the worker lives at the scope root). Any other page in scope — a
+// typo'd path, ./sw.js, or another project served from the same dev origin —
+// goes to the network instead of being silently replaced by WX.MAP.
+const SCOPE_URL = new URL('./', self.location.href).href;
+const SHELL_DOCUMENT_URLS = new Set([SCOPE_URL, new URL('./index.html', SCOPE_URL).href]);
 
 /* ── Install: precache the app shell. No skipWaiting — wait for the page's signal. ── */
 self.addEventListener('install', event => {
@@ -110,13 +118,17 @@ self.addEventListener('fetch', event => {
   // passes through untouched.
   const requestUrl = new URL(req.url);
   if (requestUrl.origin !== self.location.origin) return;
+  // A #fragment never changes which resource is fetched, so ignore it when matching.
+  requestUrl.hash = '';
 
   // Exact shell assets take precedence over the navigation fallback. Browsers use
   // navigation mode when a user opens the license link, and that request must
   // return the notice itself rather than the HTML app shell.
   if (SHELL_ASSET_URLS.has(requestUrl.href)) {
     event.respondWith(cacheFirst(req));
-  } else if (req.mode === 'navigate') {
+  } else if (req.mode === 'navigate' &&
+             SHELL_DOCUMENT_URLS.has(requestUrl.origin + requestUrl.pathname)) {
+    // The ?query is ignored here so shared links such as ?lat=…&long=… work offline.
     event.respondWith(serveAppShell(req));
   }
 });
@@ -130,7 +142,16 @@ self.addEventListener('fetch', event => {
  */
 async function serveAppShell(req) {
   const cache = await caches.open(CACHE_NAME);
-  return (await cache.match('./index.html')) || fetch(req);
+  const cached = await cache.match('./index.html');
+  if (!cached) return fetch(req);
+  // Some hosts redirect /index.html → / , so the precached copy can be flagged as
+  // redirected. Browsers refuse a redirected response for a navigation, which
+  // would leave the app unable to open at all; serve a clean copy of the body.
+  return cached.redirected
+    ? new Response(cached.body, {
+        status: cached.status, statusText: cached.statusText, headers: cached.headers
+      })
+    : cached;
 }
 
 /**

@@ -74,6 +74,7 @@ function loadServiceWorker({ cachesImpl, fetchImpl = async () => ({ ok: true, cl
     caches: cachesImpl,
     fetch: fetchImpl,
     Request: RequestStub,
+    Response,
     URL,
     Set,
     console: { info() {}, warn() {} }
@@ -200,6 +201,7 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
     cachesImpl: {
       open: async () => cache,
       keys: async () => [
+        'wxmap-v3',
         'wxmap-v1.0.6',
         'wxmap-weather-stations-v1.1.0',
         'wxmap-weather-stations-v1.0.8',
@@ -216,6 +218,7 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
   await activateWork;
   assert.deepEqual(deleted.sort(), [
     'wxmap-v1.0.6',
+    'wxmap-v3',
     'wxmap-weather-stations-v1.0.5',
     'wxmap-weather-stations-v1.0.7',
     'wxmap-weather-stations-v1.0.8'
@@ -230,6 +233,12 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
   assert.equal(routed({ method: 'GET', mode: 'cors', url: 'https://api.weather.gov/alerts' }), undefined);
   assert.ok(routed({ method: 'GET', mode: 'cors', url: 'https://example.test/weather/leaflet.js' }));
   assert.ok(routed({ method: 'GET', mode: 'navigate', url: 'https://example.test/weather/index.html?zip=78201' }));
+  assert.ok(routed({ method: 'GET', mode: 'navigate', url: 'https://example.test/weather/?lat=1&long=2' }));
+  // Other pages in scope must reach the network instead of the app shell.
+  assert.equal(routed({ method: 'GET', mode: 'navigate', url: 'https://example.test/weather/typo.html' }), undefined);
+  assert.equal(routed({ method: 'GET', mode: 'navigate', url: 'https://example.test/weather/sw.js' }), undefined);
+  // A #fragment must not hide an exact shell asset.
+  assert.ok(routed({ method: 'GET', mode: 'cors', url: 'https://example.test/weather/leaflet.js#x' }));
 
   const licenseRequest = {
     method: 'GET', mode: 'navigate', url: 'https://example.test/weather/LEAFLET-LICENSE.txt'
@@ -239,6 +248,22 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
     matchedRequests.includes(licenseRequest),
     'a direct license navigation must return the notice rather than the HTML app shell'
   );
+
+  // A host that redirects /index.html → / leaves a "redirected" precache entry,
+  // which browsers reject for navigations; the worker must serve a clean copy.
+  const redirectedShell = new Response('<!doctype html>', { status: 200 });
+  Object.defineProperty(redirectedShell, 'redirected', { value: true });
+  const shellListeners = loadServiceWorker({
+    cachesImpl: { open: async () => ({ match: async () => redirectedShell }) }
+  });
+  let shellResponse;
+  shellListeners.get('fetch')({
+    request: { method: 'GET', mode: 'navigate', url: 'https://example.test/weather/' },
+    respondWith(value) { shellResponse = value; }
+  });
+  const served = await shellResponse;
+  assert.equal(served.redirected, false);
+  assert.equal(await served.text(), '<!doctype html>');
 });
 
 test('vendored Leaflet and its license match the pinned release', () => {

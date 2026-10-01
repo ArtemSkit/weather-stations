@@ -2091,3 +2091,21 @@ test('with the phone sheet open, the toast clears the lifted Locate Me button', 
   // The comment no longer claims User-Agent is a forbidden header.
   assert.doesNotMatch(html, /User-Agent is a forbidden fetch header/);
 });
+
+test('a cached rain chance is not shown after its forecast hour is over', async () => {
+  const shown = [];
+  const run = vm.runInNewContext(`(() => {
+    let activeStationId = 'KSEA', stationOpenGeneration = 1, activeStationName = 'Test';
+    ${extractFunction('isActiveStation')}
+    return async ${extractFunction('refreshStationData')};
+  })()`, {
+    document: { getElementById: () => ({ classList: { add() {}, remove() {} }, textContent: '' }) },
+    fetchObservations: async () => ({}),   // no geometry: no new forecast lookup
+    renderWeather: (data, id, name, pop) => shown.push(pop),
+    forecastPoPCache: new Map([
+      ['KSEA', { pop: 60, ts: Date.now() - 6 * 3_600_000, ttl: 600_000, end: Date.now() - 5 * 3_600_000 }]
+    ])
+  });
+  await run('KSEA', 1);
+  assert.deepEqual(shown, [null], 'a 6-hour-old "this hr" value must not be shown');
+});

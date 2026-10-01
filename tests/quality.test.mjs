@@ -905,9 +905,15 @@ test('alert times never invent an end and show a future start', () => {
   // A flood warning "until further notice": ends null, expires = next update.
   const flood = { event: 'Flood Warning', onset: '2026-10-01T08:00:00-05:00', ends: null,
                   expires: '2026-10-01T20:00:00-05:00' };
-  assert.match(popup(flood, 'red'), /until further notice/);
+  const whenIn = vm.runInNewContext(`(() => { ${extractFunction('formatWhen')} return formatWhen; })()`, { Date });
+  assert.match(popup(flood, 'red'), /&rarr; <b>further notice<\/b>/);
+  // A set end is shown as-is.
+  const ends = '2026-10-02T06:00:00-05:00';
+  assert.ok(popup({ ...flood, ends }, 'red').includes(`&rarr; <b>${whenIn(ends)}</b>`));
   // A short statement without `ends` simply lasts until its message expires.
-  assert.doesNotMatch(popup({ ...flood, event: 'Special Weather Statement' }, 'red'), /further notice/);
+  const statement = popup({ ...flood, event: 'Special Weather Statement' }, 'red');
+  assert.doesNotMatch(statement, /further notice|until/);
+  assert.ok(statement.includes(whenIn(flood.expires)));
 
   // Run the real banner: a warning starting tomorrow with no set end.
   const banner = { className: '', innerHTML: '', contains: () => false, querySelector: () => null };
@@ -926,7 +932,7 @@ test('alert times never invent an end and show a future start', () => {
   });
   const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
   render([{ id: 'a', properties: { ...flood, onset: tomorrow } }]);
-  assert.match(banner.innerHTML, /from [^<]+ until further notice/);
+  assert.match(banner.innerHTML, /<span class="alert-when">from [^<]+<\/span> <span class="alert-when">until further notice<\/span>/);
 });
 
 test('the hidden toast never makes the page taller than the window', () => {

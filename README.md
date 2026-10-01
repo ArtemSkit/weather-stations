@@ -287,7 +287,7 @@ The service worker uses a hybrid strategy tuned for a single-file app:
 
 | Request | Strategy | Why |
 |---|---|---|
-| HTML document (navigation) | **App-shell cache** | Keeps `index.html` on the same installed release as its Leaflet code/styles; bookmarked `?lat=…` links all use the one canonical cached document |
+| HTML document (navigation to `index.html` or the app folder) | **App-shell cache** | Keeps `index.html` on the same installed release as its Leaflet code/styles; bookmarked `?lat=…` links all use the one canonical cached document. Navigations to any other page go to the network. |
 | Declared same-origin shell assets (`manifest.json`, vendored Leaflet, license notice) | **Cache-first** | Required map code, styles, and third-party notice are installed atomically with the document |
 | Other same-origin requests | **Pass-through** | Future dynamic or private responses cannot be cached accidentally |
 | Cross-origin (NOAA API, OSM tiles, Google Fonts) | **Pass-through** | Never cached — live data and third-party assets always go straight to the network |
@@ -303,7 +303,7 @@ WX.MAP is versioned by a single `APP_VERSION` constant that is woven into the se
 3. The complete shell is precached atomically. If any required file is unavailable, installation fails and the last known-good release remains active.
 4. When a changed worker is ready, it **waits** — the running session is never disrupted mid-use.
 5. An **"App update available"** banner slides down from the top with **REFRESH NOW** / **Dismiss**.
-6. **REFRESH NOW** tells the waiting worker to take over and reloads once. **Dismiss** leaves the current interaction and release untouched.
+6. **REFRESH NOW** tells the waiting worker to take over and reloads once. **Dismiss** leaves the current interaction and release untouched. Accepting the update in one window reloads every open WX.MAP window, because they all switch to the new release together.
 7. Caches from previous WX.MAP versions are purged automatically on activation; unrelated same-origin caches are left alone.
 
 > **Releasing a new version:** bump `APP_VERSION` in `sw.js` (and the matching `APP_VERSION_FALLBACK` in `index.html`) so the update flow fires and the version badge reflects the new build.

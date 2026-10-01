@@ -4199,6 +4199,13 @@ function setTapMode(active) {
   // A live region is only announced when its text changes AFTER it is rendered,
   // so fill it a moment after it is shown (and empty it when hidden). A single
   // animation frame is too soon: the text would land in the same layout update.
+  if (active) {
+    // Measure the banner WITH its text first (same task, nothing is painted in
+    // between), so the alert banner and panel move to their final place at once
+    // instead of jumping when the text arrives.
+    tapPlaceBanner.textContent = TAP_BANNER_TEXT;
+    mapEl.parentElement.style.setProperty('--tap-banner-h', `${tapPlaceBanner.offsetHeight}px`);
+  }
   tapPlaceBanner.textContent = '';
   if (active) setTimeout(() => { if (tapModeActive) tapPlaceBanner.textContent = TAP_BANNER_TEXT; }, 100);
   tapPinBtn.classList.toggle('active', active);

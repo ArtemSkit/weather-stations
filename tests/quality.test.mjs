@@ -890,7 +890,6 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   obs({ textDescription: 'Mist', presentWeather: [{ intensity: 'light', weather: 'rain', rawString: '-RA' }] });
   assert.match(body(), /light rain/);
 
-  // Wind chill shows at 3°C with wind above 3 mph (PANC-like).
   // Cutoffs follow the °F shown: 26.6°C reads 80°F (heat index), 10.2°C reads 50°F.
   obs({ temperature: { value: 26.6 }, heatIndex: { value: 27.5 } });
   assert.match(body(), /Heat Index/);
@@ -900,6 +899,9 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   obs({ temperature: { value: 3 }, windSpeed: { value: 3.7 }, windChill: { value: 2 } });
   assert.doesNotMatch(body(), /Wind Chill/);
   obs({ temperature: { value: 3 }, windSpeed: { value: 5.5 }, windChill: { value: 1 } });
+  assert.match(body(), /Wind Chill/);
+  // 4.5 km/h is shown as 3 mph, so the shown wind meets the 3 mph cutoff too.
+  obs({ temperature: { value: 3 }, windSpeed: { value: 4.5 }, windChill: { value: 1 } });
   assert.match(body(), /Wind Chill/);
   // "Fog/Mist" vs fog_mist is the same thing — not repeated.
   obs({ textDescription: 'Fog/Mist', presentWeather: [{ weather: 'fog_mist' }] });

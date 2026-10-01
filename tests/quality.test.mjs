@@ -2199,3 +2199,14 @@ test('network failures read as a plain message, and "no forecast grid" is not re
   // Locate Me explains the HTTPS requirement instead of a "denied" it can't fix.
   assert.match(html, /if \(window\.isSecureContext === false\) \{\s*showToast\('Locate Me needs the app to be opened over HTTPS/);
 });
+
+test('a ?station link places the marker at the station record, not the rounded observation point', async () => {
+  const point = reply => vm.runInNewContext(`(() => async ${extractFunction('fetchStationPoint')})()`,
+    { fetchJsonWithTimeout: reply, encodeURIComponent, Array, Number });
+  assert.deepEqual([...await point(async () => ({ response: { ok: true }, data: { geometry: { coordinates: [-73.76393, 40.63915] } } }))('KJFK')],
+    [-73.76393, 40.63915]);
+  // Any failure falls back (null) to the observation's own point.
+  assert.equal(await point(async () => { throw new Error('Network error'); })('KJFK'), null);
+  assert.equal(await point(async () => ({ response: { ok: false }, data: null }))('KJFK'), null);
+  assert.match(html, /const \[lng, lat\] = sitePoint \|\| data\.geometry\?\.coordinates \|\| \[\];/);
+});

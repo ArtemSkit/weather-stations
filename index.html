@@ -2153,6 +2153,24 @@ async function fetchStations(lat, lon) {
 }
 
 /**
+ * A station's exact [lon, lat] from its NWS station record (best effort: null on
+ * any failure, so callers fall back to the observation's rounded point).
+ *
+ * @param   {string} stationId
+ * @returns {Promise<number[]|null>}
+ */
+async function fetchStationPoint(stationId) {
+  try {
+    const { response, data } = await fetchJsonWithTimeout(
+      `https://api.weather.gov/stations/${encodeURIComponent(stationId)}`);
+    const c = response.ok ? data?.geometry?.coordinates : null;
+    return Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]) ? c : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
  * Fetch the most recent observation from a specific NOAA station.
  * Endpoint: GET https://api.weather.gov/stations/{stationId}/observations/latest
  *
@@ -4621,14 +4639,19 @@ fabLocate.addEventListener('click', () => {
       showOverlay(`Fetching station ${stationParam}…`);
 
       areaLoading = { status: 'LOADING STATION…', overlay: `Fetching station ${stationParam}…` };
-      let data;
+      let data, sitePoint;
       try {
-        data = await fetchObservations(stationParam);
+        // The observation's own point is rounded (KJFK's is ~1.8 km off), so also
+        // ask for the station record's exact site — in parallel, and optional.
+        [data, sitePoint] = await Promise.all([
+          fetchObservations(stationParam), fetchStationPoint(stationParam)
+        ]);
       } finally {
         if (area === areaGeneration) areaLoading = null;
       }
       if (area !== areaGeneration) return;        // a user search replaced the map
-      const [lng, lat] = data.geometry?.coordinates || [];  // GeoJSON: [lng, lat]
+      // GeoJSON: [lng, lat]. Same spot a normal search plots the station at.
+      const [lng, lat] = sitePoint || data.geometry?.coordinates || [];
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
         throw new Error('No coordinates in station response');
       }

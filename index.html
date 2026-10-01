@@ -370,8 +370,9 @@
     position: absolute; top: 16px; left: 16px;
     z-index: 1100;                       /* above the station popup (1000) */
     width: 330px; max-width: calc(100% - 32px);
-    /* Never let a long list of alerts run off the bottom of the map. */
-    max-height: calc(100% - 32px); overflow-y: auto;
+    /* Never let a long list of alerts run off the bottom of the map, nor cover the
+       bottom-left zoom control (which ends ~100px above the map's bottom edge). */
+    max-height: calc(100% - 16px - 110px); overflow-y: auto;
     display: none; flex-direction: column; gap: 8px;
     font-family: 'Syne', sans-serif;
   }
@@ -813,6 +814,9 @@
      box. Move the button left of the panel while it is open. (Phones use the
      bottom-sheet rule in the mobile block below instead.) */
   main.sheet-open #fab-locate { right: calc(16px + 314px + 16px); }
+  /* …and in narrow desktop windows keep the alert banner from sliding under the
+     left edge of that panel (banner at left 16px, panel 314px wide at right 16px). */
+  main.sheet-open #alert-banner { max-width: calc(100% - 16px - 314px - 32px); }
 
   /* ════════════════════════════════════════════════════════════════════════════
      TOUCH-ONLY CONTROL SWAP
@@ -970,7 +974,12 @@
       top: 8px; width: auto; max-width: none;
       /* Clear a landscape phone's notch / rounded corners (viewport-fit=cover). */
       left: calc(8px + var(--safe-left)); right: calc(8px + var(--safe-right));
+      /* Full width here, so stay above both the lifted zoom control (left) and the
+         Locate Me button (right), which reach ~170px above the bottom. */
+      max-height: calc(100% - 8px - 180px - var(--safe-bottom));
     }
+    /* Undo the desktop side-by-side rule below: the sheet sits at the bottom. */
+    main.sheet-open #alert-banner { max-width: none; }
 
     /* ── Map overlay text: readable on small screens ── */
     .overlay-text { font-size: 0.75rem; }
@@ -3926,14 +3935,6 @@ dragPinBtn.addEventListener('dragend', () => {
   pinGhost.style.display = 'none';
 });
 
-// Allow keyboard removal when the drag-pin button itself has focus
-dragPinBtn.addEventListener('keydown', e => {
-  if ((e.key === 'Delete' || e.key === 'Backspace') && droppedPinMarker) {
-    removeDragPin();
-    e.preventDefault();
-  }
-});
-
 /** Remove the dropped pin marker from the map. */
 function removeDragPin() {
   if (!droppedPinMarker) return;
@@ -4047,6 +4048,14 @@ setTapMode(false);   // initialise aria-pressed on both buttons
 
 dragPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
 tapPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
+// Delete/Backspace on whichever pin button is shown (drag-pin on desktop, tap-pin
+// on touch devices, e.g. an iPad with a keyboard) removes the dropped pin.
+[dragPinBtn, tapPinBtn].forEach(btn => btn.addEventListener('keydown', e => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && droppedPinMarker) {
+    removeDragPin();
+    e.preventDefault();
+  }
+}));
 document.addEventListener('keydown', e => {
   // Skip an Escape something else already used (e.g. closing an alert popup),
   // so one key press undoes one thing.

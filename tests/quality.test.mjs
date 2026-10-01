@@ -2064,6 +2064,24 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   // Copied tuples / arrays are coordinates, not an address that lands in Tacoma.
   assert.equal(detect('(29.42, -98.49)'), 'coords');
   assert.equal(detect('[29.42, -98.49]'), 'coords');
+  assert.equal(detect('( 29.42 , -98.49 )'), 'coords');
+  // Half-copied brackets or a ";" separator: rejected, not geocoded to Tacoma.
+  assert.equal(detect('(29.42, -98.49'), 'badzip');
+  assert.equal(detect('29.42;-98.49'), 'badzip');
+  // Whole-degree coordinates with glued letters; spaced grid addresses stay.
+  assert.equal(detect('29N 98W'), 'badzip');
+  assert.equal(detect('N29 W98'), 'badzip');
+  for (const a of ['1300 S', '33 W', '10 S 5 E', '100 N 200 W', '78201 San Antonio TX']) {
+    assert.equal(detect(a), 'address', a);
+  }
+  assert.equal(detect('(78201)'), 'zip');
+  assert.equal(detect('00029.4, -98.5'), 'coords');
+  // Linear time: a crafted deep link with a huge bracketed input must not hang.
+  const norm = vm.runInNewContext(`(() => { ${extractFunction('normalizeSearchText')} return normalizeSearchText; })()`);
+  const t0 = Date.now();
+  norm('(' + ' '.repeat(30000));
+  assert.ok(Date.now() - t0 < 200, 'normalizeSearchText must not backtrack');
+  assert.match(extractFunction('doSearch'), /zipToCoords\(normalizeSearchText\(raw\)\)/);
   // Non-breaking hyphen pasted from Word/Docs works as a minus.
   assert.equal(detect('29.42 ‑98.49'), 'coords');
   const parse = vm.runInNewContext(`(() => { ${extractFunction('normalizeSearchText')} ${extractFunction('parseCoords')} return parseCoords; })()`);

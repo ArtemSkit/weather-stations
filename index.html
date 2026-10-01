@@ -1892,7 +1892,8 @@ intervalInput.addEventListener('change', () => {
 function normalizeSearchText(raw) {
   return raw.trim()
     .replace(/[‐-―−﹣－]/g, '-')
-    .replace(/^[([]\s*([^()[\]]*?)\s*[)\]]$/, '$1');
+    // One pass, no backtracking (a lazy group between \s* runs was cubic-time).
+    .replace(/^[([]([^()[\]]*)[)\]]$/, (_, inner) => inner.trim());
 }
 
 /**
@@ -1926,8 +1927,11 @@ function detectInputType(raw) {
   // street far away (Tacoma, WA) and loads it silently. N/S/E/W letters only count
   // with a decimal or a degree mark, so "200 S 300 E" (a real Utah address) passes.
   // (\x27 and \x22 are the ASCII minute and second marks.)
-  if (/\d/.test(s) && (/^[\d\s.,+-]+$/.test(s) ||
-      (/\d\.\d|[°′″\x27\x22]/.test(s) && /^[\d\s.,+\-°\x27′\x22″NSEW]+$/i.test(s)))) return 'badzip';
+  // A letter glued to a number ("29N 98W", "N29") is coordinate-style too; a
+  // spaced one ("10 S 5 E") stays an address. Leftover brackets or a ";" mean a
+  // half-copied coordinate pair: also rejected rather than geocoded.
+  if (/\d/.test(s) && (/^[\d\s.,;+()[\]-]+$/.test(s) ||
+      (/\d\.\d|[°′″\x27\x22]|\d[NSEW]|[NSEW]\d/i.test(s) && /^[\d\s.,+\-°\x27′\x22″NSEW]+$/i.test(s)))) return 'badzip';
   return 'address';
 }
 
@@ -4152,7 +4156,7 @@ function pushQueryParam(type, raw) {
     params.set('lat',  String(Number(lat.toFixed(6))));
     params.set('long', String(Number(lon.toFixed(6))));
   } else if (type === 'zip') {
-    params.set('zip',  raw.trim());
+    params.set('zip',  normalizeSearchText(raw));
   } else {
     params.set('addr', raw.trim());
   }
@@ -4199,7 +4203,7 @@ async function doSearch() {
     } else if (type === 'zip') {
       setStatus('loading', 'LOCATING…');
       showOverlay('Geocoding ZIP code…');
-      place = await zipToCoords(raw);
+      place = await zipToCoords(normalizeSearchText(raw));   // "(78201)" → "78201"
 
     } else if (type === 'badzip') {
       // Also catches malformed coordinates ("29.42-98.49").

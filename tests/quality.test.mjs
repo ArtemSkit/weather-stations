@@ -1033,7 +1033,9 @@ test('every search path allocates or receives a generation before awaiting', () 
   // loadStationsAt never allocates its own generation: every caller passes one.
   const stationLoader = extractFunction('loadStationsAt');
   assert.match(stationLoader, /^function loadStationsAt\(lat, lon, gen\)/);
-  assert.match(stationLoader, /if \(gen !== searchGeneration\) return/);
+  assert.match(stationLoader, /const area = \+\+areaGeneration;/);
+  assert.match(stationLoader, /if \(area !== areaGeneration\) return false;/);
+  assert.match(stationLoader, /if \(gen === searchGeneration\) \{\s*setStatus\(/);
   assert.doesNotMatch(html, /loadStationsAt\(\s*\w+\s*,\s*\w+\s*\)/,
     'every call site must pass its pre-allocated generation');
 

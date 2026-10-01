@@ -1987,6 +1987,10 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
 test('alerts come before the map for keyboard users and small text keeps its contrast', () => {
   // Tab order follows the DOM: the alert banner must precede the map's many markers.
   assert.ok(html.indexOf('<div id="alert-banner"') < html.indexOf('<div id="map"'));
-  assert.match(html, /\.overlay-text \{[\s\S]*?color: var\(--text\);/);
-  assert.match(html, /\.leaflet-tooltip\.alert-area-label \{[\s\S]*?background: rgba\(10,14,23,0\.92\);/);
+  assert.match(html, /\.overlay-text \{[^}]*color: var\(--text\);/);
+  assert.match(html, /\.leaflet-tooltip\.alert-area-label \{[^}]*background: rgba\(10,14,23,0\.92\);/);
+  // Very narrow screens: the badge rises above the one-line credits (no wrapping
+  // into the Locate Me button).
+  assert.match(html, /@media \(max-width: 340px\) \{\s*#app-version \{ bottom: calc\(20px \+ var\(--safe-bottom\)\); \}/);
+  assert.doesNotMatch(html, /max-width: calc\(100vw - 84px/);
 });

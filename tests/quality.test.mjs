@@ -732,8 +732,18 @@ test('round-9 fixes: narrow header, drag vs click, pin-mode banner, colours, Loc
   // Pin mode: panel and alert banner move below the pin-mode banner's real height.
   assert.match(html, /main:has\(#tap-place-banner\.active\) #popup-panel \{\s*top: calc\(var\(--tap-banner-h, 48px\) \+ 16px\);\s*max-height: calc\(100% - var\(--tap-banner-h, 48px\) - 32px\);/);
   assert.match(html, /main:has\(#tap-place-banner\.active\) #alert-banner \{\s*top: calc\(var\(--tap-banner-h, 48px\) \+ 16px\);/);
-  assert.match(html, /main:has\(#tap-place-banner\.active\) #alert-banner \{\s*top: calc\(var\(--tap-banner-h, 74px\) \+ 8px\);/);
-  assert.match(html, /mapEl\.parentElement\.style\.setProperty\('--tap-banner-h', `\$\{tapPlaceBanner\.offsetHeight\}px`\);/);
+  // The phone versions must sit inside the mobile block, after the desktop ones.
+  const mobileBlockAt = html.indexOf('@media (pointer: coarse), (max-width: 640px) {');
+  const desktopPinAt = html.search(/main:has\(#tap-place-banner\.active\) #alert-banner \{\s*top: calc\(var\(--tap-banner-h, 48px\)/);
+  const phonePinAt = html.search(/main:has\(#tap-place-banner\.active\) #alert-banner \{\s*top: calc\(var\(--tap-banner-h, 74px\) \+ 8px\);/);
+  const phoneSheetPinAt = html.search(/main\.sheet-open:has\(#tap-place-banner\.active\) #alert-banner \{\s*max-height: max\(4rem, calc\(100% - var\(--tap-banner-h, 74px\) - 8px - var\(--sheet-h, 70vh\) - 74px\)\);/);
+  assert.ok(desktopPinAt > 0 && desktopPinAt < mobileBlockAt, 'desktop pin rule before the mobile block');
+  assert.ok(phonePinAt > mobileBlockAt && phoneSheetPinAt > mobileBlockAt, 'phone pin rules inside the mobile block');
+  // The phone sheet's own cap is the one inside the mobile #popup-panel rule.
+  const sheetRule = html.slice(html.indexOf('#popup-panel {', mobileBlockAt), html.indexOf('}', html.indexOf('#popup-panel {', mobileBlockAt)));
+  assert.match(sheetRule, /max-height: 70vh !important;/);
+  // Measured only once its text is in (no two-step move when the mode turns on).
+  assert.match(html, /if \(!tapPlaceBanner\.textContent\) return;\s*mapEl\.parentElement\.style\.setProperty\('--tap-banner-h', `\$\{tapPlaceBanner\.offsetHeight\}px`\);/);
   assert.match(html, /max-height: 70vh !important;/);
   // The press tracker must see every press first (capture phase, on document).
   assert.match(html, /document\.addEventListener\('pointerdown', e => \{\s*pressStartedInMap = [^}]*\}, \{ capture: true \}\);/);

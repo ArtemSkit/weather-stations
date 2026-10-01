@@ -283,13 +283,14 @@
     border: 2px solid var(--accent);
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-family: 'Syne', sans-serif;
-    font-size: 7px; font-weight: 800;
+    /* Narrow monospace so 4–5 character ids (KSEA, SEAW1) fit inside the ring —
+       the wide Syne display face spilled across it. */
+    font-family: 'Space Mono', monospace;
+    font-size: 7px; font-weight: 700;
     color: var(--accent);
     cursor: pointer;
     transition: all 0.2s;
     box-shadow: 0 0 10px rgba(0,212,255,0.3);
-    letter-spacing: 0.03em;
     text-align: center; line-height: 1.1;
     position: relative;   /* anchor for the .alerted pulse ring (::after) */
   }
@@ -637,10 +638,11 @@
   /* ── Popup footer: observation timestamp (left) + live refresh indicator (right) ── */
   .popup-footer {
     padding: 8px 14px; border-top: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
   }
   .update-time { font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; }
-  .update-indicator { display: flex; align-items: center; gap: 5px; }
+  /* The refresh control keeps its size; a long timestamp ("… · 2 h old") wraps instead. */
+  .update-indicator { display: flex; align-items: center; gap: 5px; flex-shrink: 0; white-space: nowrap; }
   .update-dot {
     width: 5px; height: 5px; border-radius: 50%;
     background: var(--green); flex-shrink: 0;

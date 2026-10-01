@@ -10,8 +10,7 @@
   ║  • Vendored Leaflet.js — interactive map tiles from OpenStreetMap.           ║
   ║  • NOAA Weather.gov public API — station list + live observations.          ║
   ║  • Nominatim (OSM) — free ZIP→coordinates geocoding.                        ║
-  ║  • Geocodio API — street address geocoding (API key required, stored        ║
-  ║    in localStorage so the user is only prompted once).                      ║
+  ║  • Photon (OSM) — free, typo-tolerant street-address geocoding (no key).    ║
   ║  • Service Worker (external sw.js) — offline caching for the app shell      ║
   ║    so it loads even without a network connection; also delivers updates.    ║
   ║  • Web App Manifest (external manifest.json) — enables the browser's        ║
@@ -687,58 +686,6 @@
   }
 
   /* ════════════════════════════════════════════════════════════════════════════
-     MODAL DIALOG — used for the Geocodio API key prompt
-     ════════════════════════════════════════════════════════════════════════════ */
-  #modal-overlay {
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.72);
-    z-index: 2000;
-    display: none; align-items: center; justify-content: center;
-  }
-  #modal-overlay.visible { display: flex; }
-
-  #modal-box {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 24px;
-    width: 340px;
-    max-width: calc(100vw - 32px);
-    box-shadow: 0 12px 48px rgba(0,0,0,0.7);
-    animation: slideIn 0.2s ease;
-  }
-  #modal-box h2 {
-    font-family: 'Syne', sans-serif; font-weight: 800;
-    font-size: 1rem; color: var(--accent);
-    letter-spacing: 0.06em; margin-bottom: 10px;
-  }
-  #modal-box p {
-    font-size: 0.72rem; color: var(--text-muted);
-    line-height: 1.6; margin-bottom: 14px;
-  }
-  #modal-api-key {
-    width: 100%;
-    background: var(--bg); border: 1px solid var(--border);
-    border-radius: var(--radius); color: var(--text);
-    font-family: 'Space Mono', monospace; font-size: 0.8rem;
-    padding: 8px 12px; outline: none;
-    transition: border-color 0.2s; margin-bottom: 14px;
-  }
-  #modal-api-key:focus { border-color: var(--accent); }
-  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
-  .modal-actions button {
-    border-radius: var(--radius); padding: 7px 16px;
-    font-family: 'Syne', sans-serif; font-weight: 600;
-    font-size: 0.75rem; cursor: pointer;
-    letter-spacing: 0.06em; text-transform: uppercase;
-    transition: opacity 0.15s;
-  }
-  #modal-cancel { background: none; border: 1px solid var(--border); color: var(--text-muted); }
-  #modal-cancel:hover { border-color: var(--text-muted); }
-  #modal-confirm { background: var(--accent); border: none; color: var(--bg); }
-  #modal-confirm:hover { opacity: 0.85; }
-
-  /* ════════════════════════════════════════════════════════════════════════════
      LOADING OVERLAY (full-map spinner)
      ════════════════════════════════════════════════════════════════════════════ */
   #map-overlay {
@@ -954,26 +901,6 @@
       bottom: calc(70vh + 8px) !important;
     }
 
-    /* ── Modal: full-width on small screens ── */
-    #modal-box {
-      width: calc(100vw - 24px);
-      padding: 20px 16px;
-      border-radius: 12px;
-    }
-
-    /* Bigger modal inputs for touch */
-    #modal-api-key {
-      height: 48px;
-      font-size: 16px !important;
-      padding: 0 14px;
-    }
-
-    /* Bigger modal buttons */
-    .modal-actions button {
-      height: 44px;
-      padding: 0 20px;
-    }
-
     /* ── Station markers: slightly larger hit-area on touch ── */
     .station-marker {
       width: 34px !important; height: 34px !important;
@@ -1186,39 +1113,6 @@
     to { transform: translateY(0); opacity: 1; }
   }
 </style>
-
-<!-- ════════════════════════════════════════════════════════════════
-     GEOCODIO API KEY MODAL
-     Shown once when the user first performs an address search.
-     The key is persisted in localStorage so subsequent searches
-     skip this prompt.
-     ════════════════════════════════════════════════════════════════ -->
-<div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-  <div id="modal-box">
-    <h2 id="modal-title">Geocodio API Key Required</h2>
-    <p>
-      To look up street addresses, WX.MAP uses the
-      <strong style="color:var(--text)">Geocodio geocoding API</strong>.
-      Please enter your API key below.<br><br>
-      Your key is stored in localStorage when available and otherwise kept only
-      for this browser session. It is sent only to Geocodio.
-      You can get a free key at
-      <a href="https://www.geocod.io/" target="_blank" rel="noopener noreferrer"
-         style="color:var(--accent)">geocod.io</a>.
-    </p>
-    <input
-      type="password"
-      id="modal-api-key"
-      placeholder="Paste your Geocodio API key here…"
-      autocomplete="off"
-      aria-label="Geocodio API key"
-    />
-    <div class="modal-actions">
-      <button id="modal-cancel">Cancel</button>
-      <button id="modal-confirm">Save &amp; Continue</button>
-    </div>
-  </div>
-</div>
 
 <!-- Vendored Leaflet JS (must precede the inline script that references L) -->
 <script src="./leaflet.js"></script>
@@ -1483,21 +1377,20 @@ window.addEventListener('load', () => {
  *  3.  UI helpers (setStatus, showToast, showOverlay…)
  *  4.  Refresh-interval editor
  *  5.  Input-type detection & coordinate parsing
- *  6.  Geocoding helpers (ZIP via Nominatim, address via Geocodio)
- *  7.  API-key storage helpers (including legacy-cookie migration)
- *  8.  Geocodio API-key prompt (modal dialog)
- *  9.  Weather API helpers (station list, latest observation)
- * 10.  Unit-conversion helpers
- * 11.  Weather popup renderer
- * 12.  Station refresh loop
- * 13.  Station panel open / close
- * 14.  Map marker management
- * 15.  Post-geocode pipeline (loadStationsAt)
- * 16.  URL query-string helpers
- * 17.  Main search dispatcher (doSearch)
- * 18.  Draggable-pin feature
- * 19.  Floating action button — "Locate Me" (Geolocation API)
- * 20.  URL query-parameter auto-trigger (runs on page load)
+ *  6.  Geocoding helpers (ZIP via Nominatim, address via Photon)
+ *  7.  Legacy API-key cleanup (removes the old Geocodio key)
+ *  8.  Weather API helpers (station list, latest observation)
+ *  9.  Unit-conversion helpers
+ * 10.  Weather popup renderer
+ * 11.  Station refresh loop
+ * 12.  Station panel open / close
+ * 13.  Map marker management
+ * 14.  Post-geocode pipeline (loadStationsAt)
+ * 15.  URL query-string helpers
+ * 16.  Main search dispatcher (doSearch)
+ * 17.  Draggable-pin feature
+ * 18.  Floating action button — "Locate Me" (Geolocation API)
+ * 19.  URL query-parameter auto-trigger (runs on page load)
  * ════════════════════════════════════════════════════════════════════════════
  */
 document.addEventListener('DOMContentLoaded', function () {
@@ -1538,15 +1431,6 @@ function moveMapTo(lat, lon, zoom) {
    All mutable state is declared here in one place so it is easy to audit and
    reason about what can change during the app's lifetime.
    ───────────────────────────────────────────────────────────────────────────── */
-
-/**
- * Geocodio API key.  Not declared as a constant because it may be populated
- * at runtime from localStorage or from the key-entry modal dialog.
- * @type {string}
- */
-let geocodioApiKey = '';
-let apiKeyPromptPromise = null;
-let cancelApiKeyPrompt = null;
 
 /**
  * Array of currently plotted Leaflet marker objects for weather stations.
@@ -1634,10 +1518,6 @@ const intervalInput = document.getElementById('interval-input');
 const dragPinBtn    = document.getElementById('drag-pin');
 const pinGhost      = document.getElementById('pin-ghost');
 const fabLocate     = document.getElementById('fab-locate');
-const modalOverlay  = document.getElementById('modal-overlay');
-const modalApiKey   = document.getElementById('modal-api-key');
-const modalConfirm  = document.getElementById('modal-confirm');
-const modalCancel   = document.getElementById('modal-cancel');
 
 /* ─────────────────────────────────────────────────────────────────────────────
    3. UI HELPERS
@@ -1815,238 +1695,51 @@ async function zipToCoords(zip) {
 }
 
 /**
- * Convert a street address to geographic coordinates using the Geocodio API.
+ * Convert a free-form street address to coordinates using Photon, the free,
+ * key-less OpenStreetMap geocoder hosted by komoot (https://photon.komoot.io).
+ * Photon copes with typos and missing punctuation ("1109 n highlnd st arlington va")
+ * far better than Nominatim does.
  *
- * Before making the request this function:
- *   1. Checks whether geocodioApiKey is set.
- *   2. If not, loads the persisted key (localStorage / legacy cookie).
- *   3. If still empty, prompts the user via the modal dialog, persists the key
- *      in localStorage, then continues.
+ * Photon searches the whole world, so a few candidates are requested and the
+ * first one inside the US is used — NOAA only covers the US, and Photon tags
+ * US territories (Puerto Rico, Guam, …) with country code "US" as well.
  *
  * @param   {string} address  - Free-form address string
- * @param   {number} generation - Search generation allowed to issue the request
  * @returns {Promise<{ lat: number, lon: number }>}
- * @throws  {Error} if the address is not found, the key is rejected, or the
- *                  user cancels the prompt
+ * @throws  {Error} if the address is not found or the request fails
  */
-async function addressToCoords(address, generation) {
-  // ── Ensure we have an API key (stored key → prompt fallback) ──
-  await ensureGeocodioApiKey();
-  // Several address searches may share one key prompt. Only the newest is allowed
-  // to spend an API request after that prompt resolves.
-  if (generation !== searchGeneration) throw new Error('Search superseded');
-
-  const url = `https://api.geocod.io/v1.9/geocode`
-            + `?q=${encodeURIComponent(address)}&api_key=${encodeURIComponent(geocodioApiKey)}&limit=1`;
-  // Geocodio returns a JSON { error } body on 4xx (e.g. 422 = "Could not
-  // geocode address, zip code or city/state are required"). Read it once and
-  // surface that message instead of an opaque status code.
+async function addressToCoords(address) {
+  const url = `https://photon.komoot.io/api/`
+            + `?q=${encodeURIComponent(address)}&limit=5&lang=en`;
   const { response: res, data } = await fetchJsonWithTimeout(url);
+  if (!res.ok) throw new Error('Address geocoding request failed');
 
-  if (!res.ok) {
-    // Authentication failures mean the stored key should be replaced next time.
-    if (res.status === 401 || res.status === 403) clearGeocodioApiKey();
-    const reason = data?.error || `HTTP ${res.status}`;
-    throw new Error(`Geocodio: ${reason}`);
+  // Photon answers with a GeoJSON FeatureCollection; coordinates are [lon, lat].
+  const match = (data?.features || []).find(f => f?.properties?.countrycode === 'US');
+  const [lon, lat] = match?.geometry?.coordinates || [];
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    throw new Error(`Address "${address}" not found`);
   }
-
-  if (!data?.results?.length) throw new Error(`Address "${address}" not found`);
-  const loc = data.results[0].location;
-  return { lat: loc.lat, lon: loc.lng };
+  return { lat, lon };
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   7. API-KEY STORAGE HELPERS
+   7. LEGACY API-KEY CLEANUP
    ─────────────────────────────────────────────────────────────────────────────
-   The Geocodio API key persists in localStorage, which stays strictly inside the
-   browser. Releases before 1.0.5 used a cookie, which browsers attach to requests
-   for the hosting origin. Legacy cookies are therefore migrated when possible and
-   always deleted; if localStorage is blocked, the key remains in memory only.
+   Releases before 1.1.0 asked for a Geocodio API key and kept it in localStorage
+   (and, before 1.0.5, in a cookie). Address lookup no longer needs a key, so any
+   leftover copy is deleted on startup instead of being left in the browser.
    ───────────────────────────────────────────────────────────────────────────── */
 
-/** localStorage key (and legacy cookie name) under which the Geocodio API key is stored. */
-const GEOCODIO_KEY_NAME = 'wxmap_geocodio_key';
-
-/**
- * Read a single cookie value by name. Only used to migrate the legacy
- * pre-1.0.5 cookie that stored the Geocodio API key.
- *
- * @param   {string}      name
- * @returns {string|null}       Decoded cookie value, or null if absent
- */
-function getCookie(name) {
-  const match = document.cookie
-    .split('; ')
-    .find(row => row.startsWith(name + '='));
-  if (!match) return null;
-  const raw = match.slice(name.length + 1); // preserve any '=' characters in the value
-  try { return decodeURIComponent(raw); }
-  catch (_) { return raw; } // a malformed legacy value must not prevent app startup
-}
-
-/**
- * Delete a cookie. Uses the same directory-scoped path the cookie was written
- * with, so the cookie that exists is actually the one that gets cleared.
- *
- * @param {string} name
- */
-function deleteCookie(name) {
-  const path = location.pathname.replace(/[^/]*$/, '') || '/';
-  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=${path};SameSite=Strict`;
-}
-
-/**
- * Load the persisted Geocodio API key.
- * Prefers localStorage; falls back once to the legacy cookie, migrating it into
- * localStorage and deleting the cookie so the key stops reaching the hosting
- * server. When storage is blocked, the legacy value is returned for this session
- * and the cookie is still deleted for privacy.
- *
- * @returns {string|null}
- */
-function loadStoredApiKey() {
-  try {
-    const stored = localStorage.getItem(GEOCODIO_KEY_NAME);
-    if (stored) return stored;
-  } catch (_) { /* storage blocked — fall through to the legacy cookie */ }
-
-  const legacy = getCookie(GEOCODIO_KEY_NAME);
-  if (legacy) {
-    saveStoredApiKey(legacy);
-    deleteCookie(GEOCODIO_KEY_NAME);
-  }
-  return legacy;
-}
-
-/**
- * Persist the Geocodio API key. localStorage is preferred (never attached to HTTP
- * requests). Where it is blocked, the caller keeps the key in memory for the
- * current session instead of falling back to a cookie that would leak to the host.
- *
- * @param   {string}  key
- * @returns {boolean}      true if the key landed in localStorage; false when
- *                         storage is blocked and the key remains memory-only
- */
-function saveStoredApiKey(key) {
-  try { localStorage.setItem(GEOCODIO_KEY_NAME, key); return true; }
-  catch (_) { return false; }
-}
-
-/** Remove the persisted Geocodio API key (localStorage + any legacy cookie). */
-function removeStoredApiKey() {
-  try { localStorage.removeItem(GEOCODIO_KEY_NAME); } catch (_) { /* ignore */ }
-  deleteCookie(GEOCODIO_KEY_NAME);
+try { localStorage.removeItem('wxmap_geocodio_key'); } catch (_) { /* storage blocked — nothing to clean */ }
+if (document.cookie.includes('wxmap_geocodio_key=')) {
+  // Expire the cookie on the same directory-scoped path the old releases used.
+  const cookiePath = location.pathname.replace(/[^/]*$/, '') || '/';
+  document.cookie = `wxmap_geocodio_key=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=${cookiePath};SameSite=Strict`;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   8. GEOCODIO API-KEY PROMPT (MODAL)
-   ─────────────────────────────────────────────────────────────────────────────
-   ensureGeocodioApiKey() is called every time addressToCoords() is invoked.
-   It resolves immediately if a key is already available; otherwise it shows
-   the modal and waits for the user to submit or cancel.
-   ───────────────────────────────────────────────────────────────────────────── */
-
-/**
- * Forget the current Geocodio API key (memory + persisted copy). Called when
- * Geocodio rejects the key (HTTP 401 or 403) so the user is re-prompted on the next
- * address search instead of being stuck with a bad key forever.
- */
-function clearGeocodioApiKey() {
-  geocodioApiKey = '';
-  removeStoredApiKey();
-}
-
-/**
- * Ensure geocodioApiKey is populated, prompting the user if necessary.
- *
- * Resolution order:
- *   1. geocodioApiKey already set in memory → resolve immediately.
- *   2. Persisted key exists (localStorage / legacy cookie) → load it, resolve.
- *   3. Neither → show the modal dialog and wait.
- *      • Confirm: persist the key + set geocodioApiKey, resolve.
- *      • Cancel:  reject with a user-visible error.
- *
- * @returns {Promise<void>}
- */
-function ensureGeocodioApiKey() {
-  // Fast path — key already in memory
-  if (geocodioApiKey) return Promise.resolve();
-
-  // Persisted-key fallback
-  const stored = loadStoredApiKey();
-  if (stored) {
-    geocodioApiKey = stored;
-    return Promise.resolve();
-  }
-
-  // Concurrent address searches reuse one dialog and one set of event handlers.
-  if (apiKeyPromptPromise) return apiKeyPromptPromise;
-
-  // Prompt the user via the modal
-  apiKeyPromptPromise = new Promise((resolve, reject) => {
-    const previouslyFocused = document.activeElement;
-    modalApiKey.value = '';
-    // A previous empty submission must not leave a later prompt looking invalid.
-    modalApiKey.style.borderColor = '';
-    modalOverlay.classList.add('visible');
-    modalApiKey.focus();
-
-    function onConfirm() {
-      const key = modalApiKey.value.trim();
-      if (!key) {
-        modalApiKey.style.borderColor = 'var(--red)';
-        return;
-      }
-      modalApiKey.style.borderColor = '';
-      geocodioApiKey = key;
-      saveStoredApiKey(key);
-      cleanup();
-      resolve();
-    }
-
-    function onCancel() {
-      cleanup();
-      reject(new Error('Address lookup requires a Geocodio API key. Cancelled.'));
-    }
-
-    function onKeydown(e) {
-      if (e.key === 'Enter' && e.target === modalApiKey) onConfirm();
-      if (e.key === 'Escape') onCancel();
-      if (e.key !== 'Tab') return;
-
-      // Keep keyboard focus inside the modal until the user confirms or cancels.
-      const focusable = [modalApiKey, modalCancel, modalConfirm];
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-
-    function cleanup() {
-      modalOverlay.classList.remove('visible');
-      modalConfirm.removeEventListener('click',   onConfirm);
-      modalCancel .removeEventListener('click',   onCancel);
-      modalOverlay.removeEventListener('keydown', onKeydown);
-      apiKeyPromptPromise = null;
-      cancelApiKeyPrompt = null;
-      // Return users to the control that opened the dialog whenever it still exists.
-      if (previouslyFocused?.isConnected) previouslyFocused.focus();
-    }
-
-    modalConfirm.addEventListener('click',   onConfirm);
-    modalCancel .addEventListener('click',   onCancel);
-    modalOverlay.addEventListener('keydown', onKeydown);
-    cancelApiKeyPrompt = onCancel;
-  });
-  return apiKeyPromptPromise;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   9. WEATHER API HELPERS
+   8. WEATHER API HELPERS
    ───────────────────────────────────────────────────────────────────────────── */
 
 /**
@@ -2431,7 +2124,7 @@ async function fetchAlerts(lat, lon) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   10. UNIT-CONVERSION HELPERS
+   9. UNIT-CONVERSION HELPERS
    ───────────────────────────────────────────────────────────────────────────── */
 
 /** Celsius → Fahrenheit (string, 1 decimal place). Returns null if input is null. */
@@ -2485,7 +2178,7 @@ function degToCompass(deg) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   11. WEATHER POPUP RENDERER
+   10. WEATHER POPUP RENDERER
    ─────────────────────────────────────────────────────────────────────────────
    Populates #popup-body with a complete weather-data card built from the
    raw GeoJSON observation feature returned by fetchObservations().
@@ -2654,7 +2347,7 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   12. STATION REFRESH LOOP
+   11. STATION REFRESH LOOP
    ─────────────────────────────────────────────────────────────────────────────
    doStationRefresh() is called both immediately (when a station is opened) and
    on a repeating interval driven by refreshInterval.  It is a no-op if
@@ -2739,7 +2432,7 @@ async function refreshStationData(stationId, generation) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   13. STATION PANEL OPEN / CLOSE
+   12. STATION PANEL OPEN / CLOSE
    ───────────────────────────────────────────────────────────────────────────── */
 
 /**
@@ -2797,7 +2490,7 @@ document.getElementById('popup-close').addEventListener('click', () => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   14. MAP MARKER MANAGEMENT
+   13. MAP MARKER MANAGEMENT
    ───────────────────────────────────────────────────────────────────────────── */
 
 /** Remove all station markers from the map and clear the tracking array. */
@@ -2854,7 +2547,7 @@ function plotStations(geoJSON) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   15. POST-GEOCODE PIPELINE
+   14. POST-GEOCODE PIPELINE
    ─────────────────────────────────────────────────────────────────────────────
    All geocoding paths (ZIP, address, coords, geolocation, dropped pin) converge
    here.  Fetches the nearest stations, plots them, and resets popup state.
@@ -2902,7 +2595,7 @@ async function loadStationsAt(lat, lon, gen = ++searchGeneration) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   15B. DANGEROUS-WEATHER ALERTS  (NWS watches / warnings / advisories)
+   14B. DANGEROUS-WEATHER ALERTS  (NWS watches / warnings / advisories)
    ─────────────────────────────────────────────────────────────────────────────
    Alerts are area-based, not station-based: the NWS issues them for polygons or
    county/forecast zones, never for individual observation stations.  So they are
@@ -3592,7 +3285,7 @@ async function refreshAlerts() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   16. URL QUERY-STRING HELPERS
+   15. URL QUERY-STRING HELPERS
    ─────────────────────────────────────────────────────────────────────────────
    The app encodes the current search into the URL query string so results can
    be bookmarked and shared.  history.replaceState() updates the address bar
@@ -3628,7 +3321,7 @@ function pushQueryParam(type, raw) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   17. MAIN SEARCH DISPATCHER
+   16. MAIN SEARCH DISPATCHER
    ─────────────────────────────────────────────────────────────────────────────
    Reads the search input, classifies it, updates the URL, then dispatches to
    the appropriate geocoding path.
@@ -3649,9 +3342,6 @@ async function doSearch() {
   // address/ZIP lookup can resolve after a newer search and overwrite its intent.
   const gen = ++searchGeneration;
   const type = detectInputType(raw);
-  // A coordinate/ZIP search replaces an address lookup that may still be waiting
-  // for an API key. Close that obsolete modal instead of blocking the new result.
-  if (type !== 'address' && cancelApiKeyPrompt) cancelApiKeyPrompt();
   pushQueryParam(type, raw);
 
   try {
@@ -3671,10 +3361,10 @@ async function doSearch() {
       await loadStationsAt(lat, lon, gen);
 
     } else {
-      // Street address — requires Geocodio API key
+      // Street address — free-form, geocoded by Photon (no API key needed)
       setStatus('loading', 'GEOCODING…');
-      showOverlay('Translating address via Geocodio…');
-      const { lat, lon } = await addressToCoords(raw, gen);
+      showOverlay('Looking up address…');
+      const { lat, lon } = await addressToCoords(raw);
       if (gen !== searchGeneration) return;
       await loadStationsAt(lat, lon, gen);
     }
@@ -3691,7 +3381,7 @@ searchBtn.addEventListener('click', doSearch);
 zipInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   18. DRAGGABLE-PIN FEATURE
+   17. DRAGGABLE-PIN FEATURE
    ─────────────────────────────────────────────────────────────────────────────
    The pin button in the header can be dragged onto the map.  While dragging,
    a ghost pin follows the cursor.  On drop, a draggable Leaflet marker is placed
@@ -3920,7 +3610,7 @@ function triggerPinSearch(lat, lng) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   19. FLOATING ACTION BUTTON — "LOCATE ME"
+   18. FLOATING ACTION BUTTON — "LOCATE ME"
    ─────────────────────────────────────────────────────────────────────────────
    Uses the browser Geolocation API to retrieve the device's current position.
    On success:
@@ -3988,7 +3678,7 @@ fabLocate.addEventListener('click', () => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   20. URL QUERY-PARAMETER AUTO-TRIGGER
+   19. URL QUERY-PARAMETER AUTO-TRIGGER
    ─────────────────────────────────────────────────────────────────────────────
    On page load, the query string is parsed and the appropriate action is
    triggered automatically — the user doesn't need to type anything.
@@ -3997,7 +3687,7 @@ fabLocate.addEventListener('click', () => {
      ?station=KSAT         → direct station lookup (fetch obs, pan map, open popup)
      ?lat=…&long=…         → coordinate search
      ?zip=…                → ZIP code search
-     ?addr=…               → address search (may prompt for Geocodio key)
+     ?addr=…               → address search
 
    URLSearchParams decodes the values written by pushQueryParam exactly once.
    ───────────────────────────────────────────────────────────────────────────── */

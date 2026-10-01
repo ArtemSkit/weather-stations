@@ -745,19 +745,33 @@ test('URL values use one standards-based encoding pass', () => {
   assert.doesNotMatch(parseQuery, /decodeURIComponent/);
 });
 
-test('Geocodio persistence never writes a fallback cookie', () => {
-  assert.doesNotMatch(html, /function setCookie\(/);
-  const saveKey = extractFunction('saveStoredApiKey');
-  assert.doesNotMatch(saveKey, /document\.cookie/);
-  assert.doesNotMatch(saveKey, /setCookie/);
-  assert.match(html, /type="password"[\s\S]*?id="modal-api-key"[\s\S]*?aria-label="Geocodio API key"/);
-  assert.match(html, /#modal-api-key \{/);
-  assert.match(html, /#modal-api-key:focus/);
+test('address lookup uses key-less Photon and keeps only US matches', async () => {
+  // The Geocodio key prompt is gone for good, and any stored key is wiped on startup.
+  assert.doesNotMatch(html, /api\.geocod\.io|modal-api-key|ensureGeocodioApiKey/);
+  assert.match(html, /localStorage\.removeItem\('wxmap_geocodio_key'\)/);
 
-  const keyPrompt = extractFunction('ensureGeocodioApiKey');
-  assert.match(keyPrompt, /if \(apiKeyPromptPromise\) return apiKeyPromptPromise/);
-  assert.match(keyPrompt, /cancelApiKeyPrompt = onCancel/);
-  assert.match(extractFunction('addressToCoords'), /generation !== searchGeneration/);
+  const requested = [];
+  let features = [];
+  // extractFunction() starts at the `function` keyword, so restore `async`.
+  const addressToCoords = vm.runInNewContext(`(async ${extractFunction('addressToCoords')})`, {
+    encodeURIComponent,
+    Number,
+    fetchJsonWithTimeout: async url => {
+      requested.push(url);
+      return { response: { ok: true }, data: { features } };
+    }
+  });
+
+  // A foreign candidate ranked first must be skipped in favour of the US one.
+  features = [
+    { properties: { countrycode: 'FR' }, geometry: { coordinates: [2.35, 48.85] } },
+    { properties: { countrycode: 'US' }, geometry: { coordinates: [-95.55, 33.66] } }
+  ];
+  assert.deepEqual({ ...await addressToCoords('paris tx') }, { lat: 33.66, lon: -95.55 });
+  assert.match(requested[0], /^https:\/\/photon\.komoot\.io\/api\/\?q=paris%20tx&/);
+
+  features = [{ properties: { countrycode: 'FR' }, geometry: { coordinates: [2.35, 48.85] } }];
+  await assert.rejects(addressToCoords('paris'), /not found/);
 });
 
 test('every search path allocates or receives a generation before awaiting', () => {

@@ -887,6 +887,11 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   assert.match(body(), /light rain/);
 
   // Wind chill shows at 3°C with wind above 3 mph (PANC-like).
+  // Cutoffs follow the °F shown: 26.6°C reads 80°F (heat index), 10.2°C reads 50°F.
+  obs({ temperature: { value: 26.6 }, heatIndex: { value: 27.5 } });
+  assert.match(body(), /Heat Index/);
+  obs({ temperature: { value: 10.2 }, windSpeed: { value: 9.3 }, windChill: { value: 9 } });
+  assert.match(body(), /Wind Chill/);
   obs({ temperature: { value: 3 }, windSpeed: { value: 5.5 }, windChill: { value: 1 } });
   assert.match(body(), /Wind Chill/);
   // "Fog/Mist" vs fog_mist is the same thing — not repeated.

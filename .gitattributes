@@ -1,0 +1,7 @@
+# Vendored Leaflet 1.9.4 files must stay byte-identical to the upstream release
+# (the tests pin their SHA-256 hashes). Upstream mixes LF and CRLF line endings,
+# so Git must never convert them on commit or checkout.
+leaflet.js          -text
+leaflet.js.map      -text
+leaflet.css         -text
+LEAFLET-LICENSE.txt -text

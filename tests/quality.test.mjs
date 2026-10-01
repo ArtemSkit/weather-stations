@@ -885,10 +885,31 @@ test('search URLs round-trip once-encoded and only after a successful lookup', (
   }
   assert.doesNotMatch(html, /decodeURIComponent\(params|safeDecodeParam/);
 
-  // A typo or unknown ZIP must not replace the link to the area still on screen.
+  // Only a search that loaded stations may replace the shareable link.
   const search = extractFunction('doSearch');
-  assert.ok(search.indexOf('pushQueryParam(') > search.indexOf('await addressToCoords'));
-  assert.ok(search.indexOf('pushQueryParam(') > search.indexOf('Invalid coordinates'));
+  assert.match(search, /if \(await loadStationsAt\(place\.lat, place\.lon, gen\)\) pushQueryParam\(type, raw\);/);
+  assert.match(extractFunction('triggerPinSearch'),
+    /loadStationsAt\(lat, lng, gen\)\.then\(loaded => \{\s*if \(loaded\) pushQueryParam\('coords', coordStr\);/);
+  assert.equal((html.match(/pushQueryParam\(/g) || []).length, 3, 'definition + the two guarded calls only');
+  // …and broken ?zip / ?lat links are rejected instead of becoming address searches.
+  assert.match(html, /if \(detectInputType\(zipInput\.value\) === 'zip'\) doSearch\(\);/);
+});
+
+test('longitudes from a neighbouring world copy are wrapped before use', () => {
+  // Leaflet reports e.g. 261.6 after panning sideways; Photon (400) and NOAA (404) reject it.
+  assert.match(extractFunction('doSearch'), /map\.getCenter\(\)\.wrap\(\)/);
+  const place = extractFunction('placeDragPin');
+  assert.match(place, /\(\{ lat, lng \} = L\.latLng\(lat, lng\)\.wrap\(\)\);/);
+  assert.match(place, /getLatLng\(\)\.wrap\(\)/);
+});
+
+test('station panel state survives junk input and overlapping requests', () => {
+  // A cleared interval field keeps the current rate instead of the fastest one.
+  assert.match(html, /Number\.isNaN\(parsed\) \? refreshInterval \/ 1000/);
+  // Only the open panel's request may clear the "refreshing" pulse.
+  assert.match(extractFunction('refreshStationData'),
+    /finally \{[\s\S]*?if \(isActiveStation\(stationId, generation\)\) dotEl\.classList\.remove\('refreshing'\);/);
+  assert.doesNotMatch(html, /stationRefreshActivityCount/);
 });
 
 test('address lookup uses key-less Photon and keeps only US matches', async () => {

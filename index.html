@@ -1539,7 +1539,6 @@ let refreshTimer = null;
  * @type {{ stationId: string, generation: number, promise: Promise<void> }|null}
  */
 let stationRefreshRequest = null;
-let stationRefreshActivityCount = 0;
 
 /**
  * The DOM element (.station-marker div) for the currently highlighted marker.
@@ -1637,7 +1636,9 @@ const MAX_REFRESH_SECONDS = 3600;
 
 intervalInput.addEventListener('change', () => {
   const parsed  = parseInt(intervalInput.value, 10);
-  const seconds = Number.isNaN(parsed) ? MIN_REFRESH_SECONDS
+  // A cleared or garbled field keeps the current interval rather than silently
+  // switching to the fastest (most API-hungry) rate.
+  const seconds = Number.isNaN(parsed) ? refreshInterval / 1000
     : Math.min(MAX_REFRESH_SECONDS, Math.max(MIN_REFRESH_SECONDS, parsed));
   intervalInput.value = seconds;   // show the value actually in use
   refreshInterval = seconds * 1000;
@@ -1869,6 +1870,7 @@ async function fetchObservations(stationId) {
   // The browser always sends its own User-Agent and ignores any custom one
   // (User-Agent is a forbidden fetch header), so there's no point setting it.
   const { response: res, data } = await fetchJsonWithTimeout(url);
+  if (res.status === 404) throw new Error(`Station "${stationId}" not found or has no recent observations`);
   if (!res.ok) throw new Error(`NOAA observations API returned HTTP ${res.status}`);
   return data;
 }
@@ -2538,16 +2540,16 @@ async function refreshStationData(stationId, generation) {
   if (!isActiveStation(stationId, generation)) return;
 
   const dotEl = document.getElementById('update-dot');
-  stationRefreshActivityCount++;
   dotEl.classList.add('refreshing');
 
   try {
     const data = await fetchObservations(stationId);
     if (!isActiveStation(stationId, generation)) return;
 
-    // Show the observation right away (with the cached rain chance, if fresh) —
-    // the separate forecast lookup can take many seconds and must never hold it up.
-    const shownPoP = cachedForecastPoP(stationId) ?? null;
+    // Show the observation right away — the separate forecast lookup can take many
+    // seconds and must never hold it up. Use the last known rain chance even if it
+    // is due for a refresh, so the row doesn't vanish and reappear every 10 minutes.
+    const shownPoP = forecastPoPCache.get(stationId)?.pop ?? null;
     renderWeather(data, stationId, activeStationName, shownPoP);
 
     // Then fetch the real forecast PoP for the station's own coordinates
@@ -2576,8 +2578,9 @@ async function refreshStationData(stationId, generation) {
       }
     }
   } finally {
-    stationRefreshActivityCount = Math.max(0, stationRefreshActivityCount - 1);
-    dotEl.classList.toggle('refreshing', stationRefreshActivityCount > 0);
+    // Only the open panel's own request may stop the pulse: a leftover request for
+    // a station the user already left must not keep (or end) the new one's state.
+    if (isActiveStation(stationId, generation)) dotEl.classList.remove('refreshing');
   }
 }
 
@@ -2607,6 +2610,9 @@ async function openStation(stationId, stationName, markerEl) {
 
   activeStationId = stationId;
   activeStationName = stationName || null;
+  // A request from the previous panel may still be pulsing the dot; this panel
+  // starts idle and its own refresh turns the pulse on.
+  document.getElementById('update-dot').classList.remove('refreshing');
   popupPanel.style.display = 'block';
   document.getElementById('popup-id').textContent    = stationId;
   document.getElementById('popup-name').textContent  = stationName || '—';
@@ -2708,6 +2714,9 @@ function plotStations(geoJSON) {
  *
  * @param {number} lat
  * @param {number} lon
+ * @param {number} gen - the search generation allocated by the caller
+ * @returns {Promise<boolean>} true once stations are plotted; false when a newer
+ *          search replaced this one (failures throw)
  */
 async function loadStationsAt(lat, lon, gen) {
   // Every caller allocates its search generation before its first await and
@@ -2734,7 +2743,7 @@ async function loadStationsAt(lat, lon, gen) {
   moveMapTo(lat, lon, 10);
 
   const data  = await fetchStations(lat, lon);
-  if (gen !== searchGeneration) return;          // superseded by a newer search
+  if (gen !== searchGeneration) return false;    // superseded by a newer search
   plotStations(data);
 
   const count = stationMarkers.length;   // malformed entries are skipped, so count what's plotted
@@ -2745,6 +2754,7 @@ async function loadStationsAt(lat, lon, gen) {
   // them refreshed on a timer.  Fire-and-forget: alerts are supplementary and must
   // never delay or block the station map. A stale result is discarded internally.
   loadAlertsForArea(lat, lon);
+  return true;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3567,15 +3577,16 @@ async function doSearch() {
       // one the user is looking at.
       setStatus('loading', 'GEOCODING…');
       showOverlay('Looking up address…');
-      const center = map.getCenter();
+      // wrap(): after panning onto a neighbouring copy of the world, Leaflet reports
+      // longitudes past ±180 (e.g. 261.6), which Photon rejects with HTTP 400.
+      const center = map.getCenter().wrap();
       place = await addressToCoords(raw, { lat: center.lat, lon: center.lng });
     }
     if (gen !== searchGeneration) return;
 
-    // Only input that resolved to a real place becomes the shareable URL, so a
-    // typo or unknown ZIP can't overwrite the link to the area still on the map.
-    pushQueryParam(type, raw);
-    await loadStationsAt(place.lat, place.lon, gen);
+    // Only a search that actually loaded stations becomes the shareable URL, so a
+    // typo, unknown ZIP, or spot NOAA doesn't cover can't overwrite a good link.
+    if (await loadStationsAt(place.lat, place.lon, gen)) pushQueryParam(type, raw);
 
   } catch (e) {
     if (gen !== searchGeneration) return;
@@ -3690,6 +3701,9 @@ function buildPinIcon(lat, lng) {
  * @param {number} lng
  */
 function placeDragPin(lat, lng) {
+  // A drop/tap on a neighbouring copy of the world reports a longitude past ±180,
+  // which NOAA answers with 404. Normalise once here (covers drop, tap and Locate).
+  ({ lat, lng } = L.latLng(lat, lng).wrap());
   removeDragPin();
 
   droppedPinMarker = L.marker([lat, lng], {
@@ -3714,7 +3728,10 @@ function placeDragPin(lat, lng) {
 
   // When the user re-drags the pin on the map, update the label and re-search
   droppedPinMarker.on('dragend', () => {
-    const pos = droppedPinMarker.getLatLng();
+    // Normalise like placeDragPin, and move the pin onto the same world copy the
+    // map is about to fly to.
+    const pos = droppedPinMarker.getLatLng().wrap();
+    droppedPinMarker.setLatLng(pos);
     const lbl = droppedPinMarker.getElement()?.querySelector('.dropped-pin-coords');
     if (lbl) lbl.textContent = `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`;
     triggerPinSearch(pos.lat, pos.lng);
@@ -3769,10 +3786,12 @@ function triggerPinSearch(lat, lng) {
   const gen = ++searchGeneration;
   const coordStr = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   zipInput.value = coordStr;
-  pushQueryParam('coords', coordStr);
   setStatus('loading', 'LOCATING…');
   showOverlay('Fetching stations for pin location…');
-  loadStationsAt(lat, lng, gen).catch(err => {
+  // Like doSearch: only a pin that actually loaded stations becomes the shareable URL.
+  loadStationsAt(lat, lng, gen).then(loaded => {
+    if (loaded) pushQueryParam('coords', coordStr);
+  }).catch(err => {
     if (gen !== searchGeneration) return;
     hideOverlay();
     setStatus('error', 'ERROR');
@@ -3904,11 +3923,14 @@ fabLocate.addEventListener('click', () => {
 
       const data   = await fetchObservations(stationParam);
       if (gen !== searchGeneration) return;       // superseded by a user search
-      const coords = data.geometry?.coordinates;  // GeoJSON: [lng, lat]
-      if (!coords) throw new Error('No coordinates in station response');
+      const [lng, lat] = data.geometry?.coordinates || [];  // GeoJSON: [lng, lat]
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        throw new Error('No coordinates in station response');
+      }
 
-      const [lng, lat] = coords;
-      moveMapTo(lat, lng, 12);
+      // Zoom 10 like every other search: the alert lookup includes nearby warning
+      // polygons that are visible at that zoom (see alertViewportBounds).
+      moveMapTo(lat, lng, 10);
 
       const stName = data.properties?.stationName || stationParam;
       const iconEl = makeStationMarker(stationParam, stName, lat, lng);
@@ -3948,7 +3970,9 @@ fabLocate.addEventListener('click', () => {
     else showToast('This link has invalid coordinates');
   } else if (zip) {
     zipInput.value = zip.trim();
-    doSearch();
+    // Same guard as lat/long: a broken ?zip=abc link is not an address search.
+    if (detectInputType(zipInput.value) === 'zip') doSearch();
+    else showToast('This link has an invalid ZIP code');
   } else if (addr) {
     zipInput.value = addr.trim();
     doSearch();

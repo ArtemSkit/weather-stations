@@ -1891,6 +1891,12 @@ function isDisplayableAlert(feature) {
     (feature.properties.status ?? 'Actual') === 'Actual';
 }
 
+/** True while an alert's hazard (or, lacking `ends`, the message) has not ended yet. */
+function isAlertUnexpired(feature, now) {
+  const endTime = Date.parse(feature.properties?.ends || feature.properties?.expires || '');
+  return !Number.isFinite(endTime) || endTime > now;
+}
+
 /** Return the coordinate bounding box for any polygonal GeoJSON geometry. */
 function alertGeometryBounds(geometry) {
   if (!geometry) return null;
@@ -1931,8 +1937,7 @@ function geometryIntersectsBounds(geometry, viewport) {
     return (geometry.geometries || []).some(part => geometryIntersectsBounds(part, viewport));
   }
 
-  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] :
-                   geometry.type === 'MultiPolygon' ? geometry.coordinates : [];
+  const polygons = alertPolygons({ geometry });
   const corners = [
     [viewport.west, viewport.south], [viewport.west, viewport.north],
     [viewport.east, viewport.south], [viewport.east, viewport.north]
@@ -2101,11 +2106,7 @@ async function fetchStateAlerts(state) {
   // preserve it indefinitely or retain products whose own validity has ended.
   const now = Date.now();
   const fallbackAlerts = cached && now - cached.ts <= STATE_ALERTS_STALE_MAX_MS
-    ? cached.alerts.filter(feature => {
-        const end = feature.properties?.ends || feature.properties?.expires;
-        const endTime = Date.parse(end || '');
-        return !Number.isFinite(endTime) || endTime > now;
-      })
+    ? cached.alerts.filter(feature => isAlertUnexpired(feature, now))
     : null;
 
   const request = (async () => {
@@ -2618,8 +2619,8 @@ async function loadStationsAt(lat, lon, gen = ++searchGeneration) {
 
   // Fetch and display any active dangerous-weather alerts for this area, then keep
   // them refreshed on a timer.  Fire-and-forget: alerts are supplementary and must
-  // never delay or block the station map. The call is generation-guarded internally.
-  loadAlertsForArea(lat, lon, gen);
+  // never delay or block the station map. A stale result is discarded internally.
+  loadAlertsForArea(lat, lon);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2705,6 +2706,11 @@ document.addEventListener('keydown', handleAlertPopupEscape);
    user's banner state (collapsed/expanded, which card is open) and any open map
    area popup survive the tick instead of being reset every two minutes. */
 let lastAlertSignature = null;
+/** The alert set currently drawn — used to drop lapsed alerts during a feed outage. */
+let shownAlerts = [];
+/* Identity of the area load whose alerts may still be drawn. clearAlerts() (a new
+   area replacing the stations on screen) and every new load replace it. */
+let alertLoadToken = null;
 
 /**
  * Build a stable signature of an alert set from its ids. The NWS assigns a fresh
@@ -2801,7 +2807,8 @@ function escapeHtml(s) {
  * Re-flow NWS alert text for display.  NWS products are hard-wrapped at about
  * 69 characters, so a single newline is only a line wrap in the middle of a
  * sentence and becomes a space.  Blank lines are real paragraph breaks and are
- * kept, as is the line break in front of a "* " or "- " bullet item.
+ * kept, as is the line break in front of a "* " or "- " bullet item.  A paragraph
+ * that is only "&&" (the NWS end-of-section marker) is dropped.
  * @param   {string} text - raw `description` or `instruction` from the feed
  * @returns {string} text with paragraphs separated by one blank line
  */
@@ -2810,7 +2817,7 @@ function unwrapAlertText(text) {
     .replace(/\r\n?/g, '\n')                          // normalise Windows/old-Mac line endings
     .split(/\n[ \t]*\n+/)                             // split into paragraphs at blank lines
     .map(para => para.trim().replace(/\n(?![ \t]*[*-] )[ \t]*/g, ' '))   // join wrapped lines
-    .filter(Boolean)
+    .filter(para => para && para !== '&&')            // drop NWS "&&" section-end markers
     .join('\n\n');
 }
 
@@ -2999,13 +3006,23 @@ function alertGeometryArea(geometry) {
   return 0;
 }
 
+/* Areas are compared inside a sort that re-runs after every layer is added, and a
+   multi-county watch can hold a huge number of vertices — so compute each
+   geometry's area once. Weak keys let replaced geometries be garbage-collected. */
+const alertAreaSizes = new WeakMap();
+function alertAreaSize(geometry) {
+  if (!geometry) return 0;
+  if (!alertAreaSizes.has(geometry)) alertAreaSizes.set(geometry, alertGeometryArea(geometry));
+  return alertAreaSizes.get(geometry);
+}
+
 /**
  * Sort bottom-to-top by footprint size so a smaller, more specific alert remains
  * clickable above a broad watch or advisory. Equal-area layers use danger priority
  * so the most urgent alert owns an otherwise indistinguishable overlap.
  */
 function compareAlertAreaStack(a, b) {
-  const areaOrder = alertGeometryArea(b.geometry) - alertGeometryArea(a.geometry);
+  const areaOrder = alertAreaSize(b.geometry) - alertAreaSize(a.geometry);
   if (areaOrder !== 0) return areaOrder;
 
   const dangerOrder = compareAlertDanger(a.props, b.props);
@@ -3209,34 +3226,44 @@ function renderAlertAreas(features) {
   alertAreasNeedRetry = false;
   const seq = alertAreaSeq;
   (features || []).forEach(f => {
-    const p     = f.properties || {};
-    // Hash the stable alert id (fall back to event) so colours persist across refreshes.
-    // Comma-separated hsl() — Leaflet applies this as an SVG fill/stroke attribute,
-    // where the space-separated CSS Color 4 form isn't reliably parsed on older Safari.
-    const color = `hsl(${alertHue(f.id || p.id || p.event)}, 85%, 62%)`;
-    const label = shortAlertLabel(p.event);
-
-    if (f.geometry) {
-      addAlertGeometryToMap(f.geometry, p, color, label);   // storm-based: inline polygon
-      return;
+    // One malformed geometry must not stop every later alert from being drawn.
+    try {
+      drawAlertArea(f, seq);
+    } catch (error) {
+      console.error('[WX.MAP] Skipped an alert area that could not be drawn:', error);
     }
-    // Zone-only product: resolve every affected zone's outline, then draw them as a
-    // SINGLE layer (one GeometryCollection) so the alert gets just one label and one
-    // popup — not one per county. Guarded so a slow lookup can't paint a stale render.
-    const zones = Array.isArray(p.affectedZones) ? p.affectedZones : [];
-    if (!zones.length) return;
-    Promise.all(zones.map(fetchZoneGeometry)).then(geoms => {
-      if (seq !== alertAreaSeq) return;                     // superseded by a newer render
-      const parts = geoms.filter(Boolean);
-      if (geoms.some(geom => geom === undefined)) alertAreasNeedRetry = true;
-      if (!parts.length) return;                            // no outlines resolved — skip
-      addAlertGeometryToMap({ type: 'GeometryCollection', geometries: parts }, p, color, label);
-    }).catch(error => {
-      if (seq !== alertAreaSeq) return;
-      // Keep the banner usable and retry this supplementary map layer next tick.
-      alertAreasNeedRetry = true;
-      console.error('[WX.MAP] Alert zone rendering failed:', error);
-    });
+  });
+}
+
+/** Draw one alert's footprint (inline polygon now, zone outlines when they arrive). */
+function drawAlertArea(f, seq) {
+  const p     = f.properties || {};
+  // Hash the stable alert id (fall back to event) so colours persist across refreshes.
+  // Comma-separated hsl() — Leaflet applies this as an SVG fill/stroke attribute,
+  // where the space-separated CSS Color 4 form isn't reliably parsed on older Safari.
+  const color = `hsl(${alertHue(f.id || p.id || p.event)}, 85%, 62%)`;
+  const label = shortAlertLabel(p.event);
+
+  if (f.geometry) {
+    addAlertGeometryToMap(f.geometry, p, color, label);   // storm-based: inline polygon
+    return;
+  }
+  // Zone-only product: resolve every affected zone's outline, then draw them as a
+  // SINGLE layer (one GeometryCollection) so the alert gets just one label and one
+  // popup — not one per county. Guarded so a slow lookup can't paint a stale render.
+  const zones = Array.isArray(p.affectedZones) ? p.affectedZones : [];
+  if (!zones.length) return;
+  Promise.all(zones.map(fetchZoneGeometry)).then(geoms => {
+    if (seq !== alertAreaSeq) return;                     // superseded by a newer render
+    const parts = geoms.filter(Boolean);
+    if (geoms.some(geom => geom === undefined)) alertAreasNeedRetry = true;
+    if (!parts.length) return;                            // no outlines resolved — skip
+    addAlertGeometryToMap({ type: 'GeometryCollection', geometries: parts }, p, color, label);
+  }).catch(error => {
+    if (seq !== alertAreaSeq) return;
+    // Keep the banner usable and retry this supplementary map layer next tick.
+    alertAreasNeedRetry = true;
+    console.error('[WX.MAP] Alert zone rendering failed:', error);
   });
 }
 
@@ -3247,37 +3274,50 @@ function clearAlerts() {
   alertBanner.innerHTML = '';
   clearAlertAreas();
   currentLat = currentLon = null; // invalidate any refresh already awaiting the network
+  alertLoadToken = null;          // …and any first load still awaiting it
   lastAlertSignature = null;   // next render is for a new area — always draw it
+  shownAlerts = [];
   stationRecords.forEach(rec => rec.el.classList.remove('alerted'));
 }
 
+/** Draw an alert set everywhere (banner, station rings, map areas) and remember it. */
+function showAlerts(alerts) {
+  renderAlertBanner(alerts);
+  flagStationsInAlerts(alerts);
+  renderAlertAreas(alerts);
+  // Commit only after synchronous rendering succeeds. If malformed data throws,
+  // the next timer tick must be allowed to try this payload again.
+  lastAlertSignature = alertsSignature(alerts);
+  shownAlerts = alerts;
+}
+
 /**
- * Fetch the alerts for a freshly searched area, render them, flag stations, and
- * start the periodic refresh loop.  Generation-guarded so a slow alert fetch from
- * an earlier search can't overwrite a newer one.
+ * Fetch the alerts for a freshly loaded area, render them, flag stations, and
+ * start the periodic refresh loop.
+ *
+ * A result is dropped only when a newer area has replaced this one (a newer load,
+ * or clearAlerts() when new stations are fetched). It is deliberately NOT tied to
+ * the search generation: a later search that fails before loading stations (bad
+ * ZIP, unknown address) leaves this area on screen, so it must keep its alerts.
  * @param {number} lat
  * @param {number} lon
- * @param {number} gen  - the searchGeneration captured by the calling search
  */
-async function loadAlertsForArea(lat, lon, gen) {
+async function loadAlertsForArea(lat, lon) {
+  const token = {};
+  alertLoadToken = token;
   currentLat = lat;
   currentLon = lon;
   if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
 
   try {
     const alerts = await fetchAlerts(lat, lon);
-    if (gen != null && gen !== searchGeneration) return;   // superseded by a newer search
+    if (token !== alertLoadToken) return;   // a newer area replaced this one
 
     // alerts === null means the feed was unreachable on this first load — leave the
     // (already-cleared) banner and map empty and let the refresh loop retry shortly.
-    if (alerts) {
-      renderAlertBanner(alerts);
-      flagStationsInAlerts(alerts);
-      renderAlertAreas(alerts);
-      lastAlertSignature = alertsSignature(alerts);   // baseline for the refresh loop
-    }
+    if (alerts) showAlerts(alerts);
   } catch (error) {
-    if (gen != null && gen !== searchGeneration) return;
+    if (token !== alertLoadToken) return;
     // Alerts are supplementary; log unexpected schema/rendering faults and keep
     // the station search usable while the refresh timer gets another chance.
     console.error('[WX.MAP] Initial alert rendering failed:', error);
@@ -3298,21 +3338,25 @@ async function refreshAlerts() {
     const lat = currentLat, lon = currentLon;
     const alerts = await fetchAlerts(lat, lon);
     if (lat !== currentLat || lon !== currentLon) return;
-    if (alerts === null) return;   // transient feed failure — keep current display, retry next tick
-
-    // Preserve the user's banner/popup state when possible. An incomplete zone draw
-    // is the exception: retry only the map areas while leaving the banner untouched.
-    const sig = alertsSignature(alerts);
-    if (sig === lastAlertSignature) {
-      if (alertAreasNeedRetry) renderAlertAreas(alerts);
+    if (alerts === null) {
+      // Transient feed failure — keep the current display and retry next tick, but
+      // drop any alert whose own end time has passed, so a long outage can never
+      // leave a lapsed warning on screen.
+      const now = Date.now();
+      const unexpired = shownAlerts.filter(feature => isAlertUnexpired(feature, now));
+      if (unexpired.length !== shownAlerts.length) showAlerts(unexpired);
       return;
     }
-    renderAlertBanner(alerts);
-    flagStationsInAlerts(alerts);
-    renderAlertAreas(alerts);
-    // Commit the signature only after synchronous rendering succeeds. If malformed
-    // data throws, the next timer tick must be allowed to try this payload again.
-    lastAlertSignature = sig;
+
+    // Preserve the user's banner/popup state when possible. An incomplete zone draw
+    // is the exception: retry only the map areas while leaving the banner untouched —
+    // but not while an area popup is open, since redrawing would close it under the
+    // user. The next tick retries.
+    if (alertsSignature(alerts) === lastAlertSignature) {
+      if (alertAreasNeedRetry && !activeAlertAreaOwner) renderAlertAreas(alerts);
+      return;
+    }
+    showAlerts(alerts);
   } catch (error) {
     // setInterval does not observe rejected Promises, so contain and report faults.
     console.error('[WX.MAP] Alert refresh failed:', error);
@@ -3775,9 +3819,9 @@ fabLocate.addEventListener('click', () => {
       // a marker click.
       openStation(stationParam, stName, iconEl);
 
-      // Show dangerous-weather alerts for the station's location too (a stale
-      // result is discarded via the same generation guard).
-      loadAlertsForArea(lat, lng, gen);
+      // Show dangerous-weather alerts for the station's location too (a result
+      // made stale by a newer search is discarded inside loadAlertsForArea).
+      loadAlertsForArea(lat, lng);
 
     } catch (e) {
       if (gen !== searchGeneration) return;

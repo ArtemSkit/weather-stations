@@ -2663,15 +2663,18 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
 
   /* ── Present weather in words ("light rain", not the METAR code "-RA") ──
      Dropped when it only repeats the description shown above it. */
-  // "showers" follows the weather word in plain English ("light rain showers").
+  // Plain English: "light rain showers", "patches of fog", and weather only seen
+  // nearby (VCSH) says "in vicinity" instead of looking like it is at the station.
   const pwxWords = (p.presentWeather || [])
-    .map(w => [w.intensity, w.modifier !== 'showers' && w.modifier, w.weather,
-               w.modifier === 'showers' && 'showers']
+    .map(w => [w.intensity,
+               w.modifier === 'patches' ? 'patches of' : w.modifier !== 'showers' && w.modifier,
+               w.weather, w.modifier === 'showers' && 'showers', w.inVicinity && 'in vicinity']
       .filter(Boolean).join(' ').replace(/_/g, ' '))
     .filter(Boolean)
     .join(', ');
-  // Compare letters only: NWS writes "Fog/Mist" in the description but fog_mist here.
-  const lettersOnly = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+  // Compare letters only, ignoring "and"/"of": NWS writes "Light Rain and Fog/Mist"
+  // in the description for the items rain + fog_mist here.
+  const lettersOnly = s => String(s || '').toLowerCase().replace(/\b(?:and|of)\b/g, '').replace(/[^a-z]/g, '');
   const pwx = lettersOnly(pwxWords) === lettersOnly(p.textDescription) ? '' : pwxWords;
 
   /* Free-text observation fields come from an external feed and are interpolated

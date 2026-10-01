@@ -105,7 +105,7 @@ test('a failed newer search keeps the area that is loading or shown', async () =
   let resolveFetch, rejectFetch;
   const h = new Function('fetchStations', 'log', `
     let searchGeneration = 0, areaGeneration = 0, stationOpenGeneration = 0;
-    let settledSearch = 0, areaLoading = false;
+    let settledSearch = 0, areaLoading = null;
     let refreshTimer = null, activeStationId = null, activeMarkerEl = null;
     let stationMarkers = [];
     const popupPanel = { style: {} };
@@ -165,6 +165,9 @@ test('the ?station deep link follows the same area rule as searches', () => {
   assert.match(deepLink, /const area = \+\+areaGeneration;/);
   assert.match(deepLink, /if \(area !== areaGeneration\) return;/);
   assert.match(deepLink, /if \(mayUpdateSearchUi\(gen\)\) \{/);
+  // Its own failure is reported even after a newer search failed (no stuck overlay).
+  assert.match(deepLink, /if \(gen !== searchGeneration && !\(area === areaGeneration && mayUpdateSearchUi\(gen\)\)\) return;/);
+  assert.match(deepLink, /areaLoading = \{ status: 'LOADING STATION…'/);
   // Closing the panel only returns focus for keyboard use (no surprise map pan).
   assert.match(html, /e\.currentTarget\.matches\(':focus-visible'\)/);
 });
@@ -535,16 +538,19 @@ test('rain chance uses the hour in progress, not an hour that already ended', as
     : { response: { ok: true }, data: { properties: { periods: [
         // An older forecast still starts with the hour that just ended.
         { endTime: iso(now - 60_000), probabilityOfPrecipitation: { value: 90 } },
-        { endTime: iso(now + hour - 60_000), probabilityOfPrecipitation: { value: 10 } }
+        { endTime: iso(now + 60_000), probabilityOfPrecipitation: { value: 10 } },
+        { endTime: iso(now + hour), probabilityOfPrecipitation: { value: 30 } }
       ] } } }, forecastPoPCache);
 
   assert.equal(await fetchForecastPoP(29.4, -98.5, 'KSAT'), 10);
-  // Cached only until that hour ends, not a full 10 minutes past it.
-  assert.ok(forecastPoPCache.get('KSAT').ttl <= hour);
+  // Cached only until that hour ends (one minute away), not the usual 10 minutes.
+  assert.ok(forecastPoPCache.get('KSAT').ttl <= 60_000);
+  assert.ok(forecastPoPCache.get('KSAT').ttl > 0);
 });
 
 test('Enter that confirms an IME composition does not start a search', () => {
-  assert.match(html, /e\.key === 'Enter' && !e\.isComposing\) doSearch\(\);/);
+  // Safari ends the composition before keydown, so keyCode 229 is checked too.
+  assert.match(html, /e\.key === 'Enter' && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
 });
 
 test('the hidden toast never makes the page taller than the window', () => {

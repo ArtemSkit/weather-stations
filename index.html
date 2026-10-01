@@ -1022,10 +1022,12 @@
       /* --sheet-h is the sheet's real height, measured in initMobile() */
       bottom: calc(var(--sheet-h, 70vh) + 8px) !important;
     }
-    /* With room for Locate Me above the sheet, clear it too (12px lift + 54px +
-       8px gap), so an error about the button doesn't cover the button. */
-    main.sheet-open:not(.sheet-crowded) ~ #toast {
-      bottom: calc(var(--sheet-h, 70vh) + 74px) !important;
+    /* Locate Me sits at the right just above the sheet (12–66px from the edge):
+       shift the toast left of it instead of lifting it higher, which pushed it onto
+       the search bar. Right edge = 100vw - 74px; left edge stays 8px. */
+    main.sheet-open ~ #toast {
+      left: calc(50% - 33px);
+      max-width: calc(100vw - 82px);
     }
 
     /* ── Station markers: slightly larger hit-area on touch ── */
@@ -1090,7 +1092,7 @@
 
     /* ── Toast: above the Locate Me button (16px + 54px + 8px gap) and the safe area,
        and narrow enough (54px clear on each side) to stay off the zoom buttons ── */
-    #toast { bottom: calc(78px + var(--safe-bottom)); max-width: calc(100vw - 108px); }
+    #toast { bottom: calc(78px + var(--safe-bottom)); max-width: calc(100vw - 108px - var(--safe-left) - var(--safe-right)); }
   }
 </style>
 </head>

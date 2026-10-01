@@ -2720,10 +2720,13 @@ function alertClass(props) {
   const sev   = props.severity || '';
   // Life-threatening, act-now products get the loudest (red, pulsing) treatment.
   if (event.includes('tornado warning') || event.includes('flash flood warning')) return 'crit';
-  // Any other warning, or an Extreme/Severe-rated product → warning level (orange).
-  if (event.includes('warning') || sev === 'Extreme' || sev === 'Severe') return 'warn';
-  // Watches mean "conditions are favourable, be prepared" → amber.
+  if (event.includes('warning')) return 'warn';
+  // Watches mean "conditions are favourable, be prepared" → amber. Checked before
+  // the severity fallback because the NWS rates e.g. Tornado Watch "Extreme" —
+  // otherwise a watch would outrank (and recolour like) an issued warning.
   if (event.includes('watch')) return 'watch';
+  // Any other Extreme/Severe-rated product → warning level (orange).
+  if (sev === 'Extreme' || sev === 'Severe') return 'warn';
   // Advisories, special statements, everything else → informational (yellow).
   return 'info';
 }
@@ -2763,7 +2766,9 @@ function sortAlerts(features) {
     const pa = a.properties || {}, pb = b.properties || {};
     const dangerOrder = compareAlertDanger(pa, pb);
     if (dangerOrder !== 0) return dangerOrder;
-    return new Date(pa.expires || 0) - new Date(pb.expires || 0);
+    // Tie-break on when the hazard itself ends (`ends`); `expires` is only when
+    // this copy of the message lapses, often hours earlier for long events.
+    return new Date(pa.ends || pa.expires || 0) - new Date(pb.ends || pb.expires || 0);
   });
 }
 
@@ -2819,9 +2824,9 @@ function renderAlertBanner(features) {
   const summary = `
     <button class="alert-summary alert-${topClass}" type="button"
             data-role="toggle" aria-expanded="true">
-      <span class="alert-summary-icon">⚠️</span>
+      <span class="alert-summary-icon" aria-hidden="true">⚠️</span>
       <span class="alert-summary-text">${sorted.length} alert${plural} · ${escapeHtml(top.event || 'Weather alert')}</span>
-      <span class="alert-summary-caret">▾</span>
+      <span class="alert-summary-caret" aria-hidden="true">▾</span>
     </button>`;
 
   // One card per alert; the body (headline + description + safety instruction) is
@@ -2829,7 +2834,9 @@ function renderAlertBanner(features) {
   const cards = sorted.map(f => {
     const p       = f.properties || {};
     const cls     = alertClass(p);
-    const expires = p.expires ? `until ${formatWhen(p.expires)}` : '';
+    // Show when the hazard ends, matching the map popup; fall back to `expires`.
+    const endsAt  = p.ends || p.expires;
+    const expires = endsAt ? `until ${formatWhen(endsAt)}` : '';
     // Unwrap each part separately so the NWS hard line wraps don't split sentences.
     const detail  = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
     return `

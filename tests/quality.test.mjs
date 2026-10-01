@@ -471,6 +471,17 @@ test('alert popup selection toggles, switches areas, and closes on click-away or
   assert.equal(geometryHarness.getActiveOwner(), null);
 });
 
+test('watches rank below warnings even when the NWS rates them Extreme', () => {
+  const alertClass = vm.runInNewContext(`(${extractFunction('alertClass')})`);
+  // Live NWS data rates Tornado Watch "Extreme" and Flood Watch "Severe".
+  assert.equal(alertClass({ event: 'Tornado Watch', severity: 'Extreme' }), 'watch');
+  assert.equal(alertClass({ event: 'Flood Watch', severity: 'Severe' }), 'watch');
+  assert.equal(alertClass({ event: 'Flood Warning', severity: 'Severe' }), 'warn');
+  assert.equal(alertClass({ event: 'Tornado Warning', severity: 'Extreme' }), 'crit');
+  assert.equal(alertClass({ event: 'Extreme Cold Statement', severity: 'Severe' }), 'warn');
+  assert.equal(alertClass({ event: 'Wind Advisory', severity: 'Moderate' }), 'info');
+});
+
 test('alert areas stack smaller footprints on top and use danger to break area ties', () => {
   const factory = new Function(`
     const ALERT_CLASS_RANK = { crit: 0, warn: 1, watch: 2, info: 3 };

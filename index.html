@@ -1304,6 +1304,10 @@ if (swContainer) {
     window.__wxActivateUpdate = () => {
       const worker = swRegistration && swRegistration.waiting;
       if (!worker) {
+        // In a page that started uncontrolled (e.g. hard reload) the new worker may
+        // already have activated on its own and taken over; the update is then in
+        // place and a reload is all REFRESH NOW needs to do.
+        if (swContainer.controller) { reloading = true; window.location.reload(); return; }
         console.warn('[WX.MAP] Update activation requested without a waiting worker');
         return;
       }
@@ -1627,6 +1631,12 @@ let searchGeneration = 0;
  */
 let areaGeneration = 0;
 
+/** The newest search generation that has finished (succeeded or failed). */
+let settledSearch = 0;
+
+/** True while the area that owns the map is still fetching its stations. */
+let areaLoading = false;
+
 /* Cached DOM references — gathered once to avoid repeated getElementById calls */
 const zipInput      = document.getElementById('zip-input');
 const searchBtn     = document.getElementById('search-btn');
@@ -1675,14 +1685,14 @@ function stationCountLabel() {
 
 /**
  * Whether a load that just finished for search `gen` may update the status bar
- * and overlay: it is the newest search, or the newest search has already ended
- * (every running search keeps the overlay up). Otherwise a newer search that is
- * still geocoding owns them. Without the second case, an area that finishes
- * loading after a newer search FAILED would sit under a stale "ERROR".
+ * and overlay: it is the newest search, or the newest search has already ended.
+ * Otherwise a newer search that is still geocoding owns them. Without the second
+ * case, an area that finishes loading after a newer search FAILED would sit
+ * under a stale "ERROR".
  * @param {number} gen
  */
 function mayUpdateSearchUi(gen) {
-  return gen === searchGeneration || !mapOverlay.classList.contains('visible');
+  return gen === searchGeneration || settledSearch === searchGeneration;
 }
 
 /**
@@ -1692,8 +1702,16 @@ function mayUpdateSearchUi(gen) {
  * @param {string} message
  */
 function reportSearchError(message) {
-  hideOverlay();
+  settledSearch = searchGeneration;   // the newest search has ended
   showToast(message);
+  if (areaLoading) {
+    // The area on the map is still fetching its stations: that is what the user
+    // is waiting for, so keep showing it as loading (it finishes on its own).
+    showOverlay('Fetching weather stations…');
+    setStatus('loading', 'FETCHING STATIONS…');
+    return;
+  }
+  hideOverlay();
   if (stationMarkers.length) setStatus('ok', stationCountLabel());
   else setStatus('error', 'ERROR');
 }
@@ -1994,7 +2012,7 @@ function setBoundedCache(cache, key, value, limit) {
  *
  * Two-step NOAA flow:
  *   1. GET /points/{lat},{lon}  → properties.forecastHourly (grid forecast URL)
- *   2. GET {forecastHourly}     → properties.periods[0].probabilityOfPrecipitation
+ *   2. GET {forecastHourly}     → probabilityOfPrecipitation of the current period
  *
  * Results are cached per station for FORECAST_TTL_MS.  Any failure resolves to null
  * so a missing forecast never blocks the live observation display.
@@ -2011,6 +2029,7 @@ async function fetchForecastPoP(lat, lon, stationId) {
 
   let pop = null;
   let failed = false;
+  let periodEnd = NaN;   // when the hour the value belongs to ends
   try {
     // Step 1 — turn the coordinate into a forecast grid. The /points response tells
     // us which Weather Forecast Office and grid cell this location belongs to, and
@@ -2020,14 +2039,19 @@ async function fetchForecastPoP(lat, lon, stationId) {
     if (!ptRes.ok) throw new Error(`NOAA points API returned HTTP ${ptRes.status}`);
     const hourlyUrl = pointData.properties?.forecastHourly;
 
-    // Step 2 — fetch that hourly forecast. periods[0] is the current hour; its
-    // probabilityOfPrecipitation is the real PoP we want (0–100, or null).
+    // Step 2 — fetch that hourly forecast and take the CURRENT hour: the first
+    // period that hasn't ended yet. periods[0] is not enough — a forecast issued
+    // a while ago still starts with an hour that is already over.
     if (hourlyUrl && isTrustedNwsApiUrl(hourlyUrl, '/gridpoints/')) {
       const { response: fcRes, data: forecastData } = await fetchJsonWithTimeout(hourlyUrl);
       if (!fcRes.ok) throw new Error(`NOAA forecast API returned HTTP ${fcRes.status}`);
-      const period = forecastData.properties?.periods?.[0];
+      const now = Date.now();
+      const period = (forecastData.properties?.periods || [])
+        .find(p => Date.parse(p?.endTime) > now);
       const v = period?.probabilityOfPrecipitation?.value;
       pop = v != null ? Math.round(v) : null;
+      // Don't keep showing this hour's value after the hour is over.
+      periodEnd = Date.parse(period?.endTime);
     }
   } catch (e) {
     // Forecast is supplementary — swallow and fall back to "no data".
@@ -2036,7 +2060,8 @@ async function fetchForecastPoP(lat, lon, stationId) {
   }
 
   // Cache even a null result so a missing/failed forecast isn't retried every tick.
-  const ttl = failed ? FORECAST_FAILURE_TTL_MS : FORECAST_TTL_MS;
+  const ttl = failed ? FORECAST_FAILURE_TTL_MS
+    : Math.max(0, Math.min(FORECAST_TTL_MS, (periodEnd - Date.now()) || FORECAST_TTL_MS));
   setBoundedCache(forecastPoPCache, stationId, { pop, ts: Date.now(), ttl }, FORECAST_CACHE_LIMIT);
   return pop;
 }
@@ -2755,7 +2780,6 @@ async function openStation(stationId, stationName, markerEl) {
   );
 }
 
-/** Close the popup and stop the refresh timer. */
 const popupCloseBtn = document.getElementById('popup-close');
 
 /**
@@ -2774,6 +2798,11 @@ function closeStationPanel(returnFocus) {
   returnFocusTo?.focus();
 }
 
+// A held Enter that opened the panel from a marker keeps auto-repeating onto this
+// button once it has focus; a repeat must not instantly close the panel again.
+popupCloseBtn.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.repeat) e.preventDefault();
+});
 // Browsers also focus a button that is clicked, so :focus-visible is what tells a
 // keyboard press apart from a mouse click or tap.
 popupCloseBtn.addEventListener('click', e => closeStationPanel(e.currentTarget.matches(':focus-visible')));
@@ -2819,13 +2848,26 @@ function makeStationMarker(id, name, lat, lng) {
   marker.on('click', () => openStation(id, name, iconEl));
   // Leaflet makes the marker focusable (role "button") but never turns Enter or
   // Space into a click, so keyboard users could reach a station but not open it.
-  marker.getElement().addEventListener('keydown', e => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    e.preventDefault();
+  // Like a native button: Enter acts on keydown, Space on keyup. (Opening on the
+  // Space keydown would move focus to the close button, whose own Space keyup
+  // would then close the panel again.)
+  const openFromKeyboard = () => {
     openStation(id, name, iconEl);
     // Move focus into the panel: its details get announced and are reachable
     // without tabbing past every other marker on the map.
     popupCloseBtn.focus();
+  };
+  const markerEl = marker.getElement();
+  markerEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!e.repeat) openFromKeyboard();
+    } else if (e.key === ' ') {
+      e.preventDefault();   // no page scroll; opens on keyup
+    }
+  });
+  markerEl.addEventListener('keyup', e => {
+    if (e.key === ' ') { e.preventDefault(); openFromKeyboard(); }
   });
   stationMarkers.push(marker);
   return iconEl;
@@ -2895,12 +2937,27 @@ async function loadStationsAt(lat, lon, gen) {
   overlayText.textContent = 'Fetching weather stations…';
   moveMapTo(lat, lon, 10);
 
-  const data  = await fetchStations(lat, lon);
+  let data;
+  areaLoading = true;
+  try {
+    data = await fetchStations(lat, lon);
+  } catch (err) {
+    if (area === areaGeneration) areaLoading = false;
+    // This area's own failure. Its caller reports it only while its search is
+    // the newest; if a newer search has meanwhile failed before reaching the map,
+    // this is still the area on screen, so explain why it stayed empty here.
+    if (gen !== searchGeneration && area === areaGeneration && mayUpdateSearchUi(gen)) {
+      reportSearchError(err.message || 'Something went wrong');
+    }
+    throw err;
+  }
   if (area !== areaGeneration) return false;     // a newer area replaced this one
+  areaLoading = false;
   plotStations(data);
 
   // A newer search still running owns the status bar and overlay; leave them.
   if (mayUpdateSearchUi(gen)) {
+    settledSearch = searchGeneration;
     setStatus('ok', stationCountLabel());
     hideOverlay();
   }
@@ -2995,6 +3052,7 @@ function handleAlertPopupClickAway(event) {
 
 /** Close an alert popup on Escape even when keyboard focus is outside the map. */
 function handleAlertPopupEscape(event) {
+  if (event.defaultPrevented) return;   // already used (e.g. it closed the station panel)
   if (event.key === 'Escape' && openAlertPopupElement()) {
     map.closePopup();
     event.preventDefault();   // consumed: other Escape handlers (pin mode) skip it
@@ -3798,7 +3856,9 @@ async function doSearch() {
 }
 
 searchBtn.addEventListener('click', doSearch);
-zipInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+// isComposing: Enter that confirms an IME composition (e.g. Japanese input) is not
+// a request to search the half-typed text.
+zipInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) doSearch(); });
 
 /* ─────────────────────────────────────────────────────────────────────────────
    17. DRAGGABLE-PIN FEATURE
@@ -4146,7 +4206,13 @@ fabLocate.addEventListener('click', () => {
       setStatus('loading', 'LOADING STATION…');
       showOverlay(`Fetching station ${stationParam}…`);
 
-      const data   = await fetchObservations(stationParam);
+      areaLoading = true;
+      let data;
+      try {
+        data = await fetchObservations(stationParam);
+      } finally {
+        if (area === areaGeneration) areaLoading = false;
+      }
       if (area !== areaGeneration) return;        // a user search replaced the map
       const [lng, lat] = data.geometry?.coordinates || [];  // GeoJSON: [lng, lat]
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -4164,6 +4230,7 @@ fabLocate.addEventListener('click', () => {
       stationRecords = [{ el: iconEl, lat, lng }];
 
       if (mayUpdateSearchUi(gen)) {
+        settledSearch = searchGeneration;
         hideOverlay();
         setStatus('ok', stationParam);
       }

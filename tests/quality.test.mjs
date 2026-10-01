@@ -102,32 +102,29 @@ test('inline scripts compile and document IDs remain unique', () => {
 
 test('a failed newer search keeps the area that is loading or shown', async () => {
   const log = [];
-  let resolveFetch;
+  let resolveFetch, rejectFetch;
   const h = new Function('fetchStations', 'log', `
     let searchGeneration = 0, areaGeneration = 0, stationOpenGeneration = 0;
+    let settledSearch = 0, areaLoading = false;
     let refreshTimer = null, activeStationId = null, activeMarkerEl = null;
     let stationMarkers = [];
     const popupPanel = { style: {} };
     const overlayText = {};
-    let overlayVisible = false;
-    const mapOverlay = { classList: { contains: () => overlayVisible } };
     function clearAlerts() {}
     function clearStations() { stationMarkers = []; }
     function moveMapTo() {}
     function plotStations() { stationMarkers = [1, 2]; log.push('plotted'); }
     function setStatus(state, text) { log.push('status:' + state + ':' + text); }
-    function hideOverlay() { overlayVisible = false; log.push('overlay hidden'); }
+    function showOverlay() { log.push('overlay shown'); }
+    function hideOverlay() { log.push('overlay hidden'); }
     function showToast(m) { log.push('toast:' + m); }
     function loadAlertsForArea() { log.push('alerts'); }
     ${extractFunction('stationCountLabel')}
     ${extractFunction('mayUpdateSearchUi')}
     ${extractFunction('reportSearchError')}
     async ${extractFunction('loadStationsAt')}
-    return {
-      loadStationsAt, reportSearchError,
-      newSearch: () => { overlayVisible = true; return ++searchGeneration; }
-    };
-  `)(() => new Promise(resolve => { resolveFetch = resolve; }), log);
+    return { loadStationsAt, reportSearchError, newSearch: () => ++searchGeneration };
+  `)(() => new Promise((resolve, reject) => { resolveFetch = resolve; rejectFetch = reject; }), log);
 
   // Search A reaches the map; while its stations load, search B starts geocoding.
   const loadA = h.loadStationsAt(1, 2, h.newSearch());
@@ -139,18 +136,28 @@ test('a failed newer search keeps the area that is loading or shown', async () =
 
   // B then fails before reaching the map: the status describes what is shown.
   h.reportSearchError('ZIP code "00000" not found');
-  assert.deepEqual(log.slice(-3), ['overlay hidden', 'toast:ZIP code "00000" not found', 'status:ok:2 STATIONS']);
+  assert.deepEqual(log.slice(-3), ['toast:ZIP code "00000" not found', 'overlay hidden', 'status:ok:2 STATIONS']);
 
-  // Reverse order: C reaches the map, D starts and FAILS while C still loads (no
-  // markers yet → ERROR). When C's stations land, the status must show them.
+  // Reverse order: C reaches the map, D starts and FAILS while C still loads.
+  // The map is still loading C, so it stays "loading" (no false ERROR)…
   log.length = 0;
   const loadC = h.loadStationsAt(3, 4, h.newSearch());
   h.newSearch();
   h.reportSearchError('Location access denied.');
-  assert.equal(log.at(-1), 'status:error:ERROR');
+  assert.deepEqual(log.slice(-3), ['toast:Location access denied.', 'overlay shown', 'status:loading:FETCHING STATIONS…']);
+  // …and when C's stations land, the status shows them.
   resolveFetch({ features: [] });
   assert.equal(await loadC, true);
-  assert.ok(log.includes('status:ok:2 STATIONS'), 'status must not stay on ERROR under plotted stations');
+  assert.deepEqual(log.slice(-3), ['status:ok:2 STATIONS', 'overlay hidden', 'alerts']);
+
+  // If such a still-shown area FAILS instead, its reason is reported (not silent).
+  log.length = 0;
+  const loadE = h.loadStationsAt(5, 6, h.newSearch());
+  h.newSearch();
+  h.reportSearchError('ZIP code "11111" not found');
+  rejectFetch(new Error('No NOAA stations here — coverage is US only'));
+  await assert.rejects(loadE);
+  assert.deepEqual(log.slice(-3), ['toast:No NOAA stations here — coverage is US only', 'overlay hidden', 'status:error:ERROR']);
 });
 
 test('the ?station deep link follows the same area rule as searches', () => {
@@ -414,7 +421,7 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
   assert.equal(await served.text(), '<!doctype html>');
 });
 
-test('update flow survives file:// and reloads after a first-visit claim', () => {
+test('update flow survives file:// and blocked service-worker access', () => {
   // Reading navigator.serviceWorker is wrapped so a throwing getter or file:// page
   // cannot abort the registration script (and the version badge with it).
   assert.match(html, /const swContainer = \(\(\) => \{\s*try \{[\s\S]*?location\.protocol === 'file:'/);
@@ -461,8 +468,13 @@ test('round-4 UI fixes: popups, keyboard panel, iOS zoom, cookies, fonts', () =>
 
   // Keyboard users can open a station (Leaflet never maps Enter to a marker click)
   // and close the panel with Escape.
-  assert.match(extractFunction('makeStationMarker'),
-    /e\.key !== 'Enter' && e\.key !== ' '[\s\S]*?openStation\(id, name, iconEl\);\s*[\s\S]*?popupCloseBtn\.focus\(\);/);
+  const marker = extractFunction('makeStationMarker');
+  assert.match(marker, /openStation\(id, name, iconEl\);[\s\S]*?popupCloseBtn\.focus\(\);/);
+  assert.match(marker, /if \(!e\.repeat\) openFromKeyboard\(\);/);
+  assert.match(marker, /addEventListener\('keyup', e => \{\s*if \(e\.key === ' '\)/);
+  assert.match(html, /if \(e\.key === 'Enter' && e\.repeat\) e\.preventDefault\(\);/);
+  // One Escape, one action: the alert popup handler skips a consumed key.
+  assert.match(extractFunction('handleAlertPopupEscape'), /if \(event\.defaultPrevented\) return;/);
   assert.match(html, /popupPanel\.addEventListener\('keydown', e => \{\s*if \(e\.key !== 'Escape'\) return;/);
 
   assert.match(html, /\.weather-item-value \.na \{/);                 // the N/A span is a child
@@ -497,6 +509,40 @@ test('update flow reloads only pages that were running an older release', async 
   hardAccepted.accept();
   hardAccepted.change();
   assert.equal(hardAccepted.state.reloads, 1);
+
+  // The new worker already took over on its own (no waiting worker left): the
+  // banner's REFRESH NOW must still work instead of silently doing nothing.
+  const selfActivated = await runUpdateFlow({ controller: {}, active: {}, waiting: null });
+  selfActivated.accept();
+  assert.equal(selfActivated.state.reloads, 1);
+});
+
+test('rain chance uses the hour in progress, not an hour that already ended', async () => {
+  const hour = 3_600_000, now = Date.now();
+  const iso = ms => new Date(ms).toISOString();
+  const forecastPoPCache = new Map();
+  const fetchForecastPoP = new Function('fetchJsonWithTimeout', 'forecastPoPCache', `
+    const FORECAST_TTL_MS = 600000, FORECAST_FAILURE_TTL_MS = 120000, FORECAST_CACHE_LIMIT = 100;
+    function setBoundedCache(cache, key, value) { cache.set(key, value); }
+    function isTrustedNwsApiUrl() { return true; }
+    ${extractFunction('cachedForecastPoP')}
+    async ${extractFunction('fetchForecastPoP')}
+    return fetchForecastPoP;
+  `)(async url => url.includes('/points/')
+    ? { response: { ok: true }, data: { properties: { forecastHourly: 'https://api.weather.gov/gridpoints/X/1,1/forecast/hourly' } } }
+    : { response: { ok: true }, data: { properties: { periods: [
+        // An older forecast still starts with the hour that just ended.
+        { endTime: iso(now - 60_000), probabilityOfPrecipitation: { value: 90 } },
+        { endTime: iso(now + hour - 60_000), probabilityOfPrecipitation: { value: 10 } }
+      ] } } }, forecastPoPCache);
+
+  assert.equal(await fetchForecastPoP(29.4, -98.5, 'KSAT'), 10);
+  // Cached only until that hour ends, not a full 10 minutes past it.
+  assert.ok(forecastPoPCache.get('KSAT').ttl <= hour);
+});
+
+test('Enter that confirms an IME composition does not start a search', () => {
+  assert.match(html, /e\.key === 'Enter' && !e\.isComposing\) doSearch\(\);/);
 });
 
 test('vendored Leaflet and its license match the pinned release', () => {
@@ -1183,7 +1229,7 @@ test('every search path allocates or receives a generation before awaiting', () 
   assert.match(stationLoader, /^function loadStationsAt\(lat, lon, gen\)/);
   assert.match(stationLoader, /const area = \+\+areaGeneration;/);
   assert.match(stationLoader, /if \(area !== areaGeneration\) return false;/);
-  assert.match(stationLoader, /if \(mayUpdateSearchUi\(gen\)\) \{\s*setStatus\(/);
+  assert.match(stationLoader, /if \(mayUpdateSearchUi\(gen\)\) \{\s*settledSearch = searchGeneration;\s*setStatus\(/);
   assert.doesNotMatch(html, /loadStationsAt\(\s*\w+\s*,\s*\w+\s*\)/,
     'every call site must pass its pre-allocated generation');
 

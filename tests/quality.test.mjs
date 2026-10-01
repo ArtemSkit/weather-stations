@@ -2028,6 +2028,11 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   assert.equal(detect('29., -98.'), 'coords');
   assert.equal(detect('0029.4, -98.5'), 'coords');      // leading zeros, as before
   assert.equal(detect('29.42 −98.49'), 'coords');  // pasted Unicode minus
+  assert.equal(detect('29.42, –98.49'), 'coords'); // en dash
+  // Degree-style coordinates went to Photon and loaded Tacoma, WA: reject instead.
+  assert.equal(detect('29.42°N 98.49°W'), 'badzip');
+  assert.equal(detect('29.42 N, 98.49 W'), 'badzip');
+  assert.equal(detect('news'), 'address');            // N/S/E/W letters need a digit
   const parse = vm.runInNewContext(`(() => { ${extractFunction('parseCoords')} return parseCoords; })()`);
   assert.deepEqual({ ...parse(' 29.42   -98.49 ') }, { lat: 29.42, lon: -98.49 });
   assert.deepEqual({ ...parse('29.42 , -98.49') }, { lat: 29.42, lon: -98.49 });
@@ -2115,4 +2120,30 @@ test('a cached rain chance is not shown after its forecast hour is over', async 
   });
   await run('KSEA', 1);
   assert.deepEqual(shown, [null], 'a 6-hour-old "this hr" value must not be shown');
+});
+
+test('network failures read as a plain message, and "no forecast grid" is not retried every 2 minutes', async () => {
+  const fetchJson = fetchImpl => vm.runInNewContext(`(() => { return async ${extractFunction('fetchJsonWithTimeout')}; })()`,
+    { fetch: fetchImpl, AbortController, setTimeout, clearTimeout });
+  // Offline: fetch rejects with the browser's own TypeError text.
+  await assert.rejects(fetchJson(async () => { throw new TypeError('Failed to fetch'); })('https://x'),
+    /^Error: Network error — check your connection and try again$/);
+  // Captive portal: an OK HTML page instead of JSON.
+  await assert.rejects(fetchJson(async () => ({ ok: true, json: async () => { throw new SyntaxError("Unexpected token '<'"); } }))('https://x'),
+    /Network error/);
+
+  const cache = new Map();
+  const fetchForecastPoP = new Function('fetchJsonWithTimeout', 'forecastPoPCache', `
+    const FORECAST_TTL_MS = 600000, FORECAST_FAILURE_TTL_MS = 120000, FORECAST_CACHE_LIMIT = 100;
+    function setBoundedCache(c, k, v) { c.set(k, v); }
+    function isTrustedNwsApiUrl() { return true; }
+    ${extractFunction('cachedForecastPoP')}
+    async ${extractFunction('fetchForecastPoP')}
+    return fetchForecastPoP;
+  `)(async () => ({ response: { ok: false, status: 404 }, data: null }), cache);
+  assert.equal(await fetchForecastPoP(27.0, -90.0, 'PLAT1'), null);
+  assert.equal(cache.get('PLAT1').ttl, 600000, 'outside the forecast grid is a lasting answer');
+
+  // Locate Me explains the HTTPS requirement instead of a "denied" it can't fix.
+  assert.match(html, /if \(window\.isSecureContext === false\) \{\s*showToast\('Locate Me needs the app to be opened over HTTPS/);
 });

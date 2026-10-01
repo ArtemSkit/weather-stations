@@ -1211,8 +1211,8 @@
         <div class="update-dot" id="update-dot"></div>
         <!--
           Interval input: the user can change the auto-refresh period.
-          Clamped to 10 s – 1 h: the minimum avoids hammering the API, and the
-          maximum keeps the delay inside what setInterval can represent.
+          Clamped to 10 s – 1 h: the minimum avoids hammering the API, and an
+          hour is the longest interval that still counts as "live".
         -->
         <div class="interval-wrap">
           LIVE ·
@@ -1894,16 +1894,18 @@ intervalInput.addEventListener('change', () => {
  * @returns {'coords'|'zip'|'badzip'|'address'}
  */
 function detectInputType(raw) {
-  // A pasted Unicode minus ("−98.49") counts as a plain "-".
-  const s = raw.trim().replace(/−/g, '-');
+  // A pasted Unicode minus or en/em dash ("−98.49", "–98.49") counts as "-".
+  const s = raw.trim().replace(/[−–—]/g, '-');
   if (/^\d{5}([ -]?\d{4})?$/.test(s))                                 return 'zip';
   // Each number: optional sign, at most 3 whole digits after any leading zeros (so
   // "78201 123", a mistyped ZIP+4, isn't taken as coordinates), optional decimals;
   // ".5" and "29." are fine.
   if (/^[+-]?(0*\d{1,3}(\.\d*)?|\.\d+)(\s*,\s*|\s+)[+-]?(0*\d{1,3}(\.\d*)?|\.\d+)$/.test(s)) return 'coords';
-  // "7820" or "29.42-98.49" is a mistyped ZIP or coordinate pair, not an address:
-  // Photon matches such numbers to some street far away and loads it silently.
-  if (/^[\d\s.,+-]+$/.test(s))                                        return 'badzip';
+  // "7820", "29.42-98.49" or "29.42°N 98.49°W" is a mistyped ZIP or a coordinate
+  // format we don't read, not an address: Photon matches such numbers to some
+  // street far away (Tacoma, WA) and loads it silently.
+  // (\x27 and \x22 are the ASCII minute and second marks.)
+  if (/\d/.test(s) && /^[\d\s.,+\-°\x27′\x22″NSEW]+$/i.test(s))     return 'badzip';
   return 'address';
 }
 
@@ -1915,8 +1917,9 @@ function detectInputType(raw) {
  * @returns {{ lat: number, lon: number }}
  */
 function parseCoords(raw) {
-  // Comma and/or spaces between the two numbers; Unicode minus allowed (see detectInputType).
-  const parts = raw.trim().replace(/−/g, '-').split(/[\s,]+/);
+  // Comma and/or spaces between the two numbers; Unicode minus / dashes allowed
+  // (see detectInputType).
+  const parts = raw.trim().replace(/[−–—]/g, '-').split(/[\s,]+/);
   return { lat: parseFloat(parts[0]), lon: parseFloat(parts[1]) };
 }
 
@@ -1951,6 +1954,12 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15_000) {
     return { response, data };
   } catch (err) {
     if (err.name === 'AbortError') throw new Error('Request timed out — please try again');
+    // fetch() rejects with a TypeError when offline or blocked ("Failed to fetch",
+    // "Load failed"…), and a captive portal's HTML page fails JSON parsing with a
+    // SyntaxError — neither raw browser text belongs in a user-facing toast.
+    if (err.name === 'TypeError' || err.name === 'SyntaxError') {
+      throw new Error('Network error — check your connection and try again');
+    }
     throw err;
   } finally {
     clearTimeout(timer);
@@ -2187,6 +2196,9 @@ async function fetchForecastPoP(lat, lon, stationId) {
     // hands back the ready-made hourly-forecast URL for that cell.
     const { response: ptRes, data: pointData } = await fetchJsonWithTimeout(
       `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
+    // 404 = outside the forecast grid (e.g. an offshore station): a lasting "no
+    // forecast", cached like one, not a passing failure retried every 2 minutes.
+    if (ptRes.status === 404) throw Object.assign(new Error('No forecast grid here'), { lasting: true });
     if (!ptRes.ok) throw new Error(`NOAA points API returned HTTP ${ptRes.status}`);
     const hourlyUrl = pointData.properties?.forecastHourly;
 
@@ -2205,9 +2217,10 @@ async function fetchForecastPoP(lat, lon, stationId) {
       periodEnd = Date.parse(period?.endTime);
     }
   } catch (e) {
-    // Forecast is supplementary — swallow and fall back to "no data".
+    // Forecast is supplementary — swallow and fall back to "no data". Only a passing
+    // failure gets the short retry; a lasting one (no grid here) the normal TTL.
     pop = null;
-    failed = true;
+    failed = !e.lasting;
   }
 
   // Cache even a null result so a missing/failed forecast isn't retried every tick.
@@ -4465,6 +4478,12 @@ fabLocate.addEventListener('click', () => {
   if (fabLocate.getAttribute('aria-disabled') === 'true') return;
   if (!navigator.geolocation) {
     showToast('Geolocation is not supported by this browser.');
+    return;
+  }
+  // Browsers refuse location outside HTTPS/localhost (e.g. http://192.168.x.x) with
+  // a "denied" error no setting can fix — say what is really needed.
+  if (window.isSecureContext === false) {
+    showToast('Locate Me needs the app to be opened over HTTPS (or localhost).');
     return;
   }
 

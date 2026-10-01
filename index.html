@@ -1581,6 +1581,15 @@ let droppedPinMarker = null;
  */
 let searchGeneration = 0;
 
+/**
+ * Bumped each time a search actually starts replacing the map (loadStationsAt).
+ * Separate from searchGeneration on purpose: a newer search that fails before
+ * reaching the map (unknown ZIP, denied location) must not throw away an older
+ * search whose stations are still loading — only a newer AREA replaces an area.
+ * @type {number}
+ */
+let areaGeneration = 0;
+
 /* Cached DOM references — gathered once to avoid repeated getElementById calls */
 const zipInput      = document.getElementById('zip-input');
 const searchBtn     = document.getElementById('search-btn');
@@ -1619,6 +1628,25 @@ function showToast(msg) {
   // A previous toast must not hide a newer message when its older timer expires.
   clearTimeout(showToast.dismissTimer);
   showToast.dismissTimer = setTimeout(() => toast.classList.remove('visible'), 3500);
+}
+
+/** "N STATIONS" for the status bar (counts what was actually plotted). */
+function stationCountLabel() {
+  const n = stationMarkers.length;
+  return `${n} STATION${n !== 1 ? 'S' : ''}`;
+}
+
+/**
+ * Report a failed search. The toast says what went wrong; the status bar keeps
+ * describing what is really on the map — the previous area's stations when the
+ * search failed before replacing them, otherwise ERROR.
+ * @param {string} message
+ */
+function reportSearchError(message) {
+  hideOverlay();
+  showToast(message);
+  if (stationMarkers.length) setStatus('ok', stationCountLabel());
+  else setStatus('error', 'ERROR');
 }
 
 /**
@@ -2756,11 +2784,13 @@ function plotStations(geoJSON) {
  * @param {number} lon
  * @param {number} gen - the search generation allocated by the caller
  * @returns {Promise<boolean>} true once stations are plotted; false when a newer
- *          search replaced this one (failures throw)
+ *          area replaced this one (failures throw)
  */
 async function loadStationsAt(lat, lon, gen) {
   // Every caller allocates its search generation before its first await and
-  // passes it in, so a slower earlier search can never overwrite this one.
+  // passes it in; the status bar and overlay belong to the newest search. The
+  // map itself belongs to the newest AREA (see areaGeneration).
+  const area = ++areaGeneration;
 
   // Drop any alerts from the previous area so a stale banner isn't shown for the
   // new location while its stations and alerts are being fetched.
@@ -2783,12 +2813,14 @@ async function loadStationsAt(lat, lon, gen) {
   moveMapTo(lat, lon, 10);
 
   const data  = await fetchStations(lat, lon);
-  if (gen !== searchGeneration) return false;    // superseded by a newer search
+  if (area !== areaGeneration) return false;     // a newer area replaced this one
   plotStations(data);
 
-  const count = stationMarkers.length;   // malformed entries are skipped, so count what's plotted
-  setStatus('ok', `${count} STATION${count !== 1 ? 'S' : ''}`);
-  hideOverlay();
+  // A newer search still geocoding owns the status bar and overlay; leave them.
+  if (gen === searchGeneration) {
+    setStatus('ok', stationCountLabel());
+    hideOverlay();
+  }
 
   // Fetch and display any active dangerous-weather alerts for this area, then keep
   // them refreshed on a timer.  Fire-and-forget: alerts are supplementary and must
@@ -3645,15 +3677,17 @@ async function doSearch() {
     }
     if (gen !== searchGeneration) return;
 
+    // A typed search moves away from any dropped pin; leaving it behind would show
+    // a stale coordinate label (and dragging it would search the old spot).
+    removeDragPin();
+
     // Only a search that actually loaded stations becomes the shareable URL, so a
     // typo, unknown ZIP, or spot NOAA doesn't cover can't overwrite a good link.
     if (await loadStationsAt(place.lat, place.lon, gen)) pushQueryParam(type, raw);
 
   } catch (e) {
     if (gen !== searchGeneration) return;
-    hideOverlay();
-    setStatus('error', 'ERROR');
-    showToast(e.message || 'Something went wrong');
+    reportSearchError(e.message || 'Something went wrong');
   }
 }
 
@@ -3878,9 +3912,7 @@ function triggerPinSearch(lat, lng) {
     if (loaded) pushQueryParam('coords', coordStr);
   }).catch(err => {
     if (gen !== searchGeneration) return;
-    hideOverlay();
-    setStatus('error', 'ERROR');
-    showToast(err.message || 'Something went wrong');
+    reportSearchError(err.message || 'Something went wrong');
   });
 }
 
@@ -3953,15 +3985,12 @@ fabLocate.addEventListener('click', () => {
     err => {
       if (!settle()) return;
       if (gen !== searchGeneration) return;
-      hideOverlay();
-      setStatus('error', 'ERROR');
-
       const messages = {
         1: 'Location access denied. Please allow it in your browser settings.',
         2: 'Location unavailable. Check your device settings.',
         3: 'Location request timed out. Please try again.'
       };
-      showToast(messages[err.code] || 'Could not retrieve location.');
+      reportSearchError(messages[err.code] || 'Could not retrieve location.');
     },
 
     // ── Options ───────────────────────────────────────────────────────────────
@@ -4041,9 +4070,7 @@ fabLocate.addEventListener('click', () => {
 
     } catch (e) {
       if (gen !== searchGeneration) return;
-      hideOverlay();
-      setStatus('error', 'ERROR');
-      showToast(e.message || 'Failed to load station');
+      reportSearchError(e.message || 'Failed to load station');
     }
     return;  // Don't process other params
   }

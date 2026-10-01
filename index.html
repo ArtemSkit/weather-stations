@@ -2513,17 +2513,21 @@ const toFixedClean = (n, digits) => {
   return Number(s) === 0 ? (0).toFixed(digits) : s;
 };
 
-/** Celsius → Fahrenheit (string, 1 decimal place). Returns null if input is null. */
-const cToF = c => c != null ? toFixedClean((c * 9/5) + 32, 1) : null;
+/* Readings are shown in whole units, like weather.gov: most reports carry whole
+   °C and whole knots, so a decimal (55.4°F, 6.9 mph) is precision they don't have. */
 
-/** km/h → mph (1 decimal place). */
-const kmhToMph = k => k != null ? (k * 0.621371).toFixed(1) : null;
+/** Celsius → Fahrenheit (string, whole degrees). Returns null if input is null. */
+const cToF = c => c != null ? toFixedClean((c * 9/5) + 32, 0) : null;
+
+/** km/h → mph (string, whole mph). */
+const kmhToMph = k => k != null ? toFixedClean(k * 0.621371, 0) : null;
 
 /** Metres → miles (1 decimal place). */
 const mToMi = m => m != null ? (m / 1609.344).toFixed(1) : null;
 
-/** Metres → feet (nearest integer). */
-const mToFt = m => m != null ? Math.round(m * 3.28084) : null;
+/** Metres → feet, to the nearest 100 ft (cloud bases are reported in hundreds of
+    feet; the API's metres turn OVC026 into 2592 ft unless rounded back). */
+const mToFt = m => m != null ? Math.round(m * 3.28084 / 100) * 100 : null;
 
 /** Pascals → inches of mercury (2 decimal places). */
 const paToInHg = pa => pa != null ? (pa / 3386.389).toFixed(2) : null;
@@ -2535,9 +2539,18 @@ const paToInHg = pa => pa != null ? (pa / 3386.389).toFixed(2) : null;
  */
 function formatTime(ts) {
   if (!ts) return '—';
-  return new Date(ts).toLocaleTimeString('en-US', {
+  const when = new Date(ts);
+  const time = when.toLocaleTimeString('en-US', {
     hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
   });
+  // A station's "latest" report can be days old. Add the date when it isn't
+  // today, and say how old it is past 2 hours, so stale data doesn't look current.
+  const ageHours = (Date.now() - when.getTime()) / 3_600_000;
+  const day = when.toDateString() === new Date().toDateString()
+    ? '' : when.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ';
+  const age = ageHours >= 48 ? ` · ${Math.floor(ageHours / 24)} days old`
+            : ageHours >= 2  ? ` · ${Math.floor(ageHours)} h old` : '';
+  return day + time + age;
 }
 
 /**
@@ -2588,20 +2601,25 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   const tempF     = cToF(tempC);
   // Display the actual °C value (not a °F→°C round-trip, which would re-introduce
   // rounding error from the already-rounded Fahrenheit string).
-  const tempCDisp = tempC != null ? toFixedClean(tempC, 1) : null;
+  const tempCDisp = tempC != null ? toFixedClean(tempC, 0) : null;
 
   /*
-   * "Feels Like" — heat index takes priority over wind chill because both
-   * are never simultaneously applicable (heat index is relevant at high temps,
-   * wind chill at low temps).  The label is updated to reflect which one is used.
+   * "Feels Like" — only where it means something, as weather.gov does: the NWS
+   * also fills in a heat index at mild temperatures (73.3°F at 73.4°F, or even
+   * BELOW the air temperature). Heat index from 80°F (26.7°C); wind chill at 50°F
+   * (10°C) or colder with wind above 3 mph (4.8 km/h).
    */
   const heatC  = p.heatIndex?.value;
   const chillC = p.windChill?.value;
+  const windKmh = p.windSpeed?.value;
   let feelsC = null, feelsLabel = 'Feels Like';
-  if      (heatC  != null) { feelsC = heatC;  feelsLabel = 'Heat Index'; }
-  else if (chillC != null) { feelsC = chillC; feelsLabel = 'Wind Chill'; }
+  if (heatC != null && tempC != null && tempC >= 26.7) {
+    feelsC = heatC;  feelsLabel = 'Heat Index';
+  } else if (chillC != null && tempC != null && tempC <= 10 && windKmh > 4.8) {
+    feelsC = chillC; feelsLabel = 'Wind Chill';
+  }
   const feelsF     = cToF(feelsC);
-  const feelsCDisp = feelsC != null ? toFixedClean(feelsC, 1) : null;
+  const feelsCDisp = feelsC != null ? toFixedClean(feelsC, 0) : null;
 
   /* ── Other observations ── */
   const dewC      = p.dewpoint?.value;
@@ -2609,16 +2627,22 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   const windMph   = kmhToMph(p.windSpeed?.value);
   const gustMph   = kmhToMph(p.windGust?.value);
   const visMi     = mToMi(p.visibility?.value);
-  const pressInHg = paToInHg(p.seaLevelPressure?.value ?? p.barometricPressure?.value);
+  // barometricPressure here is the altimeter setting — what US reports and
+  // weather.gov call "Barometer". Sea-level pressure (a different quantity) only
+  // comes with hourly reports, so preferring it made the value jump between
+  // hourly and 5-minute reports; it is now just the fallback.
+  const pressInHg = paToInHg(p.barometricPressure?.value ?? p.seaLevelPressure?.value);
   const humidity  = p.relativeHumidity?.value != null
                   ? Math.round(p.relativeHumidity.value) : null;
+  // Calm (0 wind) has no meaningful direction: stations still send 0° ("from N").
+  const isCalm    = windKmh === 0;
   const windDir   = p.windDirection?.value;
-  const dirStr    = windDir != null ? degToCompass(windDir) : null;
+  const dirStr    = windDir != null && !isCalm ? degToCompass(windDir) : null;
 
-  /* ── Cloud layers: show the main deck ──
+  /* ── Cloud layers: show the total sky cover ──
      NWS lists layers lowest first, so the first is often just a thin lower layer
-     (FEW at 1500 ft under an overcast). Show the layer with the most cover; on a
-     tie the lowest one, which is the one that matters for the ceiling. */
+     (FEW at 1500 ft under an overcast). Show the layer with the most cover (the
+     sky as a whole); on a tie, the lowest such layer. */
   const coverRank = { CLR: 0, SKC: 0, FEW: 1, SCT: 2, BKN: 3, OVC: 4, VV: 5 };
   const layer = (p.cloudLayers || []).reduce((best, l) =>
     (coverRank[l?.amount] ?? -1) > (coverRank[best?.amount] ?? -1) ? l : best, p.cloudLayers?.[0]);
@@ -2628,15 +2652,22 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
     CLR:'Clear', SKC:'Clear', FEW:'Few', SCT:'Scattered',
     BKN:'Broken', OVC:'Overcast', VV:'Vert. Vis.'
   };
-  const cloudStr = cloudAmt
-    ? (amtMap[cloudAmt] || cloudAmt) + (cloudFt != null ? ` @ ${cloudFt} ft` : '')
-    : null;
+  // No height for a clear sky: an automated CLR means "nothing below 12,000 ft",
+  // and the API's placeholder base would read as "Clear @ 12500 ft".
+  // VV is not a cloud layer: the sky is hidden (fog, snow) and that is how far up
+  // one can see — so no "@", which would read as a cloud base.
+  const isClear  = cloudAmt === 'CLR' || cloudAmt === 'SKC';
+  const cloudStr = !cloudAmt ? null
+    : cloudAmt === 'VV' ? 'Obscured' + (cloudFt != null ? ` · vert. vis. ${cloudFt} ft` : '')
+    : (amtMap[cloudAmt] || cloudAmt) + (cloudFt != null && !isClear ? ` @ ${cloudFt} ft` : '');
 
-  /* ── Present weather string (e.g. "RA", "TSRA") ── */
-  const pwx = (p.presentWeather || [])
-    .map(w => w.rawString || w.weather || '')
+  /* ── Present weather in words ("light rain", not the METAR code "-RA") ──
+     Dropped when it only repeats the description shown above it. */
+  const pwxWords = (p.presentWeather || [])
+    .map(w => [w.intensity, w.modifier, w.weather].filter(Boolean).join(' ').replace(/_/g, ' '))
     .filter(Boolean)
     .join(', ');
+  const pwx = pwxWords.toLowerCase() === String(p.textDescription || '').toLowerCase() ? '' : pwxWords;
 
   /* Free-text observation fields come from an external feed and are interpolated
      into innerHTML below — escape them, same policy as the alert renderer. */
@@ -2716,7 +2747,7 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
       <div class="weather-item">
         <div class="weather-item-label">Wind</div>
         <div class="weather-item-value">
-          ${windMph != null ? windMph + ' mph' : val(null)}
+          ${isCalm ? 'Calm' : windMph != null ? windMph + ' mph' : val(null)}
           ${dirStr ? '<br><span style="font-size:0.7rem;color:var(--text-muted)">from ' + dirStr + '</span>' : ''}
         </div>
       </div>
@@ -3391,9 +3422,13 @@ function renderAlertBanner(features) {
   const cards = sorted.map(f => {
     const p       = f.properties || {};
     const cls     = alertClass(p);
-    // Show when the hazard ends, matching the map popup; fall back to `expires`.
-    const endsAt  = p.ends || p.expires;
-    const expires = endsAt ? `until ${formatWhen(endsAt)}` : '';
+    // Show when the hazard ends. `expires` is only when this copy of the message
+    // lapses (often the next scheduled update), so with no `ends` the hazard has
+    // no set end ("until further notice"). A future start is shown too, so an
+    // upcoming alert doesn't read as already in force.
+    const startsLater = p.onset && Date.parse(p.onset) > Date.now();
+    const expires = (startsLater ? `from ${formatWhen(p.onset)} ` : '')
+      + (p.ends ? `until ${formatWhen(p.ends)}` : 'until further notice');
     // Unwrap each part separately so the NWS hard line wraps don't split sentences.
     const detail  = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
     return `
@@ -3622,9 +3657,10 @@ function alertAreaPopupHtml(props, color) {
   // Severity / urgency / certainty give a quick read on how serious + imminent it is.
   const meta  = [props.severity, props.urgency, props.certainty]
     .filter(v => v && v !== 'Unknown').map(escapeHtml).join(' · ');
-  // Prefer the real hazard window (onset→ends); fall back to effective→expires.
+  // The real hazard window: onset → ends. Without `ends` the hazard has no set
+  // end (`expires` is only when this message lapses), so don't invent one.
   const start = formatWhen(props.onset || props.effective || props.sent);
-  const end   = formatWhen(props.ends  || props.expires);
+  const end   = props.ends ? formatWhen(props.ends) : 'until further notice';
   const head  = props.headline ? `<div class="wx-alert-pop-head">${escapeHtml(props.headline)}</div>` : '';
   const area  = props.areaDesc ? `<div class="wx-alert-pop-area">${escapeHtml(props.areaDesc)}</div>` : '';
   return `

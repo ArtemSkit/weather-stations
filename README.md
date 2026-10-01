@@ -178,16 +178,16 @@ Click any station badge on the map — or focus it with `Tab` and press `Enter` 
 
 | Field | Source |
 |---|---|
-| **Temperature** | °F (large) + °C (smaller, muted) side by side |
+| **Temperature** | °F (large) + °C (smaller, muted) side by side, in whole degrees like weather.gov |
 | **Conditions** | Text description (e.g. "Partly Cloudy") |
 | **Dewpoint** | °F |
 | **Humidity** | Relative humidity % |
-| **Feels Like** | Heat Index *or* Wind Chill + °C companion (whichever applies) |
-| **Wind** | Speed in mph + compass direction |
+| **Feels Like** | Heat Index (from 80°F) *or* Wind Chill (50°F or colder with wind above 3 mph) + °C companion — hidden otherwise, even if NOAA sends a value |
+| **Wind** | Speed in whole mph + compass direction, or **Calm** |
 | **Gusts** | mph |
 | **Visibility** | Miles |
-| **Pressure** | Sea-level or barometric pressure in inHg |
-| **Sky / Weather** | The main cloud layer (the one with the most cover) and its base altitude in feet; present weather codes |
+| **Pressure** | Altimeter setting (the "barometer" reading US reports use) in inHg; sea-level pressure only if that is missing |
+| **Sky / Weather** | Total sky cover — the layer with the most cover and its base, to the nearest 100 ft (no height for a clear sky; *Obscured* with the vertical visibility when fog or snow hides the sky) — plus present weather in words when it adds to the description |
 | **Precip Chance (this hr)** | Real probability of precipitation for the current hour, shown as % with a colour-gradient fill bar |
 
 > **Humidity vs. Precip Chance — what's the difference?**
@@ -201,7 +201,7 @@ Click any station badge on the map — or focus it with `Tab` and press `Enter` 
 ### Live refresh
 
 The popup footer shows:
-- **OBS:** the observation timestamp of the currently displayed data.
+- **OBS:** the observation timestamp of the currently displayed data, in your own time zone (labelled, e.g. "CDT"). It gains the date when it isn't from today and an age ("5 h old") once it is 2 hours old or more, since a station's "latest" report can be days old.
 - **LIVE · [N] S** — the auto-refresh interval in seconds.
 
 **To change the refresh interval:** click the number in the footer, type a new value (10–3600 s), and press Enter or click away. The new interval takes effect immediately. While the tab or installed app is hidden, refreshes pause; the panel catches up as soon as it is visible again.
@@ -231,7 +231,7 @@ A banner floats at the top-left of the map whenever the searched point or the vi
 | **Watch** | Tornado Watch, Flood Watch, Severe T-storm Watch | 🟡 Amber |
 | **Info** | Advisories, special statements | 🟡 Yellow |
 
-The banner opens expanded; click the summary chip to collapse it, or click any alert to reveal its full headline, description, and the NWS safety **instructions**, along with the time the hazard ends (the same end time the map popup shows).
+The banner opens expanded; click the summary chip to collapse it, or click any alert to reveal its full headline, description, and the NWS safety **instructions**, along with when the hazard ends (the same end time the map popup shows). An alert that hasn't started yet also shows when it begins ("from … until …"), and one with no set end says "until further notice" rather than quoting when the message itself lapses. All times are shown in your own time zone; the NWS headline text keeps the issuing office's zone.
 
 ### Tier 2 — alert areas on the map
 

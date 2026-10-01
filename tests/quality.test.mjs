@@ -808,6 +808,85 @@ test('the sky row shows the main cloud deck, not just the lowest layer', () => {
   assert.match(html, /Precip Chance \(this hr\)/);
 });
 
+// escapeHtml's regexes contain quote characters that extractFunction's simple
+// tokenizer would read as strings, so take it with a plain match instead.
+const escapeHtmlSource = html.match(/function escapeHtml\(s\) \{[\s\S]*?\r?\n\}/)[0];
+
+test('station panel shows what weather.gov would: rounding, calm, clear, feels-like, pressure', () => {
+  // Run the real renderWeather (and its helpers) against a stub page.
+  const consts = ['toFixedClean', 'cToF', 'kmhToMph', 'mToMi', 'mToFt', 'paToInHg']
+    .map(name => html.match(new RegExp(`const ${name} = [\\s\\S]*?;\\r?\\n(?=\\r?\\n|/\\*\\*|const )`))[0]).join('\n');
+  const elements = {};
+  const render = vm.runInNewContext(`(() => {
+    ${consts}
+    ${escapeHtmlSource}
+    ${extractFunction('val')}
+    ${extractFunction('degToCompass')}
+    ${extractFunction('formatTime')}
+    ${extractFunction('renderWeather')}
+    return renderWeather;
+  })()`, {
+    document: { getElementById: id => (elements[id] ||= {}) },
+    popupPanel: { style: {} }, Date, Math, String, Number
+  });
+  const obs = props => render({ properties: { timestamp: new Date().toISOString(), ...props } }, 'KTST', 'Test');
+  const body = () => elements['popup-body'].innerHTML.replace(/\s+/g, ' ');
+
+  // KDEN-like: whole °C, 6 kt wind, OVC026 reported as 792.48 m.
+  obs({ temperature: { value: 13 }, windSpeed: { value: 11.124 }, windDirection: { value: 350 },
+        cloudLayers: [{ amount: 'FEW', base: { value: 457.2 } }, { amount: 'OVC', base: { value: 792.48 } }] });
+  assert.match(body(), /55<sup>°F<\/sup>/);
+  assert.match(body(), /13<sup>°C<\/sup>/);
+  assert.match(body(), /7 mph/);
+  assert.match(body(), /Overcast @ 2600 ft/);
+
+  // PANC-like calm (00000KT) and an automated CLR with its 3810 m placeholder.
+  obs({ windSpeed: { value: 0 }, windDirection: { value: 0 }, cloudLayers: [{ amount: 'CLR', base: { value: 3810 } }] });
+  assert.match(body(), /Calm/);
+  assert.doesNotMatch(body(), /from N/);
+  assert.match(body(), /Clear\s*</);
+  assert.doesNotMatch(body(), /12500/);
+
+  // Fog hides the sky: VV is a vertical visibility, not a cloud base.
+  obs({ cloudLayers: [{ amount: 'VV', base: { value: 60.96 } }] });
+  assert.match(body(), /Obscured · vert\. vis\. 200 ft/);
+
+  // KPHX-like mild heat index (73°F) is not shown; a real one (90°F) is.
+  obs({ temperature: { value: 23 }, heatIndex: { value: 22.9 } });
+  assert.doesNotMatch(body(), /Heat Index/);
+  obs({ temperature: { value: 32.2 }, heatIndex: { value: 36 } });
+  assert.match(body(), /Heat Index/);
+
+  // KLXV-like: altimeter setting 102675 Pa (30.32) wins over sea-level 101730 Pa.
+  obs({ barometricPressure: { value: 102675 }, seaLevelPressure: { value: 101730 } });
+  assert.match(body(), /30\.32 inHg/);
+
+  // Present weather in words, and dropped when it repeats the description.
+  obs({ textDescription: 'Light Rain', presentWeather: [{ intensity: 'light', weather: 'rain', rawString: '-RA' }] });
+  assert.doesNotMatch(body(), /-RA|light rain<\/span>/i);
+  obs({ textDescription: 'Mist', presentWeather: [{ intensity: 'light', weather: 'rain', rawString: '-RA' }] });
+  assert.match(body(), /light rain/);
+
+  // A two-day-old "latest" report says so.
+  render({ properties: { timestamp: new Date(Date.now() - 49 * 3_600_000).toISOString() } }, 'KTST', 'Test');
+  assert.match(elements['update-time'].textContent, /2 days old/);
+});
+
+test('alert times never invent an end and show a future start', () => {
+  const popup = vm.runInNewContext(`(() => {
+    ${escapeHtmlSource}
+    ${extractFunction('formatWhen')}
+    ${extractFunction('alertAreaPopupHtml')}
+    return alertAreaPopupHtml;
+  })()`, { Date });
+  // A flood warning "until further notice": ends null, expires = next update.
+  const html1 = popup({ event: 'Flood Warning', onset: '2026-10-01T08:00:00-05:00', ends: null,
+                        expires: '2026-10-01T20:00:00-05:00' }, 'red');
+  assert.match(html1, /until further notice/);
+  assert.match(extractFunction('renderAlertBanner'), /p\.ends \? `until \$\{formatWhen\(p\.ends\)\}` : 'until further notice'/);
+  assert.match(extractFunction('renderAlertBanner'), /startsLater \? `from \$\{formatWhen\(p\.onset\)\} `/);
+});
+
 test('the hidden toast never makes the page taller than the window', () => {
   // An absolute box parked 80px below the screen let focus() scroll the whole app.
   assert.match(html, /#toast \{[^}]*position: fixed;/);

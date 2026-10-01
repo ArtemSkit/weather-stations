@@ -534,7 +534,14 @@ test('round-4 UI fixes: popups, keyboard panel, iOS zoom, cookies, fonts', () =>
   assert.match(marker, /openStation\(id, name, iconEl\);[\s\S]*?popupCloseBtn\.focus\(\);/);
   assert.match(marker, /if \(!e\.repeat\) openFromKeyboard\(\);/);
   assert.match(marker, /addEventListener\('keyup', e => \{\s*if \(e\.key === ' '\)/);
-  assert.match(html, /if \(e\.key === 'Enter' && e\.repeat\) e\.preventDefault\(\);/);
+  // One page-wide guard: a held Enter "clicks" a focused button only once (FIND,
+  // the pin button, alert toggles, and the panel's close button after a marker).
+  assert.match(html, /document\.addEventListener\('keydown', e => \{\s*if \(e\.key === 'Enter' && e\.repeat && e\.target\.closest\?\.\('button'\)\) e\.preventDefault\(\);\s*\}, true\);/);
+  // Border-colour-only focus styles keep a transparent outline for High Contrast.
+  for (const sel of ['.search-bar input {', '#drag-pin {', '#interval-input {']) {
+    const rule = html.slice(html.indexOf(sel), html.indexOf('}', html.indexOf(sel)));
+    assert.match(rule, /outline: 2px solid transparent;/, sel);
+  }
   // One Escape, one action: the alert popup handler skips a consumed key.
   assert.match(extractFunction('handleAlertPopupEscape'), /if \(event\.defaultPrevented\) return;/);
   assert.match(html, /popupPanel\.addEventListener\('keydown', e => \{\s*if \(e\.key !== 'Escape'\) return;/);

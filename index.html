@@ -145,7 +145,7 @@
     color: var(--text);
     font-family: 'Space Mono', monospace;
     font-size: 0.8rem;
-    outline: none;
+    outline: 2px solid transparent;   /* transparent, not none: Windows High Contrast paints it as the focus ring */
     transition: border-color 0.2s;
     letter-spacing: 0.05em;
   }
@@ -186,7 +186,7 @@
     color: var(--accent2);
     transition: border-color 0.15s, transform 0.15s;
     user-select: none;
-    outline: none;
+    outline: 2px solid transparent;   /* transparent, not none: Windows High Contrast paints it as the focus ring */
     padding: 0;
     line-height: 1;
   }
@@ -677,7 +677,7 @@
     background: var(--bg); border: 1px solid var(--border);
     border-radius: 2px; color: var(--accent);
     font-family: 'Space Mono', monospace; font-size: 0.58rem;
-    text-align: center; padding: 1px 3px; outline: none;
+    text-align: center; padding: 1px 3px; outline: 2px solid transparent;   /* transparent, not none: Windows High Contrast paints it as the focus ring */
     transition: border-color 0.15s;
     appearance: textfield;  /* hide number spinner arrows */
     -moz-appearance: textfield;
@@ -3155,11 +3155,13 @@ function closeStationPanel(returnFocus) {
   returnFocusTo?.focus();
 }
 
-// A held Enter that opened the panel from a marker keeps auto-repeating onto this
-// button once it has focus; a repeat must not instantly close the panel again.
-popupCloseBtn.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.repeat) e.preventDefault();
-});
+// A held Enter keeps auto-repeating, and a focused button "clicks" on every
+// repeat: FIND would fire a geocoder request each time, the pin button would flip
+// pin mode on and off, and a held Enter that opened the panel from a marker would
+// repeat onto its close button and shut it again. One press = one click.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.repeat && e.target.closest?.('button')) e.preventDefault();
+}, true);
 // Browsers also focus a button that is clicked, so :focus-visible is what tells a
 // keyboard press apart from a mouse click or tap.
 popupCloseBtn.addEventListener('click', e => {

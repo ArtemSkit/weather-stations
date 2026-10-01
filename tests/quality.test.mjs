@@ -638,6 +638,11 @@ test('alert popups pan clear of the banner and panel, and their × never covers 
   const far = run({ x: 600, y: 690, map: desktop, panelRect: { left: 670, top: 116, bottom: 200 } });
   assert.deepEqual(far.topLeft, [16, 16]);
   assert.deepEqual(far.bottomRight, [16, 16]);
+  // Near the right edge of a narrow map Leaflet pushes the popup left, into the
+  // banner's column, so the banner padding must apply after all.
+  const narrow = { top: 100, bottom: 700, left: 0, right: 700, width: 700, height: 600 };
+  const pushed = run({ x: 600, y: 690, map: narrow, panelRect: { left: 690, top: 116, bottom: 120 } });
+  assert.deepEqual(pushed.topLeft, [16, 168]);
 
   // Phone: full-width banner, bottom sheet, and a popup narrow enough that its ×
   // stays on a 360px screen.
@@ -697,9 +702,23 @@ test('ZIP fallback: when it runs, and what it accepts', async () => {
 
 test('round-9 fixes: narrow header, drag vs click, pin-mode banner, colours, Locate privacy', () => {
   assert.match(html, /\.search-bar input \{\s*flex: 1;\s*min-width: 0;/);
-  // A click that ends a map drag must not close the open alert popup.
-  assert.match(extractFunction('handleAlertPopupClickAway'), /^function handleAlertPopupClickAway\(event\) \{[\s\S]*?if \(map\.dragging\?\.moved\(\)\) return;/);
-  assert.match(html, /main:has\(#tap-place-banner\.active\) #popup-panel \{ top: 64px; \}/);
+  // Drag vs click: run the real handler with Leaflet's "moved" flag still set.
+  let closed = 0;
+  const handler = pressInMap => vm.runInNewContext(`(${extractFunction('handleAlertPopupClickAway')})`, {
+    pressStartedInMap: pressInMap,
+    map: { dragging: { moved: () => true }, closePopup: () => { closed++; } },
+    openAlertPopupElement: () => ({ contains: () => false }),
+    alertAreaOwners: new Map(), activeAlertAreaOwner: {}
+  });
+  const click = detail => ({ detail, target: { closest: () => null }, stopPropagation() {} });
+  handler(true)(click(1));    // the click that ends a pan of the map: ignored
+  assert.equal(closed, 0);
+  handler(false)(click(1));   // a later click on the banner/panel/header: closes
+  assert.equal(closed, 1);
+  handler(true)(click(0));    // a keyboard "click" is never a drag: closes
+  assert.equal(closed, 2);
+  assert.match(html, /pressStartedInMap = map\.getContainer\(\)\.contains\(e\.target\);/);
+  assert.match(html, /main:has\(#tap-place-banner\.active\) #popup-panel \{ top: 64px; max-height: calc\(100% - 80px\); \}/);
   // Alert text uses a lighter shade (≥4.5:1 for every hue) than the polygon.
   const add = extractFunction('addAlertGeometryToMap');
   assert.match(add, /const textColor = `hsl\(\$\{hue\}, 85%, 72%\)`;/);

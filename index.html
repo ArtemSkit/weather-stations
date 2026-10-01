@@ -829,7 +829,7 @@
   /* Desktop: while pin mode is on, its banner (which wraps to two lines in
      mid-width windows) would cover the panel's ✕ — start the panel below it.
      (Phones are unaffected: their bottom sheet uses top: auto !important.) */
-  main:has(#tap-place-banner.active) #popup-panel { top: 64px; }
+  main:has(#tap-place-banner.active) #popup-panel { top: 64px; max-height: calc(100% - 80px); }
 
   /* Desktop: the station panel fills the top-right column and can reach the
      bottom of the map, where the Locate Me button would cover its refresh-interval
@@ -3120,8 +3120,10 @@ function openAlertPopupElement() {
  */
 function handleAlertPopupClickAway(event) {
   // Browsers fire a click when a mouse drag (map pan) ends; Leaflet ignores it,
-  // and so must we, or panning the map would close the popup.
-  if (map.dragging?.moved()) return;
+  // and so must we, or panning the map would close the popup. Leaflet's "moved"
+  // flag only resets on the next press ON the map, so also require that this
+  // click's press started there, and never skip keyboard clicks (detail 0).
+  if (event.detail && pressStartedInMap && map.dragging?.moved()) return;
   const popup = openAlertPopupElement();
   if (!popup) return;
   const target = event.target;
@@ -3162,19 +3164,14 @@ function prepareAlertPopupPan(event) {
   // the wrapper and the 44px × must stay inside the map, or the × is off-screen.
   const width = Math.max(160, Math.min(320, mapBox.width - 104));
   popup.options.maxWidth = width;
-  // The popup opens centred above the tap point; these bound its likely footprint.
-  const halfWidth = width / 2 + 40, height = 400;
+  // The popup opens centred above the tap point; these bound its likely footprint
+  // (height: the 360px content cap plus margins, frame, tip and offset).
+  const halfWidth = width / 2 + 40, height = 440;
 
   // Never ask for more than half the map, or the popup would have nowhere to go.
   const clampY = v => Math.max(16, Math.min(v, mapBox.height / 2));
   const clampX = v => Math.max(16, Math.min(v, mapBox.width / 2));
   let top = 16, right = 16, bottom = 16;
-  if (alertBanner.classList.contains('visible')) {
-    const banner = alertBanner.getBoundingClientRect();
-    // Only when the popup could reach the banner sideways (on desktop the banner
-    // is a 330px column), so a click elsewhere doesn't pan the map for nothing.
-    if (event.clientX - halfWidth < banner.right) top = clampY(banner.bottom - mapBox.top + 8);
-  }
   if (popupPanel.style.display === 'block') {
     const panel = popupPanel.getBoundingClientRect();
     if (getComputedStyle(popupPanel).position === 'fixed') {   // phone bottom sheet
@@ -3182,6 +3179,15 @@ function prepareAlertPopupPan(event) {
     } else if (event.clientY - height < panel.bottom) {         // desktop side panel
       right = clampX(mapBox.right - panel.left + 8);
     }
+  }
+  if (alertBanner.classList.contains('visible')) {
+    const banner = alertBanner.getBoundingClientRect();
+    // Only when the popup could reach the banner sideways (on desktop the banner
+    // is a 330px column), so a click elsewhere doesn't pan the map for nothing.
+    // Where it ends up counts: a popup sticking out on the right is pushed left
+    // by Leaflet's own auto-pan, possibly into the banner's column.
+    const popupLeft = Math.min(event.clientX - halfWidth, mapBox.right - right - 2 * halfWidth);
+    if (popupLeft < banner.right) top = clampY(banner.bottom - mapBox.top + 8);
   }
   popup.options.autoPanPaddingTopLeft = [16, top];
   popup.options.autoPanPaddingBottomRight = [right, bottom];
@@ -3191,6 +3197,11 @@ function prepareAlertPopupPan(event) {
 }
 
 document.addEventListener('click', prepareAlertPopupPan, { capture: true });
+/** Whether the most recent pointer press started on the map (see the click-away guard). */
+let pressStartedInMap = false;
+document.addEventListener('pointerdown', e => {
+  pressStartedInMap = map.getContainer().contains(e.target);
+}, { capture: true });
 document.addEventListener('click', handleAlertPopupClickAway, { capture: true });
 document.addEventListener('keydown', handleAlertPopupEscape);
 
@@ -3595,8 +3606,8 @@ function addAlertGeometryToMap(geom, props, hue, label) {
   // Comma-separated hsl() — Leaflet applies this as an SVG fill/stroke attribute,
   // where the space-separated CSS Color 4 form isn't reliably parsed on older Safari.
   const color = `hsl(${hue}, 85%, 62%)`;
-  // Text is lighter: at 62% the blue hues fall to ~3:1 contrast on the dark popup
-  // and label chip; 72% keeps every hue above 4.5:1.
+  // Text is lighter: at 62% the blue hues fall to ~3:1 contrast on the dark popup;
+  // 72% keeps every hue above 4.5:1 there (and well readable on the label chip).
   const textColor = `hsl(${hue}, 85%, 72%)`;
   // L.geoJSON understands Polygon, MultiPolygon, and interior holes directly.
   const layer = L.geoJSON(geom, {

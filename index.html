@@ -37,8 +37,17 @@
 <!-- Apple touch icon (inline SVG data-URI) -->
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20512%20512'%3E%3Crect%20width='512'%20height='512'%20rx='100'%20fill='%230a0e17'/%3E%3Ctext%20x='256'%20y='340'%20font-size='280'%20text-anchor='middle'%3E%F0%9F%8C%A6%3C/text%3E%3C/svg%3E">
 
-<!-- PWA: Web App Manifest (external file for better browser support) -->
-<link rel="manifest" href="./manifest.json">
+<!-- PWA: Web App Manifest (external file for better browser support). Linked from
+     script so a page opened as a local file (file://) — which can't install or
+     fetch the manifest — doesn't log a CORS error on every load. -->
+<script>
+  if (location.protocol !== 'file:') {
+    const manifestLink = document.createElement('link');
+    manifestLink.rel  = 'manifest';
+    manifestLink.href = './manifest.json';
+    document.head.appendChild(manifestLink);
+  }
+</script>
 
 <!-- Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1049,8 +1058,10 @@
   </div>
   <div id="map" role="region" aria-label="Interactive weather station map"></div>
 
-  <!-- Full-map loading overlay shown during async operations -->
-  <div id="map-overlay" role="status" aria-live="polite">
+  <!-- Full-map loading overlay shown during async operations. Not a live region:
+       the header status bar already announces progress, and two regions would
+       read every step out twice. -->
+  <div id="map-overlay">
     <div class="spinner"></div>
     <div class="overlay-text" id="overlay-text">Loading…</div>
   </div>
@@ -1223,17 +1234,24 @@ if (swContainer) {
         swRegistration = reg;
         console.info('[WX.MAP] Service worker registered (PWA enabled)');
 
+        // A hard reload (Ctrl+Shift+R) leaves the page uncontrolled even though a
+        // worker is already active. For such a page the next controller change is
+        // an update taking over — not the first-install claim — and updates must
+        // still be announced, so "has a worker" means controller OR active worker.
+        const hasActiveWorker = () => !!(swContainer.controller || reg.active);
+        if (!swContainer.controller && reg.active) skipNextControllerChange = false;
+
         // A worker already parked in "waiting" means an update installed during a
         // previous visit but was never activated — surface it now.
-        if (reg.waiting && swContainer.controller) announceUpdate();
+        if (reg.waiting && hasActiveWorker()) announceUpdate();
 
         // Detect a new worker finishing installation while the page is open.
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
           if (!newWorker) return;
           newWorker.addEventListener('statechange', () => {
-            // 'installed' + an existing controller == an update (not a first install).
-            if (newWorker.state === 'installed' && swContainer.controller) {
+            // 'installed' + an already-active worker == an update (not a first install).
+            if (newWorker.state === 'installed' && hasActiveWorker()) {
               announceUpdate();
             }
           });
@@ -1410,7 +1428,9 @@ if (isStandalone) {
 // Diagnostic: if the app never became installable, log one concise hint.
 window.addEventListener('load', () => {
   setTimeout(() => {
-    if (!beforeInstallPromptFired && !isStandalone) {
+    // Without a service worker (file://, blocked storage) installing is impossible
+    // anyway, so the hint would only be noise.
+    if (!beforeInstallPromptFired && !isStandalone && swContainer) {
       console.info(
         `[WX.MAP] Install prompt not offered on ${browser}. This is expected until ` +
         `engagement criteria are met, if the app is already installed, or in ` +
@@ -2704,11 +2724,16 @@ async function openStation(stationId, stationName, markerEl) {
 
 /** Close the popup and stop the refresh timer. */
 document.getElementById('popup-close').addEventListener('click', () => {
+  // Keyboard users closing the panel go back to the marker they opened it from,
+  // instead of being dropped at the start of the page.
+  const returnFocusTo = popupPanel.contains(document.activeElement)
+    ? activeMarkerEl?.closest('.leaflet-marker-icon') : null;
   popupPanel.style.display = 'none';
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   stationOpenGeneration++;
   activeStationId = null;
   if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
+  returnFocusTo?.focus();
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3551,10 +3576,22 @@ async function loadAlertsForArea(lat, lon) {
   alertsTimer = setInterval(refreshAlerts, ALERTS_REFRESH_MS);
 }
 
+/** True when an alert refresh tick was skipped because the page was hidden. */
+let alertsRefreshMissed = false;
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !alertsRefreshMissed) return;
+  alertsRefreshMissed = false;
+  refreshAlerts();
+});
+
 /** Re-fetch and re-render alerts for the current location (refresh-loop tick). */
 async function refreshAlerts() {
   try {
     if (currentLat == null) return;
+    // Like the station panel: no polling for a screen nobody can see. The
+    // visibilitychange handler below catches up as soon as it is visible again.
+    if (document.hidden) { alertsRefreshMissed = true; return; }
     // Capture the location for this tick. If the user searches elsewhere while the
     // fetch is in flight, currentLat/currentLon change and we discard this result so
     // it can't overwrite the newer area's alerts.
@@ -3855,10 +3892,11 @@ const TAP_BANNER_TEXT = tapPlaceBanner.textContent.trim();
 function setTapMode(active) {
   tapModeActive = active;
   tapPlaceBanner.classList.toggle('active', active);
-  // A live region is only announced when its text changes, so fill it once it
-  // is shown (and empty it when hidden) instead of keeping static text.
+  // A live region is only announced when its text changes AFTER it is rendered,
+  // so fill it a moment after it is shown (and empty it when hidden). A single
+  // animation frame is too soon: the text would land in the same layout update.
   tapPlaceBanner.textContent = '';
-  if (active) requestAnimationFrame(() => { if (tapModeActive) tapPlaceBanner.textContent = TAP_BANNER_TEXT; });
+  if (active) setTimeout(() => { if (tapModeActive) tapPlaceBanner.textContent = TAP_BANNER_TEXT; }, 100);
   tapPinBtn.classList.toggle('active', active);
   [dragPinBtn, tapPinBtn].forEach(btn => btn.setAttribute('aria-pressed', String(active)));
   // Shows a crosshair and lets clicks pass through alert polygons and markers
@@ -3881,17 +3919,15 @@ document.addEventListener('keydown', e => {
 mapEl.addEventListener('keydown', e => {
   if (e.key !== 'Enter' || !tapModeActive || e.target !== mapEl) return;
   e.preventDefault();
-  setTapMode(false);
   const center = map.getCenter();
-  placeDragPin(center.lat, center.lng);
+  placeDragPin(center.lat, center.lng);   // also ends the one-shot mode
 });
 
 // Markers keep their own clicks (Leaflet doesn't pass them on to the map), so
 // this only runs for a click on the map itself.
 map.on('click', e => {
   if (!tapModeActive) return;
-  setTapMode(false);   // one-shot: leave the mode once the pin is placed
-  placeDragPin(e.latlng.lat, e.latlng.lng);
+  placeDragPin(e.latlng.lat, e.latlng.lng);   // also ends the one-shot mode
 });
 
 /**
@@ -3930,6 +3966,9 @@ function triggerPinSearch(lat, lng) {
    ───────────────────────────────────────────────────────────────────────────── */
 
 fabLocate.addEventListener('click', () => {
+  // Busy with a request already. (aria-disabled, not disabled: a disabled button
+  // drops keyboard focus to the start of the page.)
+  if (fabLocate.getAttribute('aria-disabled') === 'true') return;
   if (!navigator.geolocation) {
     showToast('Geolocation is not supported by this browser.');
     return;
@@ -3940,7 +3979,7 @@ fabLocate.addEventListener('click', () => {
 
   // Visual loading state on the FAB
   fabLocate.classList.add('locating');
-  fabLocate.disabled = true;
+  fabLocate.setAttribute('aria-disabled', 'true');
   setStatus('loading', 'LOCATING…');
   showOverlay('Requesting device location…');
 
@@ -3954,14 +3993,12 @@ fabLocate.addEventListener('click', () => {
     settled = true;
     clearTimeout(watchdog);
     fabLocate.classList.remove('locating');
-    fabLocate.disabled = false;
+    fabLocate.removeAttribute('aria-disabled');
     return true;
   }
   const watchdog = setTimeout(() => {
     if (!settle() || gen !== searchGeneration) return;
-    hideOverlay();
-    setStatus('error', 'ERROR');
-    showToast('No location received. Please try again.');
+    reportSearchError('No location received. Please try again.');
   }, 60_000);   // generous: the prompt itself may sit unanswered for a while
 
   navigator.geolocation.getCurrentPosition(

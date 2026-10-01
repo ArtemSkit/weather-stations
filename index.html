@@ -248,8 +248,14 @@
   main { flex: 1; position: relative; overflow: hidden; }
   #map  { width: 100%; height: 100%; background: var(--bg); }
   /* Leaflet's focus ring sits 1px OUTSIDE the map, where main's overflow:hidden
-     clips it — draw it inside so keyboard users can see the map has focus. */
-  #map:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+     clips it, and an inside outline would be painted under the tile panes
+     (z-index 400). So draw the ring as a layer above the tiles and below the
+     controls (800), letting keyboard users see that the map has focus. */
+  #map:focus-visible { outline: none; }
+  #map:focus-visible::after {
+    content: ''; position: absolute; inset: 0; z-index: 799;
+    pointer-events: none; box-shadow: inset 0 0 0 2px var(--accent);
+  }
 
   /* Dark-mode tile filter — desaturate + hue-rotate to match the UI palette */
   .leaflet-tile-pane { filter: brightness(0.7) saturate(0.6) hue-rotate(190deg); }

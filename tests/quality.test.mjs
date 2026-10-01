@@ -135,7 +135,11 @@ test('search pin works by drop, click, tap, and keyboard', () => {
   // Click/tap-to-place is wired for both pin buttons and passes through alert areas.
   assert.match(pinSection, /dragPinBtn\.addEventListener\('click'/);
   assert.match(pinSection, /tapPinBtn\.addEventListener\('click'/);
-  assert.match(html, /#map\.tap-mode \.wx-alert-area \{ pointer-events: none; \}/);
+  assert.match(html, /#map\.tap-mode \.wx-alert-area,\s*#map\.tap-mode \.leaflet-marker-icon \{ pointer-events: none; \}/);
+  // Keyboard users finish with Enter on the focused map; other searches end the mode.
+  assert.match(pinSection, /mapEl\.addEventListener\('keydown'[\s\S]*?e\.key !== 'Enter'/);
+  assert.match(extractFunction('doSearch'), /setTapMode\(false\);/);
+  assert.match(extractFunction('placeDragPin'), /setTapMode\(false\);/);
   assert.doesNotMatch(html, /window\._wxmap|window\.placeDragPin/);
 });
 
@@ -470,13 +474,20 @@ test('alert popup selection toggles, switches areas, and closes on click-away or
     ${extractFunction('handleAlertPopupEscape')}
     return handleAlertPopupEscape;
   `)(documentStub, mapStub);
-  handleEscape({ key: 'Enter' });
+  const keyEvent = key => ({ key, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } });
+  handleEscape(keyEvent('Enter'));
   assert.equal(closeCount, 3);
-  handleEscape({ key: 'Escape' });
+  const consumed = keyEvent('Escape');
+  handleEscape(consumed);
   assert.equal(closeCount, 4);
+  // Closing the popup consumes the key, so pin mode's Escape handler skips it.
+  assert.equal(consumed.defaultPrevented, true);
   activePopup = null;
-  handleEscape({ key: 'Escape' });
+  const unused = keyEvent('Escape');
+  handleEscape(unused);
   assert.equal(closeCount, 4);
+  assert.equal(unused.defaultPrevented, false);
+  assert.match(html, /e\.key === 'Escape' && tapModeActive && !e\.defaultPrevented/);
 
   assert.match(html, /document\.addEventListener\('click', handleAlertPopupClickAway, \{ capture: true \}\)/);
   assert.match(html, /document\.addEventListener\('keydown', handleAlertPopupEscape\)/);
@@ -1030,7 +1041,9 @@ test('every search path allocates or receives a generation before awaiting', () 
   // Every outcome (success, error, or the watchdog for a prompt that never answers)
   // releases the button first, then honours a newer search.
   assert.match(locateHandler, /function settle\(\) \{[\s\S]*?fabLocate\.disabled = false;/);
-  assert.equal((locateHandler.match(/if \(!settle\(\)\) return;\s*if \(gen !== searchGeneration\) return;/g) || []).length, 2);
+  // A late success is still used (unless superseded); a late error is not re-reported.
+  assert.match(locateHandler, /settle\(\);\s*if \(gen !== searchGeneration\) return;/);
+  assert.match(locateHandler, /err => \{\s*if \(!settle\(\)\) return;\s*if \(gen !== searchGeneration\) return;/);
   assert.match(locateHandler, /const watchdog = setTimeout\(\(\) => \{\s*if \(!settle\(\) \|\| gen !== searchGeneration\) return;/);
 });
 

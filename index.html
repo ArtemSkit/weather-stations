@@ -719,7 +719,7 @@
     background: var(--surface); border: 1px solid var(--red);
     color: var(--text); padding: 10px 20px;
     border-radius: var(--radius); font-size: 0.72rem;
-    z-index: 1001;
+    z-index: 1200;   /* above the alert banner, bottom sheet and pin-mode banner */
     /* Hidden = faded out, not just pushed 80px down: when it is lifted above the
        bottom sheet, "80px down" is still mid-screen. Fading keeps it in the
        accessibility tree, so the role="alert" announcement still works. */
@@ -779,10 +779,18 @@
   }
   #tap-place-banner.active { display: block; }
 
-  /* While placing a pin: crosshair cursor, and alert polygons let clicks through
-     to the map (they would otherwise open their own popup instead). */
+  /* While placing a pin: crosshair cursor, and alert polygons and markers let
+     clicks through to the map (they would otherwise open their own popup or the
+     station panel instead), so the pin goes exactly where the user taps. */
   #map.tap-mode.leaflet-container { cursor: crosshair; }
-  #map.tap-mode .wx-alert-area { pointer-events: none; }
+  #map.tap-mode .wx-alert-area,
+  #map.tap-mode .leaflet-marker-icon { pointer-events: none; }
+
+  /* Desktop: the station panel fills the top-right column and can reach the
+     bottom of the map, where the Locate Me button would cover its refresh-interval
+     box. Move the button left of the panel while it is open. (Phones use the
+     bottom-sheet rule in the mobile block below instead.) */
+  main.sheet-open #fab-locate { right: calc(16px + 314px + 16px); }
 
   /* ════════════════════════════════════════════════════════════════════════════
      TOUCH-ONLY CONTROL SWAP
@@ -806,7 +814,7 @@
     header {
       flex-wrap: wrap;
       gap: 8px;
-      padding: 10px 14px 10px calc(14px + var(--safe-left));
+      padding: 10px calc(14px + var(--safe-right)) 10px calc(14px + var(--safe-left));
       padding-top: calc(10px + var(--safe-top));
     }
 
@@ -844,9 +852,10 @@
       flex-shrink: 0;
     }
 
-    #tap-pin-btn.active { border-color: var(--accent2); }
+    /* !important: the button's inline border style would otherwise always win. */
+    #tap-pin-btn.active { border-color: var(--accent2) !important; }
 
-    /* ── Leaflet zoom controls — move to left side, clear of FAB ── */
+    /* ── Leaflet zoom controls (bottom-left) — lifted clear of the version badge ── */
     .leaflet-control-zoom {
       margin-bottom: calc(88px + var(--safe-bottom)) !important;
     }
@@ -882,6 +891,7 @@
       /* slide up from bottom */
       animation: sheetSlideUp 0.3s cubic-bezier(0.32, 0.72, 0, 1) !important;
       padding-bottom: var(--safe-bottom);
+      padding-left: var(--safe-left); padding-right: var(--safe-right);
       /* z-index above FAB */
       z-index: 1100 !important;
     }
@@ -935,7 +945,9 @@
 
     /* ── Alert banner: span the full width on narrow screens ── */
     #alert-banner {
-      top: 8px; left: 8px; right: 8px; width: auto; max-width: none;
+      top: 8px; width: auto; max-width: none;
+      /* Clear a landscape phone's notch / rounded corners (viewport-fit=cover). */
+      left: calc(8px + var(--safe-left)); right: calc(8px + var(--safe-right));
     }
 
     /* ── Map overlay text: readable on small screens ── */
@@ -951,6 +963,7 @@
     /* ── FAB shift: above bottom sheet when open ── */
     main.sheet-open #fab-locate {
       bottom: calc(var(--sheet-h, 70vh) + 12px);   /* the sheet height already includes its safe-area padding */
+      right: calc(12px + env(safe-area-inset-right, 0px));   /* undo the desktop side-step */
       transition: bottom 0.3s cubic-bezier(0.32, 0.72, 0, 1);
     }
 
@@ -1032,7 +1045,7 @@
 <main>
   <!-- Tap/click-to-place mode banner, shown across the top of the map -->
   <div id="tap-place-banner" role="status" aria-live="polite">
-    📍 Tap or click the map to place a pin — press the pin button again (or Esc) to cancel
+    📍 Tap or click the map to place a pin (or press Enter on the map for its centre) — press the pin button again or Esc to cancel
   </div>
   <div id="map" role="region" aria-label="Interactive weather station map"></div>
 
@@ -2859,6 +2872,7 @@ function handleAlertPopupClickAway(event) {
 function handleAlertPopupEscape(event) {
   if (event.key === 'Escape' && document.querySelector('.wx-alert-popup')) {
     map.closePopup();
+    event.preventDefault();   // consumed: other Escape handlers (pin mode) skip it
   }
 }
 
@@ -3594,6 +3608,10 @@ async function doSearch() {
     return;
   }
 
+  // A typed search replaces an armed tap/click-to-place, so a later map click
+  // (e.g. to close a popup) can't unexpectedly drop a pin over the new results.
+  setTapMode(false);
+
   // Allocate the generation before any geocoding await. Otherwise an older slow
   // address/ZIP lookup can resolve after a newer search and overwrite its intent.
   const gen = ++searchGeneration;
@@ -3744,6 +3762,9 @@ function buildPinIcon(lat, lng) {
  * @param {number} lng
  */
 function placeDragPin(lat, lng) {
+  // Any way of placing a pin (drop, Locate Me) ends an armed tap/click mode, so
+  // a later casual map click can't drop a second pin unexpectedly.
+  setTapMode(false);
   // A drop/tap on a neighbouring copy of the world reports a longitude past ±180,
   // which NOAA answers with 404. Normalise once here (covers drop, tap and Locate).
   ({ lat, lng } = L.latLng(lat, lng).wrap());
@@ -3763,6 +3784,9 @@ function placeDragPin(lat, lng) {
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       removeDragPin();
+      // The focused element just disappeared; hand focus to whichever pin button
+      // is visible instead of dropping keyboard users back at the page start.
+      (dragPinBtn.offsetParent ? dragPinBtn : tapPinBtn).focus();
     }
   });
 
@@ -3792,14 +3816,20 @@ const tapPinBtn      = document.getElementById('tap-pin-btn');
 const tapPlaceBanner = document.getElementById('tap-place-banner');
 let tapModeActive = false;
 
+const TAP_BANNER_TEXT = tapPlaceBanner.textContent.trim();
+
 function setTapMode(active) {
   tapModeActive = active;
   tapPlaceBanner.classList.toggle('active', active);
+  // A live region is only announced when its text changes, so fill it once it
+  // is shown (and empty it when hidden) instead of keeping static text.
+  tapPlaceBanner.textContent = '';
+  if (active) requestAnimationFrame(() => { if (tapModeActive) tapPlaceBanner.textContent = TAP_BANNER_TEXT; });
   tapPinBtn.classList.toggle('active', active);
   [dragPinBtn, tapPinBtn].forEach(btn => btn.setAttribute('aria-pressed', String(active)));
-  // Shows a crosshair and lets clicks pass through alert polygons (which would
-  // otherwise swallow them to open their own popup), so a pin can be placed
-  // inside a warning area too.
+  // Shows a crosshair and lets clicks pass through alert polygons and markers
+  // (which would otherwise take them for their own popup/panel), so a pin can be
+  // placed anywhere — including inside a warning area or on a station.
   mapEl.classList.toggle('tap-mode', active);
 }
 setTapMode(false);   // initialise aria-pressed on both buttons
@@ -3807,7 +3837,19 @@ setTapMode(false);   // initialise aria-pressed on both buttons
 dragPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
 tapPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && tapModeActive) setTapMode(false);
+  // Skip an Escape something else already used (e.g. closing an alert popup),
+  // so one key press undoes one thing.
+  if (e.key === 'Escape' && tapModeActive && !e.defaultPrevented) setTapMode(false);
+});
+
+// Keyboard users can't click a map point: with the map focused, Enter places the
+// pin at the map's centre (pan with the arrow keys first to choose the spot).
+mapEl.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !tapModeActive || e.target !== mapEl) return;
+  e.preventDefault();
+  setTapMode(false);
+  const center = map.getCenter();
+  placeDragPin(center.lat, center.lng);
 });
 
 // Markers keep their own clicks (Leaflet doesn't pass them on to the map), so
@@ -3888,13 +3930,15 @@ fabLocate.addEventListener('click', () => {
     hideOverlay();
     setStatus('error', 'ERROR');
     showToast('No location received. Please try again.');
-  }, 30_000);
+  }, 60_000);   // generous: the prompt itself may sit unanswered for a while
 
   navigator.geolocation.getCurrentPosition(
     // ── Success ──────────────────────────────────────────────────────────────
     position => {
-      // A late answer after the watchdog already gave up is ignored.
-      if (!settle()) return;
+      // Even a late answer (after the watchdog gave up, e.g. the user took a long
+      // time on the permission prompt) is still the location they asked for — use
+      // it unless a newer search has started meanwhile.
+      settle();
       if (gen !== searchGeneration) return;
       hideOverlay();
 

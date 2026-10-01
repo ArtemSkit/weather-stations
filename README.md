@@ -133,8 +133,8 @@ Dragging isn't possible on touch screens or from a keyboard, so the pin also wor
 
 1. **Click** the 📍 button (or focus it and press `Enter`/`Space`). On touch devices, **tap** the 📍 button that replaces it.
 2. A banner across the top of the map confirms the mode is on.
-3. **Tap or click** anywhere on the map — even inside an alert area — to place the pin there.
-4. Press the 📍 button again, or `Esc`, to cancel.
+3. **Tap or click** anywhere on the map — even on an alert area or a station — to place the pin there. From the keyboard, focus the map, pan with the arrow keys, and press `Enter` to place the pin at the map's centre.
+4. Press the 📍 button again, or `Esc`, to cancel. Starting a typed search also turns the mode off.
 
 ### Moving the pin
 
@@ -168,7 +168,7 @@ The **⊕ crosshair button** in the bottom-right corner of the map uses your dev
 | Permission denied | "Location access denied. Please allow it in your browser settings." |
 | Position unavailable | "Location unavailable. Check your device settings." |
 | Timeout (>15 s) | "Location request timed out. Please try again." |
-| No answer at all (e.g. the permission prompt was dismissed) | "No location received. Please try again." — after 30 s the button and map are released |
+| No answer at all (e.g. the permission prompt was dismissed) | "No location received. Please try again." — after 60 s the button and map are released; a location that still arrives later is used |
 
 ---
 
@@ -341,10 +341,11 @@ weather-stations/
 │   │   ├── Google Fonts                (Space Mono, Syne — CDN)
 │   │   └── Leaflet CSS                 (vendored)
 │   ├── <body>
-│   │   ├── Header                  (logo, search bar, status badge)
+│   │   ├── Header                  (logo, search bar with drag-pin / touch tap-pin, status badge)
 │   │   ├── #update-banner          (slides down when a new version is ready)
 │   │   ├── #pin-ghost              (follows cursor during drag)
 │   │   ├── <main>
+│   │   │   ├── #tap-place-banner   (shown while tap/click-to-place is armed)
 │   │   │   ├── #map                (Leaflet map container — also holds alert area polygons)
 │   │   │   ├── #map-overlay        (loading spinner)
 │   │   │   ├── #alert-banner       (active NWS watches/warnings)
@@ -373,10 +374,10 @@ weather-stations/
 │           ├── Dangerous-weather alerts  (banner + map area polygons + per-station ring)
 │           ├── URL helpers
 │           ├── doSearch dispatcher
-│           ├── Draggable pin
+│           ├── Draggable pin + tap/click-to-place
 │           ├── Locate Me (Geolocation API)
 │           ├── URL auto-trigger
-│           └── Mobile enhancements (tap-to-place, bottom sheet)
+│           └── Mobile enhancements (bottom-sheet height + swipe-to-dismiss)
 ├── sw.js                           (service worker — caching + updates)
 ├── manifest.json                   (Web App Manifest — install metadata)
 ├── leaflet.js / leaflet.css        (pinned Leaflet 1.9.4 code and styles)

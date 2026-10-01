@@ -2877,16 +2877,19 @@ async function refreshStationData(stationId, generation) {
     }
   } catch (e) {
     if (isActiveStation(stationId, generation)) {
-      const noData = e.status === 404;
-      document.getElementById('update-time').textContent = noData ? '—' : 'Error fetching data';
       // If the very first fetch failed we're still showing the loading skeleton —
       // swap it for an error so the panel doesn't hang forever on "Fetching…". The
       // .station-loading marker is kept, so a later successful tick still replaces
       // this; once real data has rendered (no skeleton present) a refresh error
       // leaves the good data untouched and only the footer note changes.
       const body = document.getElementById('popup-body');
-      if (noData && body.querySelector('.station-loading')) {
-        // Listed stations that have never reported answer 404 every time: say so
+      const firstLoad = !!body.querySelector('.station-loading');
+      // A 404 before any data means the station has no observations to show; a 404
+      // after data is just a failed refresh (the old reading stays, flagged below).
+      const noData = e.status === 404 && firstLoad;
+      document.getElementById('update-time').textContent = noData ? '—' : 'Error fetching data';
+      if (noData) {
+        // Listed stations with no recent observations answer 404 every time: say so
         // and stop polling instead of promising a retry that can't succeed.
         if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
         stationNoDataGeneration = generation;
@@ -2894,7 +2897,7 @@ async function refreshStationData(stationId, generation) {
           `<div style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
              ${escapeHtml(e.message)}
            </div>`;
-      } else if (body.querySelector('.station-loading')) {
+      } else if (firstLoad) {
         body.innerHTML =
           `<div class="station-loading" style="text-align:center;color:var(--red);font-size:0.7rem;padding:20px 0">
              Couldn't load observations — retrying…

@@ -138,7 +138,7 @@ Dragging isn't possible on touch screens or from a keyboard, so the pin also wor
 3. **Tap or click** anywhere on the map — even on an alert area or a station — to place the pin there. From the keyboard, focus the map, pan with the arrow keys, and press `Enter` to place the pin at the map's centre.
 4. Press the 📍 button again, or `Esc`, to cancel. Starting a typed search also turns the mode off.
 
-On phones (and narrow windows) turning the mode on closes the station panel, so there is map left to tap; open the station again afterwards if needed.
+On touch devices (and any window ≤ 640 px wide), where the station panel is a bottom sheet, turning the mode on closes the panel, so there is map left to tap; open the station again afterwards if needed.
 
 ### Moving the pin
 

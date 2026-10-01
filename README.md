@@ -39,7 +39,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Sky conditions** | Cloud layer amount and base altitude |
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
-| **Shareable URLs** | Every search updates the address bar — bookmark or share |
+| **Shareable URLs** | Every successful search updates the address bar — bookmark or share |
 | **Address lookup** | Free, typo-tolerant street-address geocoding via Photon — no API key or sign-up |
 | **PWA** | Installable and offline-capable, with user-controlled updates via Service Worker |
 | **Version badge** | Running app version shown in the bottom-left corner, reported live by the active Service Worker |
@@ -110,7 +110,7 @@ Enter any US street address:
 300 E Green St, Pasadena, CA
 ```
 
-Geocoded via **[Photon](https://photon.komoot.io/)**, a free OpenStreetMap geocoder — no API key required. Photon tolerates typos and missing punctuation (`1109 n highlnd st arlington va` still finds the right building). It searches worldwide, so WX.MAP takes the best match inside the US (including US territories), since NOAA data covers only the US.
+Geocoded via **[Photon](https://photon.komoot.io/)**, a free OpenStreetMap geocoder — no API key required. Photon tolerates typos and missing punctuation (`1109 n highlnd st arlington va` still finds the right building). It searches worldwide, so WX.MAP biases results toward the area currently on the map and takes the best match inside the US (including US territories), since NOAA data covers only the US.
 
 > **Fair use:** the public Photon server is free but has no uptime guarantee and throttles heavy use. That suits one-search-at-a-time traffic like this app's. If it ever becomes a problem, Photon is open source and can be self-hosted.
 
@@ -247,7 +247,7 @@ Alerts move fast, so they are **re-fetched every 2 minutes** while a location st
 
 ## URL Query Parameters
 
-Every search updates the page URL, making results **bookmarkable and shareable**.
+Every successful search updates the page URL, making results **bookmarkable and shareable**. Input that can't be resolved (invalid coordinates, unknown ZIP or address) leaves the URL — and the area on the map — unchanged. A link with non-numeric `lat`/`long` shows an error instead of being treated as an address, and `station` ids are trimmed and upper-cased.
 
 | Parameter | Example | Description |
 |---|---|---|

@@ -801,17 +801,24 @@ test('warning polygon containment excludes holes and non-warning products', () =
   assert.match(flagging, /event\.includes\('warning'\)/);
 });
 
-test('URL values use one standards-based encoding pass', () => {
-  const values = ['300 E Green St, Pasadena, CA', '50% + rain & snow', 'Montréal'];
-  for (const value of values) {
-    const params = new URLSearchParams();
-    params.set('addr', value);
-    assert.equal(new URLSearchParams(params.toString()).get('addr'), value);
+test('search URLs round-trip once-encoded and only after a successful lookup', () => {
+  // Run the app's own pushQueryParam and read the URL back the way page load does.
+  let written = '';
+  const pushQueryParam = vm.runInNewContext(`(${extractFunction('pushQueryParam')})`, {
+    URLSearchParams, String,
+    parseCoords: raw => ({ lat: 1, lon: 2 }),
+    window: { location: { pathname: '/app/' }, history: { replaceState: (_s, _t, url) => { written = url; } } }
+  });
+  for (const value of ['300 E Green St, Pasadena, CA', '50% + rain & snow', 'Montréal']) {
+    pushQueryParam('address', value);
+    assert.equal(new URLSearchParams(written.split('?')[1]).get('addr'), value);
   }
-  const pushQuery = extractFunction('pushQueryParam');
-  const parseQuery = extractFunction('safeDecodeParam');
-  assert.doesNotMatch(pushQuery, /encodeURIComponent/);
-  assert.doesNotMatch(parseQuery, /decodeURIComponent/);
+  assert.doesNotMatch(html, /decodeURIComponent\(params|safeDecodeParam/);
+
+  // A typo or unknown ZIP must not replace the link to the area still on screen.
+  const search = extractFunction('doSearch');
+  assert.ok(search.indexOf('pushQueryParam(') > search.indexOf('await addressToCoords'));
+  assert.ok(search.indexOf('pushQueryParam(') > search.indexOf('Invalid coordinates'));
 });
 
 test('address lookup uses key-less Photon and keeps only US matches', async () => {
@@ -836,11 +843,14 @@ test('address lookup uses key-less Photon and keeps only US matches', async () =
     { properties: { countrycode: 'FR' }, geometry: { coordinates: [2.35, 48.85] } },
     { properties: { countrycode: 'US' }, geometry: { coordinates: [-95.55, 33.66] } }
   ];
-  assert.deepEqual({ ...await addressToCoords('paris tx') }, { lat: 33.66, lon: -95.55 });
+  const near = { lat: 39.5, lon: -98.35 };
+  assert.deepEqual({ ...await addressToCoords('paris tx', near) }, { lat: 33.66, lon: -95.55 });
   assert.match(requested[0], /^https:\/\/photon\.komoot\.io\/api\/\?q=paris%20tx&/);
+  // Results are biased toward the map, or common names return no US match at all.
+  assert.match(requested[0], /&lat=39\.5000&lon=-98\.3500/);
 
   features = [{ properties: { countrycode: 'FR' }, geometry: { coordinates: [2.35, 48.85] } }];
-  await assert.rejects(addressToCoords('paris'), /not found/);
+  await assert.rejects(addressToCoords('paris', near), /not found/);
 });
 
 test('station panel shows readings promptly and formats them cleanly', () => {
@@ -865,7 +875,7 @@ test('station panel shows readings promptly and formats them cleanly', () => {
 test('every search path allocates or receives a generation before awaiting', () => {
   const search = extractFunction('doSearch');
   assert.ok(search.indexOf('const gen = ++searchGeneration') < search.indexOf('await zipToCoords'));
-  assert.match(search, /loadStationsAt\(lat, lon, gen\)/);
+  assert.match(search, /loadStationsAt\(place\.lat, place\.lon, gen\)/);
   assert.match(search, /catch \(e\) \{\s*if \(gen !== searchGeneration\) return;/);
 
   // loadStationsAt never allocates its own generation: every caller passes one.

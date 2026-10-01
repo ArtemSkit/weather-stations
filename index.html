@@ -1729,17 +1729,21 @@ async function zipToCoords(zip) {
  * Photon copes with typos and missing punctuation ("1109 n highlnd st arlington va")
  * far better than Nominatim does.
  *
- * Photon searches the whole world, so a few candidates are requested and the
+ * Photon searches the whole world, so several candidates are requested and the
  * first one inside the US is used — NOAA only covers the US, and Photon tags
- * US territories (Puerto Rico, Guam, …) with country code "US" as well.
+ * US territories (Puerto Rico, Guam, …) with country code "US" as well. Results
+ * are biased toward `near` (the map centre): without it, a common name such as
+ * "Oxford Street" returns only foreign matches and no US result at all.
  *
  * @param   {string} address  - Free-form address string
+ * @param   {{lat: number, lon: number}} near - Point to prefer results around
  * @returns {Promise<{ lat: number, lon: number }>}
  * @throws  {Error} if the address is not found or the request fails
  */
-async function addressToCoords(address) {
+async function addressToCoords(address, near) {
   const url = `https://photon.komoot.io/api/`
-            + `?q=${encodeURIComponent(address)}&limit=5&lang=en`;
+            + `?q=${encodeURIComponent(address)}&limit=10&lang=en`
+            + `&lat=${near.lat.toFixed(4)}&lon=${near.lon.toFixed(4)}`;
   const { response: res, data } = await fetchJsonWithTimeout(url);
   if (!res.ok) throw new Error('Address geocoding request failed');
 
@@ -1762,9 +1766,12 @@ async function addressToCoords(address) {
 
 try { localStorage.removeItem('wxmap_geocodio_key'); } catch (_) { /* storage blocked — nothing to clean */ }
 if (document.cookie.includes('wxmap_geocodio_key=')) {
-  // Expire the cookie on the same directory-scoped path the old releases used.
-  const cookiePath = location.pathname.replace(/[^/]*$/, '') || '/';
-  document.cookie = `wxmap_geocodio_key=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=${cookiePath};SameSite=Strict`;
+  // Expire it on both paths old releases used: early ones wrote path=/, later
+  // ones the app's own folder. A cookie is only removed by its exact path.
+  const appFolder = location.pathname.replace(/[^/]*$/, '') || '/';
+  new Set(['/', appFolder]).forEach(path => {
+    document.cookie = `wxmap_geocodio_key=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=${path};SameSite=Strict`;
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3480,32 +3487,37 @@ async function doSearch() {
   // address/ZIP lookup can resolve after a newer search and overwrite its intent.
   const gen = ++searchGeneration;
   const type = detectInputType(raw);
-  pushQueryParam(type, raw);
 
   try {
+    let place;
     if (type === 'coords') {
       setStatus('loading', 'LOCATING…');
       showOverlay('Parsing coordinates…');
-      const { lat, lon } = parseCoords(raw);
+      place = parseCoords(raw);
+      const { lat, lon } = place;
       if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180)
         throw new Error('Invalid coordinates — use lat (-90…90), lon (-180…180)');
-      await loadStationsAt(lat, lon, gen);
 
     } else if (type === 'zip') {
       setStatus('loading', 'LOCATING…');
       showOverlay('Geocoding ZIP code…');
-      const { lat, lon } = await zipToCoords(raw);
-      if (gen !== searchGeneration) return;
-      await loadStationsAt(lat, lon, gen);
+      place = await zipToCoords(raw);
 
     } else {
-      // Street address — free-form, geocoded by Photon (no API key needed)
+      // Street address — free-form, geocoded by Photon (no API key needed). Results
+      // are biased toward the area currently on the map, so "Springfield" picks the
+      // one the user is looking at.
       setStatus('loading', 'GEOCODING…');
       showOverlay('Looking up address…');
-      const { lat, lon } = await addressToCoords(raw);
-      if (gen !== searchGeneration) return;
-      await loadStationsAt(lat, lon, gen);
+      const center = map.getCenter();
+      place = await addressToCoords(raw, { lat: center.lat, lon: center.lng });
     }
+    if (gen !== searchGeneration) return;
+
+    // Only input that resolved to a real place becomes the shareable URL, so a
+    // typo or unknown ZIP can't overwrite the link to the area still on the map.
+    pushQueryParam(type, raw);
+    await loadStationsAt(place.lat, place.lon, gen);
 
   } catch (e) {
     if (gen !== searchGeneration) return;
@@ -3833,16 +3845,12 @@ fabLocate.addEventListener('click', () => {
 (async function parseQueryParams() {
   const params = new URLSearchParams(window.location.search);
 
-  /** Retrieve a decoded query parameter through URLSearchParams. */
-  function safeDecodeParam(key) {
-    return params.get(key);
-  }
-
-  const stationParam = safeDecodeParam('station');
-  const lat          = safeDecodeParam('lat');
-  const lon          = safeDecodeParam('long');
-  const zip          = safeDecodeParam('zip');
-  const addr         = safeDecodeParam('addr');
+  // Station ids are upper-case ICAO codes; tolerate "%20ksat" from a hand-made link.
+  const stationParam = params.get('station')?.trim().toUpperCase();
+  const lat          = params.get('lat')?.trim();
+  const lon          = params.get('long')?.trim();
+  const zip          = params.get('zip');
+  const addr         = params.get('addr');
 
   /* ── ?station=KSAT — direct station lookup ── */
   if (stationParam) {
@@ -3894,7 +3902,10 @@ fabLocate.addEventListener('click', () => {
   /* ── Other params ── */
   if (lat && lon) {
     zipInput.value = `${lat}, ${lon}`;
-    doSearch();
+    // A broken coordinate link (e.g. ?lat=abc) must not silently turn into an
+    // address search for the text "abc, def".
+    if (detectInputType(zipInput.value) === 'coords') doSearch();
+    else showToast('This link has invalid coordinates');
   } else if (zip) {
     zipInput.value = zip.trim();
     doSearch();

@@ -2016,3 +2016,13 @@ test('Locate Me hides instead of covering the header when the sheet leaves no ro
   assert.ok(mobileBlock > 0 && rule > mobileBlock && rule < html.indexOf('</style>'));
   assert.equal(html.indexOf('#fab-locate { visibility: hidden; }'), html.lastIndexOf('#fab-locate { visibility: hidden; }'));
 });
+
+test('phone layout leaves room: sheet sized to the visible screen, toast above Locate Me, pin mode closes the sheet', () => {
+  assert.match(html, /max-height: 70vh !important;[^\n]*\s*(?:\/\*[\s\S]*?\*\/\s*)?max-height: 70dvh !important;/);
+  assert.match(html, /#toast \{ bottom: calc\(78px \+ var\(--safe-bottom\)\); \}/);
+  assert.match(extractFunction('setTapMode'),
+    /if \(active && popupPanel\.style\.display === 'block' && getComputedStyle\(popupPanel\)\.position === 'fixed'\) \{\s*closeStationPanel\(false\);/);
+  // NWS renamed Excessive Heat to Extreme Heat in 2025: the short label follows.
+  assert.match(html, /'extreme heat warning': 'EXTREME HEAT'/);
+  assert.doesNotMatch(html, /excessive heat/i);
+});

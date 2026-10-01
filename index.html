@@ -971,6 +971,9 @@
       border-bottom: none;
       border-top: 1px solid var(--border);
       max-height: 70vh !important;   /* beats the desktop pin-mode panel rule */
+      /* dvh = the height actually visible; vh counts the area under mobile browser
+         toolbars, which made the sheet leave too little map. vh stays as fallback. */
+      max-height: 70dvh !important;
       overflow-y: auto;
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
@@ -1080,8 +1083,8 @@
     /* No room above the sheet (set in initMobile): hide rather than cover the header. */
     main.sheet-open.sheet-crowded #fab-locate { visibility: hidden; }
 
-    /* ── Toast: add safe area inset ── */
-    #toast { bottom: calc(20px + var(--safe-bottom)); }
+    /* ── Toast: above the Locate Me button (16px + 54px + 8px gap) and the safe area ── */
+    #toast { bottom: calc(78px + var(--safe-bottom)); }
   }
 </style>
 </head>
@@ -3694,11 +3697,12 @@ const ALERT_SHORT_LABELS = {
   'winter storm warning': 'WINTER STORM','winter storm watch': 'WINTER STORM WATCH',
   'winter weather advisory': 'WINTER WX','ice storm warning': 'ICE STORM',
   'blizzard warning': 'BLIZZARD',        'high wind warning': 'HIGH WIND',
-  'wind advisory': 'WIND',               'excessive heat warning': 'EXTREME HEAT',
+  'wind advisory': 'WIND',               'extreme heat warning': 'EXTREME HEAT',
   'heat advisory': 'HEAT',               'hurricane warning': 'HURRICANE',
   'hurricane watch': 'HURRICANE WATCH',  'tropical storm warning': 'TROPICAL STORM',
   'storm surge warning': 'STORM SURGE',  'red flag warning': 'FIRE WEATHER',
   'dense fog advisory': 'DENSE FOG',     'special weather statement': 'WX STATEMENT',
+  'extreme cold warning': 'EXTREME COLD',
 };
 
 /** Map a full NWS event name to a short label (falls back to a trimmed upper-case event). */
@@ -4318,6 +4322,11 @@ let tapModeActive = false;
 const TAP_BANNER_TEXT = tapPlaceBanner.textContent.trim();
 
 function setTapMode(active) {
+  // Phone layout: the bottom sheet (position: fixed) covers most of the map, so
+  // close it to leave room to place the pin. The desktop side panel can stay.
+  if (active && popupPanel.style.display === 'block' && getComputedStyle(popupPanel).position === 'fixed') {
+    closeStationPanel(false);
+  }
   tapModeActive = active;
   tapPlaceBanner.classList.toggle('active', active);
   // A live region is only announced when its text changes AFTER it is rendered,

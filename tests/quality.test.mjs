@@ -266,6 +266,15 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
   assert.equal(await served.text(), '<!doctype html>');
 });
 
+test('update flow survives file:// and reloads after a first-visit claim', () => {
+  // Reading navigator.serviceWorker is wrapped so a throwing getter or file:// page
+  // cannot abort the registration script (and the version badge with it).
+  assert.match(html, /const swContainer = \(\(\) => \{\s*try \{[\s\S]*?location\.protocol === 'file:'/);
+  assert.doesNotMatch(html, /'serviceWorker' in navigator|navigator\.serviceWorker\.(controller|register|addEventListener)/);
+  // Only the very first claim is ignored; a later update must still reload the page.
+  assert.match(html, /if \(skipNextControllerChange\) \{ skipNextControllerChange = false; return; \}/);
+});
+
 test('vendored Leaflet and its license match the pinned release', () => {
   const digest = value => createHash('sha256').update(value).digest('base64');
   assert.equal(digest(leafletCss), 'p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=');

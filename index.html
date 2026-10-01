@@ -734,6 +734,11 @@
     pointer-events: none;            /* never intercept map interaction */
     user-select: none;
   }
+  /* Below ~340 px the one-line map credits reach the bottom-left corner: lift the
+     badge just above them (still under the zoom control) instead of overlapping. */
+  @media (max-width: 340px) {
+    #app-version { bottom: calc(20px + var(--safe-bottom)); }
+  }
 
   /* ════════════════════════════════════════════════════════════════════════════
      LOADING OVERLAY (full-map spinner)
@@ -938,9 +943,6 @@
     .leaflet-control-attribution {
       margin-right: var(--safe-right) !important;
       margin-bottom: var(--safe-bottom) !important;
-      /* On very narrow screens (under ~330 px) wrap instead of sliding under the
-         version badge in the bottom-left corner (~73 px wide plus its gap). */
-      max-width: calc(100vw - 84px - var(--safe-left) - var(--safe-right));
     }
 
     /* ── FAB — larger, above home indicator ── */

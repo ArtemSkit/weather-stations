@@ -934,6 +934,9 @@
     .leaflet-control-attribution {
       margin-right: var(--safe-right) !important;
       margin-bottom: var(--safe-bottom) !important;
+      /* On very narrow screens (under ~330 px) wrap instead of sliding under the
+         version badge in the bottom-left corner (~73 px wide plus its gap). */
+      max-width: calc(100vw - 84px - var(--safe-left) - var(--safe-right));
     }
 
     /* ── FAB — larger, above home indicator ── */

@@ -2958,6 +2958,38 @@ function isActiveStation(stationId, generation) {
   return activeStationId === stationId && stationOpenGeneration === generation;
 }
 
+/** The observation the panel shows now and the rain chance shown with it. */
+let shownStation = null;   // { stationId, generation, data, pop }
+/** Stations with a forecast lookup in flight — one at a time per station. */
+const forecastPending = new Set();
+
+/**
+ * Look up the station's rain chance in the background (best-effort, cached; never
+ * throws) and re-render the NEWEST observation if the value changes what is shown.
+ *
+ * @param {string}   stationId
+ * @param {number}   generation - panel opening that asked
+ * @param {number[]} coords     - GeoJSON [lon, lat]
+ */
+async function refreshStationForecast(stationId, generation, coords) {
+  if (forecastPending.has(stationId)) return;
+  forecastPending.add(stationId);
+  try {
+    const precipPct = await fetchForecastPoP(coords[1], coords[0], stationId);
+    const shown = shownStation;
+    // Only for the same panel opening, and with the latest readings (a newer
+    // observation may have arrived while the forecast was loading).
+    if (!isActiveStation(stationId, generation) || !shown ||
+        shown.stationId !== stationId || shown.generation !== generation) return;
+    if (precipPct !== shown.pop) {
+      shown.pop = precipPct;
+      renderWeather(shown.data, stationId, activeStationName, precipPct);
+    }
+  } finally {
+    forecastPending.delete(stationId);
+  }
+}
+
 /** Execute one observation/forecast refresh; doStationRefresh provides single-flight control. */
 async function refreshStationData(stationId, generation) {
   if (!isActiveStation(stationId, generation)) return;
@@ -2977,15 +3009,15 @@ async function refreshStationData(stationId, generation) {
     const popEntry = forecastPoPCache.get(stationId);
     const shownPoP = popEntry && !(popEntry.end <= Date.now()) ? popEntry.pop : null;
     renderWeather(data, stationId, activeStationName, shownPoP);
+    shownStation = { stationId, generation, data, pop: shownPoP };
+    dotEl.classList.remove('refreshing');   // the readings are on screen
 
-    // Then fetch the real forecast PoP for the station's own coordinates
-    // (best-effort, cached) and re-render only if it changes what is shown.
-    // GeoJSON geometry is [lon, lat]; a missing/failed forecast resolves to null.
+    // Then fetch the real forecast PoP for the station's own coordinates — NOT
+    // awaited: this refresh (and so the next observation tick, which waits for it)
+    // must not sit behind two slow forecast requests. GeoJSON geometry is [lon, lat].
     const coords = data.geometry?.coordinates;
     if (Array.isArray(coords) && Number.isFinite(coords[0]) && Number.isFinite(coords[1])) {
-      const precipPct = await fetchForecastPoP(coords[1], coords[0], stationId);
-      if (!isActiveStation(stationId, generation)) return;
-      if (precipPct !== shownPoP) renderWeather(data, stationId, activeStationName, precipPct);
+      refreshStationForecast(stationId, generation, coords);
     }
   } catch (e) {
     if (isActiveStation(stationId, generation)) {

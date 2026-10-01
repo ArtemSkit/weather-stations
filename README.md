@@ -81,12 +81,14 @@ The search input in the header bar accepts three formats, detected automatically
 
 ### 1. ZIP Code
 
-Enter any US 5-digit ZIP code (optionally with the ZIP+4 extension):
+Enter any US 5-digit ZIP code (optionally with the ZIP+4 extension, with or without the hyphen):
 
 ```
 78201
 22201-1234
 ```
+
+Any other all-digit entry (e.g. a 4-digit typo) is reported as an invalid ZIP rather than searched as an address.
 
 Geocoded via the **Nominatim / OpenStreetMap** API — no API key required. If Nominatim can't be reached, the ZIP is looked up in Photon's postcode index instead.
 

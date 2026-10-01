@@ -1859,16 +1859,20 @@ intervalInput.addEventListener('change', () => {
  *
  * Rules (evaluated in order):
  *  • Two comma-separated numbers → 'coords'  (e.g. "29.42, -98.49")
- *  • Five digits (optionally plus "-NNNN")   → 'zip'
+ *  • Five digits (optionally plus "-NNNN" or "NNNN") → 'zip'
+ *  • Any other digits only (a mistyped ZIP)  → 'badzip'
  *  • Anything else                           → 'address'
  *
  * @param   {string} raw  - Raw value from the search input
- * @returns {'coords'|'zip'|'address'}
+ * @returns {'coords'|'zip'|'badzip'|'address'}
  */
 function detectInputType(raw) {
   const s = raw.trim();
   if (/^(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)$/.test(s)) return 'coords';
-  if (/^\d{5}(-\d{4})?$/.test(s))                         return 'zip';
+  if (/^\d{5}(-?\d{4})?$/.test(s))                        return 'zip';
+  // "7820" is a half-typed ZIP, not an address: as an address it matches some
+  // house number hundreds of miles away and loads that place without a warning.
+  if (/^[\d\s-]+$/.test(s))                               return 'badzip';
   return 'address';
 }
 
@@ -4042,7 +4046,7 @@ async function refreshAlerts() {
  * URLSearchParams performs the required percent-encoding itself. Passing raw
  * values avoids non-standard double encoding and keeps shared URLs interoperable.
  *
- * @param {'coords'|'zip'|'address'} type  - Input type from detectInputType()
+ * @param {'coords'|'zip'|'address'} type  - Input type from detectInputType() (never 'badzip')
  * @param {string}                   raw   - Raw search string
  */
 function pushQueryParam(type, raw) {
@@ -4100,6 +4104,9 @@ async function doSearch() {
       setStatus('loading', 'LOCATING…');
       showOverlay('Geocoding ZIP code…');
       place = await zipToCoords(raw);
+
+    } else if (type === 'badzip') {
+      throw new Error('ZIP codes have 5 digits (e.g. 78201 or 78201-1234)');
 
     } else {
       // Street address — free-form, geocoded by Photon (no API key needed). Results

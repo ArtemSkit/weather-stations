@@ -3069,6 +3069,7 @@ function makeStationMarker(id, name, lat, lng) {
   iconEl.className   = 'station-marker';
   iconEl.textContent = id;
   iconEl.title       = label;
+  iconEl.dataset.label = label;   // base text; flagStationsInAlerts adds the warning note
 
   const icon   = L.divIcon({ html: iconEl, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
   // (Leaflet's `alt` option only applies to <img> icons, so it isn't used here.)
@@ -3605,6 +3606,11 @@ function flagStationsInAlerts(features) {
   stationRecords.forEach(rec => {
     const inside = polygons.some(rings => pointInAlertPolygon(rec.lng, rec.lat, rings));
     rec.el.classList.toggle('alerted', inside);
+    // The red ring is visual only; put the same fact in the marker's name, which
+    // is what a screen reader announces (Leaflet's focusable box and the badge).
+    const title = rec.el.dataset.label + (inside ? ' — inside an active warning area' : '');
+    rec.el.title = title;
+    rec.el.closest('.leaflet-marker-icon')?.setAttribute('title', title);
   });
 }
 

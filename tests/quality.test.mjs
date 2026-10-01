@@ -1682,7 +1682,9 @@ test('a station that never reports says so and is not polled; the old time is cl
   // Runs the real panel code with a fake page, live timers and a scripted feed.
   function makePanel(fetchObservations, hidden = false) {
     const elements = {};
-    const el = id => (elements[id] ||= { textContent: 'OBS: 05:15 AM CDT', innerHTML: '', classList: { add() {}, remove() {} },
+    const classSet = () => { const s = new Set(); return { add: (...c) => c.forEach(x => s.add(x)), remove: (...c) => c.forEach(x => s.delete(x)),
+      toggle: (c, on) => (on ? s.add(c) : s.delete(c)), contains: c => s.has(c) }; };
+    const el = id => (elements[id] ||= { textContent: 'OBS: 05:15 AM CDT', innerHTML: '', style: {}, classList: classSet(),
       // The loading skeleton is the only thing querySelector needs to find.
       querySelector(sel) { return sel === '.station-loading' && this.innerHTML.includes('station-loading') ? {} : null; } });
     const doc = { hidden, getElementById: el };
@@ -1719,6 +1721,7 @@ test('a station that never reports says so and is not polled; the old time is cl
   assert.match(p.elements['popup-body'].innerHTML, /not found or has no recent observations/);
   assert.doesNotMatch(p.elements['popup-body'].innerHTML, /retrying/);
   assert.equal(p.live.size, 0, 'a permanent 404 must not be polled');
+  assert.equal(p.elements['update-indicator'].style.display, 'none', 'no "LIVE · N s" for a station that is not polled');
 
   // Hidden tab: the timer starts before the first fetch; the catch-up 404 stops it.
   p = makePanel(async id => { throw notFound(id); }, true);
@@ -1740,7 +1743,11 @@ test('a station that never reports says so and is not polled; the old time is cl
   await p.openStation('KORD', 'Test', null);
   await p.tick();
   assert.equal(p.elements['popup-body'].innerHTML, 'readings');
-  assert.equal(p.elements['update-time'].textContent, 'Error fetching data');
+  // The shown reading keeps its time (and so its age); the dot turns red.
+  assert.equal(p.elements['update-time'].textContent, 'OBS: now · update failed');
+  assert.ok(p.elements['update-dot'].classList.contains('stale'));
+  await p.tick();   // a second failure doesn't repeat the note
+  assert.equal(p.elements['update-time'].textContent, 'OBS: now · update failed');
   assert.equal(p.live.size, 1);
 });
 

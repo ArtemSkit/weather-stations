@@ -476,7 +476,9 @@
 
   /* Always-on event chip centred on each alert polygon. */
   .leaflet-tooltip.alert-area-label {
-    background: rgba(10,14,23,0.82);
+    /* 0.92: at 0.82 light map tiles showed through enough to drop blue labels
+       below 4.5:1 contrast. */
+    background: rgba(10,14,23,0.92);
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 2px 6px;
@@ -752,7 +754,9 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .overlay-text {
-    font-size: 0.7rem; color: var(--text-muted);
+    /* Full text colour: muted grey over the see-through overlay and light map
+       tiles fell below the 4.5:1 contrast small text needs. */
+    font-size: 0.7rem; color: var(--text);
     letter-spacing: 0.1em; text-transform: uppercase;
   }
 
@@ -1151,6 +1155,16 @@
   <div id="tap-place-banner" role="status" aria-live="polite">
     📍 Tap or click the map to place a pin (or press Enter on the map for its centre) — press the pin button again or Esc to cancel
   </div>
+  <!--
+    Active dangerous-weather alert banner (NWS watches/warnings).
+    Populated by renderAlertBanner() after each search; stays hidden when the
+    searched area has no active alerts. aria-live="polite" announces new alerts
+    to screen readers without interrupting whatever they are currently reading.
+    Placed before the map so keyboard users reach it before every station marker
+    (it is absolutely positioned, so the order does not change the layout).
+  -->
+  <div id="alert-banner" role="region" aria-label="Active weather alerts" aria-live="polite"></div>
+
   <div id="map" role="region" aria-label="Interactive weather station map"></div>
 
   <!-- Full-map loading overlay shown during async operations. Not a live region:
@@ -1160,14 +1174,6 @@
     <div class="spinner"></div>
     <div class="overlay-text" id="overlay-text">Loading…</div>
   </div>
-
-  <!--
-    Active dangerous-weather alert banner (NWS watches/warnings).
-    Populated by renderAlertBanner() after each search; stays hidden when the
-    searched area has no active alerts. aria-live="polite" announces new alerts
-    to screen readers without interrupting whatever they are currently reading.
-  -->
-  <div id="alert-banner" role="region" aria-label="Active weather alerts" aria-live="polite"></div>
 
   <!-- ── Weather station info popup ── -->
   <div id="popup-panel" role="dialog" aria-label="Weather station details">

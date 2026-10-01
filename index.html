@@ -371,8 +371,10 @@
     z-index: 1100;                       /* above the station popup (1000) */
     width: 330px; max-width: calc(100% - 32px);
     /* Never let a long list of alerts run off the bottom of the map, nor cover the
-       bottom-left zoom control (which ends ~100px above the map's bottom edge). */
-    max-height: calc(100% - 16px - 110px); overflow-y: auto;
+       bottom-left zoom control (which ends ~100px above the map's bottom edge).
+       The 4rem floor keeps the summary chip visible in very short windows: there,
+       showing the alert matters more than keeping clear of the zoom buttons. */
+    max-height: max(4rem, calc(100% - 16px - 110px)); overflow-y: auto;
     display: none; flex-direction: column; gap: 8px;
     font-family: 'Syne', sans-serif;
   }
@@ -974,12 +976,17 @@
       top: 8px; width: auto; max-width: none;
       /* Clear a landscape phone's notch / rounded corners (viewport-fit=cover). */
       left: calc(8px + var(--safe-left)); right: calc(8px + var(--safe-right));
-      /* Full width here, so stay above both the lifted zoom control (left) and the
-         Locate Me button (right), which reach ~170px above the bottom. */
-      max-height: calc(100% - 8px - 180px - var(--safe-bottom));
+      /* Full width here, so stay above the lifted zoom control (left, ~155px above
+         the bottom) and the Locate Me button (right, ~70px). The 4rem floor keeps
+         the summary chip visible on short landscape phones. */
+      max-height: max(4rem, calc(100% - 8px - 180px - var(--safe-bottom)));
     }
-    /* Undo the desktop side-by-side rule below: the sheet sits at the bottom. */
-    main.sheet-open #alert-banner { max-width: none; }
+    /* With the bottom sheet open: full width (undo the desktop side-by-side rule)
+       and end above the sheet, whose real height is --sheet-h. */
+    main.sheet-open #alert-banner {
+      max-width: none;
+      max-height: max(4rem, calc(100% - 8px - var(--sheet-h, 70vh) - 8px));
+    }
 
     /* ── Map overlay text: readable on small screens ── */
     .overlay-text { font-size: 0.75rem; }

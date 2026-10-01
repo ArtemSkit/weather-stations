@@ -115,7 +115,7 @@ test('a failed newer search keeps the area that is loading or shown', async () =
     function moveMapTo() {}
     function plotStations() { stationMarkers = [1, 2]; log.push('plotted'); }
     function setStatus(state, text) { log.push('status:' + state + ':' + text); }
-    function showOverlay() { log.push('overlay shown'); }
+    function showOverlay(m) { log.push('overlay:' + m); }
     function hideOverlay() { log.push('overlay hidden'); }
     function showToast(m) { log.push('toast:' + m); }
     function loadAlertsForArea() { log.push('alerts'); }
@@ -144,7 +144,7 @@ test('a failed newer search keeps the area that is loading or shown', async () =
   const loadC = h.loadStationsAt(3, 4, h.newSearch());
   h.newSearch();
   h.reportSearchError('Location access denied.');
-  assert.deepEqual(log.slice(-3), ['toast:Location access denied.', 'overlay shown', 'status:loading:FETCHING STATIONS…']);
+  assert.deepEqual(log.slice(-3), ['toast:Location access denied.', 'overlay:Fetching weather stations…', 'status:loading:FETCHING STATIONS…']);
   // …and when C's stations land, the status shows them.
   resolveFetch({ features: [] });
   assert.equal(await loadC, true);
@@ -557,11 +557,14 @@ test('Enter that confirms an IME composition does not start a search', () => {
 
 test('the alert banner stays clear of the map controls and the station panel', () => {
   // Desktop: above the bottom-left zoom control; beside an open panel in narrow windows.
-  assert.match(html, /#alert-banner \{[^}]*max-height: calc\(100% - 16px - 110px\);/);
+  assert.match(html, /#alert-banner \{[^}]*max-height: max\(4rem, calc\(100% - 16px - 110px\)\);/);
   assert.match(html, /main\.sheet-open #alert-banner \{ max-width: calc\(100% - 16px - 314px - 32px\); \}/);
   // Phones: above the zoom control and Locate Me, full width even with the sheet open.
-  assert.match(html, /max-height: calc\(100% - 8px - 180px - var\(--safe-bottom\)\);/);
-  assert.match(html, /main\.sheet-open #alert-banner \{ max-width: none; \}/);
+  assert.match(html, /max-height: max\(4rem, calc\(100% - 8px - 180px - var\(--safe-bottom\)\)\);/);
+  // The phone override must come AFTER the desktop side-by-side rule to win.
+  const desktopRule = html.indexOf('main.sheet-open #alert-banner { max-width: calc(');
+  const phoneRule = html.search(/main\.sheet-open #alert-banner \{\s*max-width: none;\s*max-height: max\(4rem, calc\(100% - 8px - var\(--sheet-h, 70vh\) - 8px\)\);/);
+  assert.ok(desktopRule > 0 && phoneRule > desktopRule);
   // Delete on either pin button (touch devices only show the tap-pin) removes the pin.
   assert.match(html, /\[dragPinBtn, tapPinBtn\]\.forEach\(btn => btn\.addEventListener\('keydown'/);
 });

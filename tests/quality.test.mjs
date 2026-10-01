@@ -324,6 +324,8 @@ test('alert banner text is phone-readable and NWS hard wraps are unwrapped', () 
     '* WHERE...Portions of central and eastern Virginia.\n\n' +
     'Use extra caution when driving.\n* Secure outdoor objects.');
   assert.equal(unwrapAlertText(null), '');
+  // The NWS "&&" end-of-section marker is not shown to readers.
+  assert.equal(unwrapAlertText('Stay indoors.\n\n&&\n\nMore later.'), 'Stay indoors.\n\nMore later.');
 
   // The banner must unwrap both parts before joining them.
   assert.match(extractFunction('renderAlertBanner'), /\.map\(unwrapAlertText\)/);
@@ -491,6 +493,8 @@ test('alert areas stack smaller footprints on top and use danger to break area t
     ${extractFunction('alertClass')}
     ${extractFunction('compareAlertDanger')}
     ${extractFunction('alertGeometryArea')}
+    const alertAreaSizes = new WeakMap();
+    ${extractFunction('alertAreaSize')}
     ${extractFunction('compareAlertAreaStack')}
     return { alertGeometryArea, compareAlertAreaStack };
   `);
@@ -585,6 +589,7 @@ test('nearby inline alert polygons are merged without adding unrelated regional 
   const factory = new Function(`
     ${extractFunction('alertGeometryBounds')}
     ${extractFunction('pointInPolygon')}
+    ${extractFunction('alertPolygons')}
     ${extractFunction('pointInAlertPolygon')}
     ${extractFunction('geometryIntersectsBounds')}
     ${extractFunction('mergeVisibleAlerts')}
@@ -672,6 +677,7 @@ test('concurrent alert index lookups share one in-flight state request', async (
     const STATE_ALERTS_CACHE_LIMIT = 10;
     function setBoundedCache(cache, key, value) { cache.set(key, value); }
     ${extractFunction('isDisplayableAlert')}
+    ${extractFunction('isAlertUnexpired')}
     async ${extractFunction('fetchStateAlerts')}
     return { fetchStateAlerts, pendingCount: () => stateAlertsRequests.size };
   `)(() => {
@@ -741,6 +747,7 @@ test('state-alert fallback is recent, unexpired, and limited to transient failur
     const STATE_ALERTS_CACHE_LIMIT = 10;
     function setBoundedCache(cache, key, value) { cache.set(key, value); }
     ${extractFunction('isDisplayableAlert')}
+    ${extractFunction('isAlertUnexpired')}
     async ${extractFunction('fetchStateAlerts')}
     return {
       fetchStateAlerts,
@@ -915,6 +922,7 @@ test('only transient zone geometry failures are retried without resetting an unc
     function clearAlertAreas() { alertAreaSeq++; }
     function alertHue() { return 0; }
     function shortAlertLabel() { return 'WATCH'; }
+    ${extractFunction('drawAlertArea')}
     ${extractFunction('renderAlertAreas')}
     return {
       renderAlertAreas,
@@ -963,12 +971,72 @@ test('only transient zone geometry failures are retried without resetting an unc
     async function fetchAlerts() { return alerts; }
     function alertsSignature() { return 'unchanged'; }
     function renderAlertAreas() { areaRenderCount++; }
+    let activeAlertAreaOwner = null;
+    let shownAlerts = [];
+    ${extractFunction('showAlerts')}
     async ${extractFunction('refreshAlerts')}
     return { refreshAlerts, areaRenderCount: () => areaRenderCount };
   `)([{ id: 'watch-1' }]);
 
   await refreshHarness.refreshAlerts();
   assert.equal(refreshHarness.areaRenderCount(), 1);
+});
+
+test('alerts survive a failed later search but not a replaced area', async () => {
+  let resolveFetch;
+  const shown = [];
+  let timers = 0;
+  const harness = new Function('fetchAlerts', 'showAlerts', `
+    let alertLoadToken = null, currentLat = null, currentLon = null, alertsTimer = null;
+    const ALERTS_REFRESH_MS = 1;
+    const console = { error() {} };
+    function refreshAlerts() {}
+    function clearInterval() {}
+    function setInterval() { return ++globalThis.__timers; }
+    async ${extractFunction('loadAlertsForArea')}
+    return { loadAlertsForArea, replaceArea: () => { alertLoadToken = null; } };
+  `)(() => new Promise(resolve => { resolveFetch = resolve; }), alerts => shown.push(alerts));
+  globalThis.__timers = 0;
+
+  // A later search that fails before loading stations never touches the token,
+  // so the area still on screen must get its alerts and refresh loop.
+  const kept = harness.loadAlertsForArea(1, 2);
+  resolveFetch([{ id: 'kept' }]);
+  await kept;
+  assert.deepEqual(shown, [[{ id: 'kept' }]]);
+  timers = globalThis.__timers;
+  assert.equal(timers, 1);
+
+  // A newer area (clearAlerts) invalidates the in-flight load: nothing is drawn.
+  const dropped = harness.loadAlertsForArea(3, 4);
+  harness.replaceArea();
+  resolveFetch([{ id: 'stale' }]);
+  await dropped;
+  assert.equal(shown.length, 1);
+  assert.equal(globalThis.__timers, timers, 'a replaced load must not start a refresh loop');
+  delete globalThis.__timers;
+});
+
+test('a feed outage drops alerts whose hazard has ended', async () => {
+  const redrawn = [];
+  const past = new Date(Date.now() - 60_000).toISOString();
+  const future = new Date(Date.now() + 3_600_000).toISOString();
+  const harness = new Function('showAlerts', 'initial', `
+    let currentLat = 1, currentLon = 2, lastAlertSignature = 'x';
+    let alertAreasNeedRetry = false, activeAlertAreaOwner = null;
+    let shownAlerts = initial;
+    const console = { error() {} };
+    async function fetchAlerts() { return null; }   // feed unreachable
+    ${extractFunction('isAlertUnexpired')}
+    async ${extractFunction('refreshAlerts')}
+    return { refreshAlerts };
+  `)(alerts => redrawn.push(alerts), [
+    { id: 'ended', properties: { ends: past } },
+    { id: 'active', properties: { ends: future } }
+  ]);
+
+  await harness.refreshAlerts();
+  assert.deepEqual(redrawn.map(list => list.map(f => f.id)), [['active']]);
 });
 
 test('alert refresh commits its signature only after rendering succeeds', async () => {
@@ -983,6 +1051,10 @@ test('alert refresh commits its signature only after rendering succeeds', async 
     function flagStationsInAlerts() {}
     function renderAlertAreas() {}
     const console = { error() {} };
+    let shownAlerts = [];
+    let activeAlertAreaOwner = null;
+    ${extractFunction('isAlertUnexpired')}
+    ${extractFunction('showAlerts')}
     async ${extractFunction('refreshAlerts')}
     return { refreshAlerts, signature: () => lastAlertSignature };
   `)([{ id: 'watch-1' }]);

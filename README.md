@@ -241,7 +241,7 @@ Storm-based warnings (tornado, severe-thunderstorm, flash-flood) are issued as t
 Alerts move fast, so they are **re-fetched every 2 minutes** while a location stays loaded. Point feeds are cached per coordinate and regional feeds per state for 90 seconds — short enough that every 2-minute tick gets fresh data, long enough to share one request between overlapping lookups. NWS test and exercise messages are filtered out, so only real alerts are shown. Two refinements keep the experience stable:
 
 - **No needless redraws.** Each refresh is compared (by alert id) against what's already on screen; if nothing has changed, the banner, map areas, and any open popup are left exactly as you left them — a banner you collapsed or a card you expanded is never reset out from under you on the next tick.
-- **Failure-tolerant.** A timed-out or unreachable alert feed is treated as "temporarily unknown" rather than "no alerts", so the alerts currently on screen stay put and the next tick simply retries — a brief network hiccup never blanks an active warning. (On the very first load with no prior data, nothing is shown until the feed responds.)
+- **Failure-tolerant.** A timed-out or unreachable alert feed is treated as "temporarily unknown" rather than "no alerts", so the alerts currently on screen stay put and the next tick simply retries — a brief network hiccup never blanks an active warning. During a longer outage, an alert is still removed once its own end time has passed. (On the very first load with no prior data, nothing is shown until the feed responds.) A search that fails before loading new stations (unknown ZIP or address) leaves the current area — and its alerts — in place.
 
 ---
 

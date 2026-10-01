@@ -2968,22 +2968,27 @@ const forecastPending = new Set();
  * throws) and re-render the NEWEST observation if the value changes what is shown.
  *
  * @param {string}   stationId
- * @param {number}   generation - panel opening that asked
  * @param {number[]} coords     - GeoJSON [lon, lat]
  */
-async function refreshStationForecast(stationId, generation, coords) {
+async function refreshStationForecast(stationId, coords) {
   if (forecastPending.has(stationId)) return;
   forecastPending.add(stationId);
   try {
     const precipPct = await fetchForecastPoP(coords[1], coords[0], stationId);
     const shown = shownStation;
-    // Only for the same panel opening, and with the latest readings (a newer
-    // observation may have arrived while the forecast was loading).
-    if (!isActiveStation(stationId, generation) || !shown ||
-        shown.stationId !== stationId || shown.generation !== generation) return;
+    // The value belongs to the station, not to the panel opening that asked: a
+    // station closed and reopened while this was loading still gets it. Re-render
+    // the latest readings of the CURRENT opening (a newer observation may have
+    // arrived meanwhile).
+    if (activeStationId !== stationId || !shown ||
+        shown.stationId !== stationId || shown.generation !== stationOpenGeneration) return;
     if (precipPct !== shown.pop) {
       shown.pop = precipPct;
+      // renderWeather rewrites the footer time; keep a failed-refresh note there.
+      const timeEl = document.getElementById('update-time');
+      const failedNote = timeEl.textContent.endsWith(' · update failed');
       renderWeather(shown.data, stationId, activeStationName, precipPct);
+      if (failedNote) timeEl.textContent += ' · update failed';
     }
   } finally {
     forecastPending.delete(stationId);
@@ -3017,7 +3022,7 @@ async function refreshStationData(stationId, generation) {
     // must not sit behind two slow forecast requests. GeoJSON geometry is [lon, lat].
     const coords = data.geometry?.coordinates;
     if (Array.isArray(coords) && Number.isFinite(coords[0]) && Number.isFinite(coords[1])) {
-      refreshStationForecast(stationId, generation, coords);
+      refreshStationForecast(stationId, coords);
     }
   } catch (e) {
     if (isActiveStation(stationId, generation)) {

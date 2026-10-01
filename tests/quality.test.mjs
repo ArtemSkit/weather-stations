@@ -2275,3 +2275,34 @@ test('a slow rain-chance lookup never holds up the next refresh', async () => {
   await new Promise(r => setTimeout(r, 0));
   assert.deepEqual(shown.at(-1), [2, 55]);
 });
+
+test('a late rain chance reaches a reopened panel and keeps an "update failed" note', async () => {
+  const shown = [];
+  let resolveForecast;
+  const timeEl = { textContent: '' };
+  const ctx = vm.createContext({
+    document: { getElementById: id => (id === 'update-time' ? timeEl : { classList: { add() {}, remove() {} }, textContent: '' }) },
+    fetchObservations: async () => ({ geometry: { coordinates: [-98.5, 29.5] } }),
+    fetchForecastPoP: () => new Promise(r => { resolveForecast = r; }),
+    renderWeather: (data, id, name, pop) => { shown.push(pop); timeEl.textContent = 'OBS: 1'; },
+    forecastPoPCache: new Map(), Set, Array, Number, Date
+  });
+  const panel = vm.runInContext(`(() => {
+    let activeStationId = 'KSAT', stationOpenGeneration = 1, activeStationName = 'Test';
+    ${extractFunction('isActiveStation')}
+    let shownStation = null;
+    const forecastPending = new Set();
+    async ${extractFunction('refreshStationForecast')}
+    async ${extractFunction('refreshStationData')}
+    return { refresh: refreshStationData, reopen: g => { stationOpenGeneration = g; } };
+  })()`, ctx);
+
+  await panel.refresh('KSAT', 1);   // opening 1: forecast lookup starts and hangs
+  panel.reopen(3);                  // closed and reopened while it loads
+  await panel.refresh('KSAT', 3);   // its own lookup is skipped (one per station)
+  timeEl.textContent = 'OBS: 1 · update failed';   // and a later refresh failed
+  resolveForecast(70);
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(shown.at(-1), 70, 'the reopened panel gets the rain chance');
+  assert.equal(timeEl.textContent, 'OBS: 1 · update failed', 'the failure note survives the re-render');
+});

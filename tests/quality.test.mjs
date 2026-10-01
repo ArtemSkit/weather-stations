@@ -671,6 +671,7 @@ test('concurrent alert index lookups share one in-flight state request', async (
     const ALERTS_TTL_MS = 120000;
     const STATE_ALERTS_CACHE_LIMIT = 10;
     function setBoundedCache(cache, key, value) { cache.set(key, value); }
+    ${extractFunction('isDisplayableAlert')}
     async ${extractFunction('fetchStateAlerts')}
     return { fetchStateAlerts, pendingCount: () => stateAlertsRequests.size };
   `)(() => {
@@ -701,14 +702,27 @@ test('alert feeds discard malformed feature entries at the network boundary', as
     const ALERTS_TTL_MS = 120000;
     const ALERTS_CACHE_LIMIT = 50;
     function setBoundedCache(cache, key, value) { cache.set(key, value); }
+    ${extractFunction('isDisplayableAlert')}
     async ${extractFunction('fetchPointAlerts')}
     return { fetchPointAlerts };
   `)(async () => ({
     response: { ok: true, status: 200 },
-    data: { features: [null, {}, { properties: null }, validAlert] }
+    data: { features: [
+      null, {}, { properties: null }, validAlert,
+      // NWS test/exercise traffic must never be shown as a real alert.
+      { id: 'test', properties: { event: 'Test Message', status: 'Test' } },
+      { id: 'drill', properties: { event: 'Tornado Warning', status: 'Exercise' } }
+    ] }
   }));
 
   assert.deepEqual(await harness.fetchPointAlerts(29.4, -98.5), [validAlert]);
+});
+
+test('alert cache expires before the next refresh tick', () => {
+  // The cache clock starts when a fetch finishes, so a TTL equal to the refresh
+  // interval would serve the previous result on every other tick.
+  assert.match(html, /const ALERTS_TTL_MS = ALERTS_REFRESH_MS - 30 \* 1000;/);
+  assert.match(extractFunction('loadAlertsForArea'), /setInterval\(refreshAlerts, ALERTS_REFRESH_MS\)/);
 });
 
 test('state-alert fallback is recent, unexpired, and limited to transient failures', async () => {
@@ -726,6 +740,7 @@ test('state-alert fallback is recent, unexpired, and limited to transient failur
     const STATE_ALERTS_STALE_MAX_MS = 1800000;
     const STATE_ALERTS_CACHE_LIMIT = 10;
     function setBoundedCache(cache, key, value) { cache.set(key, value); }
+    ${extractFunction('isDisplayableAlert')}
     async ${extractFunction('fetchStateAlerts')}
     return {
       fetchStateAlerts,

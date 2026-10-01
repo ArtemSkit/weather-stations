@@ -1859,7 +1859,7 @@ intervalInput.addEventListener('change', () => {
  *
  * Rules (evaluated in order):
  *  • Two comma-separated numbers → 'coords'  (e.g. "29.42, -98.49")
- *  • Five digits (optionally plus "-NNNN" or "NNNN") → 'zip'
+ *  • Five digits (optionally plus "-NNNN", " NNNN" or "NNNN") → 'zip'
  *  • Any other digits only (a mistyped ZIP)  → 'badzip'
  *  • Anything else                           → 'address'
  *
@@ -1869,7 +1869,7 @@ intervalInput.addEventListener('change', () => {
 function detectInputType(raw) {
   const s = raw.trim();
   if (/^(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)$/.test(s)) return 'coords';
-  if (/^\d{5}(-?\d{4})?$/.test(s))                        return 'zip';
+  if (/^\d{5}([ -]?\d{4})?$/.test(s))                     return 'zip';
   // "7820" is a half-typed ZIP, not an address: as an address it matches some
   // house number hundreds of miles away and loads that place without a warning.
   if (/^[\d\s-]+$/.test(s))                               return 'badzip';
@@ -4106,7 +4106,8 @@ async function doSearch() {
       place = await zipToCoords(raw);
 
     } else if (type === 'badzip') {
-      throw new Error('ZIP codes have 5 digits (e.g. 78201 or 78201-1234)');
+      // Also catches coordinates typed without the comma ("29 -98").
+      throw new Error('Not a valid ZIP code or coordinates — e.g. 78201 or 29.42, -98.49');
 
     } else {
       // Street address — free-form, geocoded by Photon (no API key needed). Results

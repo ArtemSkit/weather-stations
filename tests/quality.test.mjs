@@ -1971,10 +1971,13 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   assert.equal(detect('78201'), 'zip');
   assert.equal(detect('90210-1234'), 'zip');
   assert.equal(detect(' 902101234 '), 'zip');
+  assert.equal(detect('78201 1234'), 'zip');
   // "7820" as an address matches some house number far away — reject it instead.
   assert.equal(detect('7820'), 'badzip');
   assert.equal(detect('782011'), 'badzip');
+  assert.equal(detect('123-45-6789'), 'badzip');
+  assert.equal(detect('29 -98'), 'badzip');
   assert.equal(detect('29.4, -98.5'), 'coords');
   assert.equal(detect('1600 Pennsylvania Ave'), 'address');
-  assert.match(extractFunction('doSearch'), /type === 'badzip'\) \{\s*throw new Error\('ZIP codes have 5 digits/);
+  assert.match(extractFunction('doSearch'), /type === 'badzip'\) \{\s*(\/\/.*\s*)?throw new Error\('Not a valid ZIP code/);
 });

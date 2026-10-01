@@ -81,7 +81,7 @@ The search input in the header bar accepts three formats, detected automatically
 
 ### 1. ZIP Code
 
-Enter any US 5-digit ZIP code (optionally with the ZIP+4 extension, with or without the hyphen):
+Enter any US 5-digit ZIP code (optionally with the ZIP+4 extension, after a hyphen, a space, or nothing):
 
 ```
 78201

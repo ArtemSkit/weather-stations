@@ -870,24 +870,54 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   obs({ textDescription: 'Mist', presentWeather: [{ intensity: 'light', weather: 'rain', rawString: '-RA' }] });
   assert.match(body(), /light rain/);
 
+  // Wind chill shows at 3°C with wind above 3 mph (PANC-like).
+  obs({ temperature: { value: 3 }, windSpeed: { value: 5.5 }, windChill: { value: 1 } });
+  assert.match(body(), /Wind Chill/);
+  // "Fog/Mist" vs fog_mist is the same thing — not repeated.
+  obs({ textDescription: 'Fog/Mist', presentWeather: [{ weather: 'fog_mist' }] });
+  assert.doesNotMatch(body(), /fog mist/);
+  // Showers read in plain English.
+  obs({ textDescription: 'Mist', presentWeather: [{ intensity: 'light', modifier: 'showers', weather: 'rain' }] });
+  assert.match(body(), /light rain showers/);
+  // A 3-hour-old report gets an age.
+  render({ properties: { timestamp: new Date(Date.now() - 3 * 3_600_000).toISOString() } }, 'KTST', 'Test');
+  assert.match(elements['update-time'].textContent, /3 h old/);
   // A two-day-old "latest" report says so.
   render({ properties: { timestamp: new Date(Date.now() - 49 * 3_600_000).toISOString() } }, 'KTST', 'Test');
   assert.match(elements['update-time'].textContent, /2 days old/);
 });
 
 test('alert times never invent an end and show a future start', () => {
-  const popup = vm.runInNewContext(`(() => {
+  const helpers = `
     ${escapeHtmlSource}
     ${extractFunction('formatWhen')}
-    ${extractFunction('alertAreaPopupHtml')}
-    return alertAreaPopupHtml;
-  })()`, { Date });
+    ${extractFunction('alertEndText')}`;
+  const popup = vm.runInNewContext(`(() => { ${helpers} ${extractFunction('alertAreaPopupHtml')} return alertAreaPopupHtml; })()`, { Date });
   // A flood warning "until further notice": ends null, expires = next update.
-  const html1 = popup({ event: 'Flood Warning', onset: '2026-10-01T08:00:00-05:00', ends: null,
-                        expires: '2026-10-01T20:00:00-05:00' }, 'red');
-  assert.match(html1, /until further notice/);
-  assert.match(extractFunction('renderAlertBanner'), /p\.ends \? `until \$\{formatWhen\(p\.ends\)\}` : 'until further notice'/);
-  assert.match(extractFunction('renderAlertBanner'), /startsLater \? `from \$\{formatWhen\(p\.onset\)\} `/);
+  const flood = { event: 'Flood Warning', onset: '2026-10-01T08:00:00-05:00', ends: null,
+                  expires: '2026-10-01T20:00:00-05:00' };
+  assert.match(popup(flood, 'red'), /until further notice/);
+  // A short statement without `ends` simply lasts until its message expires.
+  assert.doesNotMatch(popup({ ...flood, event: 'Special Weather Statement' }, 'red'), /further notice/);
+
+  // Run the real banner: a warning starting tomorrow with no set end.
+  const banner = { className: '', innerHTML: '', contains: () => false, querySelector: () => null };
+  const render = vm.runInNewContext(`(() => {
+    ${helpers}
+    ${extractFunction('unwrapAlertText')}
+    ${extractFunction('alertClass')}
+    ${extractFunction('compareAlertDanger')}
+    ${extractFunction('sortAlerts')}
+    ${extractFunction('renderAlertBanner')}
+    return renderAlertBanner;
+  })()`, {
+    Date, String, alertBanner: banner, document: {},
+    ALERT_CLASS_RANK: { crit: 0, warn: 1, watch: 2, info: 3 },
+    ALERT_SEV_WEIGHT: {}, ALERT_URGENCY_WEIGHT: {}, ALERT_CERTAINTY_WEIGHT: {}
+  });
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+  render([{ id: 'a', properties: { ...flood, onset: tomorrow } }]);
+  assert.match(banner.innerHTML, /from [^<]+ until further notice/);
 });
 
 test('the hidden toast never makes the page taller than the window', () => {

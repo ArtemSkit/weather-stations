@@ -2663,11 +2663,16 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
 
   /* ── Present weather in words ("light rain", not the METAR code "-RA") ──
      Dropped when it only repeats the description shown above it. */
+  // "showers" follows the weather word in plain English ("light rain showers").
   const pwxWords = (p.presentWeather || [])
-    .map(w => [w.intensity, w.modifier, w.weather].filter(Boolean).join(' ').replace(/_/g, ' '))
+    .map(w => [w.intensity, w.modifier !== 'showers' && w.modifier, w.weather,
+               w.modifier === 'showers' && 'showers']
+      .filter(Boolean).join(' ').replace(/_/g, ' '))
     .filter(Boolean)
     .join(', ');
-  const pwx = pwxWords.toLowerCase() === String(p.textDescription || '').toLowerCase() ? '' : pwxWords;
+  // Compare letters only: NWS writes "Fog/Mist" in the description but fog_mist here.
+  const lettersOnly = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+  const pwx = lettersOnly(pwxWords) === lettersOnly(p.textDescription) ? '' : pwxWords;
 
   /* Free-text observation fields come from an external feed and are interpolated
      into innerHTML below — escape them, same policy as the alert renderer. */
@@ -3422,13 +3427,10 @@ function renderAlertBanner(features) {
   const cards = sorted.map(f => {
     const p       = f.properties || {};
     const cls     = alertClass(p);
-    // Show when the hazard ends. `expires` is only when this copy of the message
-    // lapses (often the next scheduled update), so with no `ends` the hazard has
-    // no set end ("until further notice"). A future start is shown too, so an
-    // upcoming alert doesn't read as already in force.
+    // Show when the hazard ends (see alertEndText). A future start is shown too,
+    // so an upcoming alert doesn't read as already in force.
     const startsLater = p.onset && Date.parse(p.onset) > Date.now();
-    const expires = (startsLater ? `from ${formatWhen(p.onset)} ` : '')
-      + (p.ends ? `until ${formatWhen(p.ends)}` : 'until further notice');
+    const expires = (startsLater ? `from ${formatWhen(p.onset)} ` : '') + alertEndText(p);
     // Unwrap each part separately so the NWS hard line wraps don't split sentences.
     const detail  = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
     return `
@@ -3643,6 +3645,18 @@ function shortAlertLabel(event) {
   return up.length > 22 ? up.slice(0, 21) + '…' : up;
 }
 
+/**
+ * How long an alert lasts, for display ("until …"). `ends` is when the hazard
+ * ends. Without it, a warning/watch/advisory runs "until further notice" (e.g. a
+ * river flood) — its `expires` is only when this copy of the message lapses. A
+ * short statement without `ends` simply lasts until its `expires`.
+ */
+function alertEndText(props) {
+  if (props.ends) return `until ${formatWhen(props.ends)}`;
+  if (/(warning|watch|advisory)$/i.test(String(props.event || '').trim())) return 'until further notice';
+  return props.expires ? `until ${formatWhen(props.expires)}` : '';
+}
+
 /** Format an alert timestamp as a compact date+time, e.g. "Jun 2, 3:45 PM CDT". */
 function formatWhen(ts) {
   if (!ts) return '—';
@@ -3657,10 +3671,9 @@ function alertAreaPopupHtml(props, color) {
   // Severity / urgency / certainty give a quick read on how serious + imminent it is.
   const meta  = [props.severity, props.urgency, props.certainty]
     .filter(v => v && v !== 'Unknown').map(escapeHtml).join(' · ');
-  // The real hazard window: onset → ends. Without `ends` the hazard has no set
-  // end (`expires` is only when this message lapses), so don't invent one.
+  // The real hazard window: onset → ends (see alertEndText for alerts without `ends`).
   const start = formatWhen(props.onset || props.effective || props.sent);
-  const end   = props.ends ? formatWhen(props.ends) : 'until further notice';
+  const end   = props.ends ? formatWhen(props.ends) : alertEndText(props) || '—';
   const head  = props.headline ? `<div class="wx-alert-pop-head">${escapeHtml(props.headline)}</div>` : '';
   const area  = props.areaDesc ? `<div class="wx-alert-pop-area">${escapeHtml(props.areaDesc)}</div>` : '';
   return `

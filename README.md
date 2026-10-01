@@ -406,7 +406,7 @@ weather-stations/
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |
 | [Browser Geolocation API](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation_API) | Device GPS | User permission |
 
-> **Resilience:** every network request (geocoding and weather) is capped by a **15-second timeout** (8 seconds for the Nominatim ZIP lookup, so its Photon fallback still answers promptly) — a slow or unreachable API aborts cleanly with an error toast instead of leaving the app stuck "loading". Rapid repeat searches are generation-guarded, so a slow earlier request can never overwrite the results of a newer one.
+> **Resilience:** every network request (geocoding and weather) is capped by a **15-second timeout** (8 seconds for the Nominatim ZIP lookup, so its Photon fallback still answers promptly; 4 seconds for the optional exact-location lookup of a `?station=` link) — a slow or unreachable API aborts cleanly with an error toast instead of leaving the app stuck "loading". Rapid repeat searches are generation-guarded, so a slow earlier request can never overwrite the results of a newer one.
 
 ---
 

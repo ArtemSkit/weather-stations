@@ -33,7 +33,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Live observations** | Auto-refreshing weather data (configurable interval, 10 s – 1 h; paused while the app is in the background) |
 | **Dual temperature** | °F displayed prominently; °C shown alongside it |
 | **Feels Like** | Heat Index or Wind Chill, whichever is applicable |
-| **Precipitation chance** | Real next-hour probability of precipitation from the NWS gridded forecast |
+| **Precipitation chance** | Real probability of precipitation for the current hour, from the NWS gridded forecast |
 | **Dangerous-weather alerts** | Active NWS watches/warnings/advisories for the area in a severity-ranked banner; each alert's footprint drawn on the map; a pulsing red ring on stations inside a warning polygon |
 | **Alert map areas** | Every alert's area drawn as a uniquely-coloured polygon with an event label and a click/tap popup (severity + in-effect time window) |
 | **Sky conditions** | Cloud layer amount and base altitude |
@@ -187,8 +187,8 @@ Click any station badge on the map — or focus it with `Tab` and press `Enter` 
 | **Gusts** | mph |
 | **Visibility** | Miles |
 | **Pressure** | Sea-level or barometric pressure in inHg |
-| **Sky / Weather** | Cloud layer amount and base altitude in feet; present weather codes |
-| **Precip Chance (next hr)** | Real probability of precipitation for the current hour, shown as % with a colour-gradient fill bar |
+| **Sky / Weather** | The main cloud layer (the one with the most cover) and its base altitude in feet; present weather codes |
+| **Precip Chance (this hr)** | Real probability of precipitation for the current hour, shown as % with a colour-gradient fill bar |
 
 > **Humidity vs. Precip Chance — what's the difference?**
 > **Humidity** is the relative-humidity reading taken straight from the station's latest observation. **Precip Chance** is a genuine *forecast* value, not derived from humidity. The latest-observation endpoint carries no probability-of-precipitation field, so WX.MAP resolves the station's coordinates to its NOAA forecast grid and reads the `probabilityOfPrecipitation` produced by the local Weather Forecast Office:
@@ -433,7 +433,7 @@ These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifes
 
 | Feature | Chrome | Firefox | Edge | Safari |
 |---|---|---|---|---|
-| Map + search | ✅ | ✅ | ✅ | ✅ |
+| Map + search | ✅ | ✅ | ✅ | ✅ (Safari 13.1+ / iOS 13.4+) |
 | Draggable pin | ✅ | ✅† | ✅ | ✅ |
 | Locate Me (GPS) | ✅* | ✅* | ✅* | ✅* |
 | Service Worker (PWA) | ✅ | ✅ | ✅ | ✅ (iOS 11.3+) |

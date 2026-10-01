@@ -307,6 +307,9 @@
     border-color: var(--red);
     color: var(--red);
   }
+  /* Open or hovered: the cyan fill needs dark text (red on cyan is ~1.9:1). */
+  .station-marker.alerted:hover,
+  .station-marker.alerted.active { color: var(--bg); }
   .station-marker.alerted::after {
     content: '';
     position: absolute; inset: -4px;
@@ -682,7 +685,8 @@
     animation: pulse 0.8s infinite;
     cursor: wait;
   }
-  #fab-locate:focus  { box-shadow: 0 0 0 3px rgba(0,212,255,0.35); }
+  /* Solid, high-contrast keyboard focus ring (a faint glow was under 3:1). */
+  #fab-locate:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 
   /* ════════════════════════════════════════════════════════════════════════════
      APP VERSION BADGE  (bottom-left corner)
@@ -982,10 +986,11 @@
       max-height: max(4rem, calc(100% - 8px - 180px - var(--safe-bottom)));
     }
     /* With the bottom sheet open: full width (undo the desktop side-by-side rule)
-       and end above the sheet, whose real height is --sheet-h. */
+       and end above the Locate Me button, which then sits 12px above the sheet
+       (whose real height is --sheet-h) and is 54px tall: 12 + 54 + 8px gap = 74px. */
     main.sheet-open #alert-banner {
       max-width: none;
-      max-height: max(4rem, calc(100% - 8px - var(--sheet-h, 70vh) - 8px));
+      max-height: max(4rem, calc(100% - 8px - var(--sheet-h, 70vh) - 74px));
     }
 
     /* ── Map overlay text: readable on small screens ── */
@@ -1404,19 +1409,16 @@ function getBrowserInfo() {
 const browser = getBrowserInfo();
 console.info(`[WX.MAP] Browser detected: ${browser}`);
 
-window.pwaInstallPrompt = null;
 let beforeInstallPromptFired = false;
 
 // Single consolidated beforeinstallprompt listener
-window.addEventListener('beforeinstallprompt', e => {
+window.addEventListener('beforeinstallprompt', () => {
   try {
     beforeInstallPromptFired = true;
 
-    // Keep a reference so a future custom "Install" button could trigger it.
     // We deliberately do NOT call e.preventDefault(), so the browser still shows
     // its own install UI at the moment it judges best. The actual install outcome
     // is reported by the 'appinstalled' listener below.
-    window.pwaInstallPrompt = e;
     console.info(`[WX.MAP] ✓ PWA is installable (beforeinstallprompt fired on ${browser})`);
   } catch (err) {
     console.error('[WX.MAP] beforeinstallprompt handler error:', err);
@@ -1452,7 +1454,6 @@ window.addEventListener('wx-app-update-ready', () => {
 window.addEventListener('appinstalled', () => {
   try {
     console.info(`[WX.MAP] ✓ App successfully installed (${browser})`);
-    window.pwaInstallPrompt = null;   // prompt consumed — clear the stale reference
   } catch (err) {
     console.error('[WX.MAP] appinstalled handler error:', err);
   }
@@ -1914,7 +1915,9 @@ async function zipToCoords(zip) {
 async function addressToCoords(address, near) {
   const url = `https://photon.komoot.io/api/`
             + `?q=${encodeURIComponent(address)}&limit=10&lang=en`
-            + `&lat=${near.lat.toFixed(4)}&lon=${near.lon.toFixed(4)}`;
+            // ~11 km is plenty to rank results, and never sends the user's exact
+            // position (e.g. the map centred on a Locate Me fix) to a third party.
+            + `&lat=${near.lat.toFixed(1)}&lon=${near.lon.toFixed(1)}`;
   const { response: res, data } = await fetchJsonWithTimeout(url);
   if (!res.ok) throw new Error('Address geocoding request failed');
 
@@ -3256,9 +3259,14 @@ function renderAlertBanner(features) {
       </div>`;
   }).join('');
 
+  // Rebuilding replaces every button; if keyboard focus was inside the banner,
+  // put it back on the summary chip instead of dropping it to the page start.
+  const hadFocus = alertBanner.contains(document.activeElement);
+
   // Start expanded so alerts are visible on arrival; the user can collapse them.
   alertBanner.className = 'visible expanded';
   alertBanner.innerHTML = summary + `<div class="alert-list">${cards}</div>`;
+  if (hadFocus) alertBanner.querySelector('[data-role="toggle"]')?.focus();
 }
 
 /* Click delegation: toggle the whole banner, or expand an individual card. */

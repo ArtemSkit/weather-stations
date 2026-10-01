@@ -231,7 +231,7 @@ A banner floats at the top-left of the map whenever the searched point or the vi
 | **Watch** | Tornado Watch, Flood Watch, Severe T-storm Watch | 🟡 Amber |
 | **Info** | Advisories, special statements | 🟡 Yellow |
 
-The banner opens expanded; click the summary chip to collapse it, or click any alert to reveal its full headline, description, and the NWS safety **instructions**, along with when the hazard ends (the same end time the map popup shows). An alert that hasn't started yet also shows when it begins ("from … until …"), and one with no set end says "until further notice" rather than quoting when the message itself lapses. All times are shown in your own time zone; the NWS headline text keeps the issuing office's zone.
+The banner opens expanded; click the summary chip to collapse it, or click any alert to reveal its full headline, description, and the NWS safety **instructions**, along with when the hazard ends (the same end time the map popup shows). An alert that hasn't started yet also shows when it begins ("from … until …"), and a warning, watch or advisory with no set end says "until further notice" rather than quoting when the message itself lapses (a short statement without one shows when it lapses). All times are shown in your own time zone; the NWS headline text keeps the issuing office's zone.
 
 ### Tier 2 — alert areas on the map
 
@@ -401,7 +401,7 @@ weather-stations/
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |
 | [Browser Geolocation API](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation_API) | Device GPS | User permission |
 
-> **Resilience:** every network request (geocoding and weather) is capped by a **15-second timeout** — a slow or unreachable API aborts cleanly with an error toast instead of leaving the app stuck "loading". Rapid repeat searches are generation-guarded, so a slow earlier request can never overwrite the results of a newer one.
+> **Resilience:** every network request (geocoding and weather) is capped by a **15-second timeout** (8 seconds for the Nominatim ZIP lookup, so its Photon fallback still answers promptly) — a slow or unreachable API aborts cleanly with an error toast instead of leaving the app stuck "loading". Rapid repeat searches are generation-guarded, so a slow earlier request can never overwrite the results of a newer one.
 
 ---
 

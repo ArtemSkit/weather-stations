@@ -14,13 +14,12 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 6. [Weather Station Popup](#weather-station-popup)
 7. [Dangerous-Weather Alerts](#dangerous-weather-alerts)
 8. [URL Query Parameters](#url-query-parameters)
-9. [Geocodio API Key](#geocodio-api-key)
-10. [Progressive Web App (PWA)](#progressive-web-app-pwa)
-11. [Architecture](#architecture)
-12. [Data Sources & APIs](#data-sources--apis)
-13. [Offline Support](#offline-support)
-14. [Quality Checks](#quality-checks)
-15. [Browser Compatibility](#browser-compatibility)
+9. [Progressive Web App (PWA)](#progressive-web-app-pwa)
+10. [Architecture](#architecture)
+11. [Data Sources & APIs](#data-sources--apis)
+12. [Offline Support](#offline-support)
+13. [Quality Checks](#quality-checks)
+14. [Browser Compatibility](#browser-compatibility)
 
 ---
 
@@ -41,7 +40,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
 | **Shareable URLs** | Every search updates the address bar — bookmark or share |
-| **Geocodio address lookup** | Street-address geocoding; API key stored in the browser's localStorage |
+| **Address lookup** | Free, typo-tolerant street-address geocoding via Photon — no API key or sign-up |
 | **PWA** | Installable and offline-capable, with user-controlled updates via Service Worker |
 | **Version badge** | Running app version shown in the bottom-left corner, reported live by the active Service Worker |
 
@@ -111,7 +110,11 @@ Enter any US street address:
 300 E Green St, Pasadena, CA
 ```
 
-Geocoded via the **Geocodio API** (see [Geocodio API Key](#geocodio-api-key) below).
+Geocoded via **[Photon](https://photon.komoot.io/)**, a free OpenStreetMap geocoder — no API key required. Photon tolerates typos and missing punctuation (`1109 n highlnd st arlington va` still finds the right building). It searches worldwide, so WX.MAP takes the best match inside the US (including US territories), since NOAA data covers only the US.
+
+> **Fair use:** the public Photon server is free but has no uptime guarantee and throttles heavy use. That suits one-search-at-a-time traffic like this app's. If it ever becomes a problem, Photon is open source and can be self-hosted.
+
+> **Upgrading from 1.0.x:** older releases asked for a Geocodio API key and stored it in the browser. That key is no longer used, and 1.1.0 deletes any stored copy (localStorage and legacy cookie) on startup.
 
 ---
 
@@ -266,32 +269,6 @@ This parameter takes priority over all others.
 
 ---
 
-## Geocodio API Key
-
-Street-address geocoding uses the [Geocodio API](https://www.geocod.io/), which requires a free API key.
-
-### How it works
-
-1. The first time you search by street address, a **modal dialog** appears.
-2. Enter your Geocodio API key and click **Save & Continue**.
-3. The key is saved in the browser's **localStorage** (`wxmap_geocodio_key`).
-4. All future address searches use the stored key automatically — you won't be prompted again.
-
-### Getting a key
-
-Visit [geocod.io](https://www.geocod.io/) and sign up for a free account. The free tier includes 2,500 lookups per day.
-
-### Key storage
-
-- Stored **only in your browser**, in localStorage — it never leaves the device except in requests to Geocodio's geocoding endpoint.
-- Unlike a cookie, localStorage is never attached to HTTP requests, so the key is not sent to the server hosting the app either. (Versions before 1.0.5 stored the key in a cookie; it is migrated to localStorage — and the cookie deleted — automatically on first use.)
-- If the browser blocks localStorage (some WebViews and privacy modes), the key is kept only in memory for the current session. It is never written to a cookie.
-- Browser storage is **per-origin**: if the app is hosted on a shared origin (e.g. GitHub Pages project sites under `username.github.io`), other pages on that origin can technically access it. Same-origin pages are not isolated from one another, so host the app on its own origin if strict key isolation matters.
-- If Geocodio rejects the key (HTTP 401 or 403), it is cleared automatically and you are re-prompted on the next address search.
-- To remove it manually, clear this page's site data (or run `localStorage.removeItem('wxmap_geocodio_key')` in the browser console).
-
----
-
 ## Progressive Web App (PWA)
 
 WX.MAP ships a Web App Manifest (`manifest.json`) and a Service Worker (`sw.js`), making it installable and offline-capable with user-controlled update delivery.
@@ -364,8 +341,7 @@ weather-stations/
 │   │   │   ├── #popup-panel        (station info / mobile bottom sheet)
 │   │   │   └── #fab-locate         (GPS floating action button)
 │   │   ├── #app-version           (bottom-left version badge)
-│   │   ├── #toast                 (error / info notifications)
-│   │   └── #modal-overlay         (Geocodio API key prompt)
+│   │   └── #toast                 (error / info notifications)
 │   └── <script>
 │       ├── Leaflet JS              (vendored)
 │       ├── SW registration + update flow + version badge
@@ -375,9 +351,8 @@ weather-stations/
 │           ├── UI helpers
 │           ├── Refresh-interval editor
 │           ├── Input-type detection
-│           ├── Geocoding (ZIP / address)
-│           ├── API-key storage + legacy-cookie migration
-│           ├── Geocodio key modal
+│           ├── Geocoding (ZIP via Nominatim / address via Photon)
+│           ├── Legacy API-key cleanup
 │           ├── NOAA Weather API
 │           ├── Unit conversion
 │           ├── Popup renderer
@@ -409,7 +384,7 @@ weather-stations/
 |---|---|---|
 | [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, hourly forecast (precip chance), active alerts, alert-area zone geometry | No |
 | [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates | No |
-| [Geocodio](https://www.geocod.io/) | Street address → coordinates | Yes (free tier available) |
+| [Photon (komoot)](https://photon.komoot.io/) | Street address → coordinates | No |
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |
 | [Browser Geolocation API](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation_API) | Device GPS | User permission |
 
@@ -437,7 +412,7 @@ The repository includes dependency-free regression tests using Node's built-in t
 node --test
 ```
 
-These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifest and version consistency, atomic service-worker installation/routing/cache isolation, vendored Leaflet assets, alert-popup overlap/dismissal/readability contracts, warning-polygon holes, URL encoding, API-key persistence, and stale-response guards.
+These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifest and version consistency, atomic service-worker installation/routing/cache isolation, vendored Leaflet assets, alert-popup overlap/dismissal/readability contracts, warning-polygon holes, URL encoding, key-less US-only address lookup, alert-text unwrapping, and stale-response guards.
 
 ---
 

@@ -1751,6 +1751,24 @@ test('a station that never reports says so and is not polled; the old time is cl
   await p.tick();   // a second failure doesn't repeat the note
   assert.equal(p.elements['update-time'].textContent, 'OBS: now · update failed');
   assert.equal(p.live.size, 1);
+
+  // The next good refresh clears the red dot and the note.
+  calls = 0;
+  p = makePanel(async () => { if (++calls === 2) throw new Error('NOAA observations API returned HTTP 500'); return {}; });
+  await p.openStation('KORD', 'Test', null);
+  await p.tick();
+  assert.ok(p.elements['update-dot'].classList.contains('stale'));
+  await p.tick();
+  assert.ok(!p.elements['update-dot'].classList.contains('stale'));
+  assert.equal(p.elements['update-time'].textContent, 'OBS: now');
+
+  // Opening another station after a no-data one shows the LIVE interval again.
+  calls = 0;
+  p = makePanel(async id => { if (++calls === 1) throw notFound(id); return {}; });
+  await p.openStation('PAJC', 'Test', null);
+  assert.equal(p.elements['update-indicator'].style.display, 'none');
+  await p.openStation('KORD', 'Test', null);
+  assert.equal(p.elements['update-indicator'].style.display, '');
 });
 
 test('station refreshes bind to one panel lifetime and zone fetches share a global limit', () => {
@@ -2021,7 +2039,7 @@ test('Locate Me hides instead of covering the header when the sheet leaves no ro
 
 test('phone layout leaves room: sheet sized to the visible screen, toast above Locate Me, pin mode closes the sheet', () => {
   assert.match(html, /max-height: 70vh !important;[^\n]*\s*(?:\/\*[\s\S]*?\*\/\s*)?max-height: 70dvh !important;/);
-  assert.match(html, /#toast \{ bottom: calc\(78px \+ var\(--safe-bottom\)\); \}/);
+  assert.match(html, /#toast \{ bottom: calc\(78px \+ var\(--safe-bottom\)\); max-width: calc\(100vw - 108px\); \}/);
   assert.match(extractFunction('setTapMode'),
     /if \(active && popupPanel\.style\.display === 'block' && getComputedStyle\(popupPanel\)\.position === 'fixed'\) \{\s*closeStationPanel\(false\);/);
   // NWS renamed Excessive Heat to Extreme Heat in 2025: the short label follows.

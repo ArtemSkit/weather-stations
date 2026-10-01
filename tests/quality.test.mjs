@@ -163,6 +163,33 @@ test('API-provided NWS links cannot redirect browser fetches to another origin',
     /isTrustedNwsApiUrl\(hourlyUrl, '\/gridpoints\/'\)/);
   assert.match(extractFunction('fetchZoneGeometry'),
     /isTrustedNwsApiUrl\(url, '\/zones\/'\)/);
+  assert.match(extractFunction('fetchStations'),
+    /isTrustedNwsApiUrl\(stationsUrl, '\/gridpoints\/'\)/);
+});
+
+test('station lookup uses the documented gridpoint flow and shares its /points answer', async () => {
+  const requested = [];
+  const alertStateCache = new Map();
+  const fetchStations = new Function('fetchJsonWithTimeout', 'alertStateCache', 'isTrustedNwsApiUrl', `
+    const ALERT_STATE_CACHE_LIMIT = 100;
+    function setBoundedCache(cache, key, value) { cache.set(key, value); }
+    async ${extractFunction('fetchStations')}
+    return fetchStations;
+  `)(async url => {
+    requested.push(url);
+    return url.includes('/points/')
+      ? { response: { ok: true, status: 200 }, data: { properties: {
+          observationStations: 'https://api.weather.gov/gridpoints/LWX/95,71/stations',
+          relativeLocation: { properties: { state: 'VA' } } } } }
+      : { response: { ok: true, status: 200 }, data: { features: [] } };
+  }, alertStateCache, url => url.startsWith('https://api.weather.gov/gridpoints/'));
+
+  await fetchStations(38.8867, -77.0947);
+  assert.deepEqual(requested, [
+    'https://api.weather.gov/points/38.8867,-77.0947',
+    'https://api.weather.gov/gridpoints/LWX/95,71/stations'
+  ]);
+  assert.equal(alertStateCache.get('38.8867,-77.0947'), 'VA', 'alerts must not re-request /points');
 });
 
 test('manifest paths are portable and app versions stay synchronized', () => {

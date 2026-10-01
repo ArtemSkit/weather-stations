@@ -1808,7 +1808,10 @@ if (document.cookie.includes('wxmap_geocodio_key=')) {
 
 /**
  * Fetch the list of NOAA observation stations nearest to a coordinate pair.
- * Endpoint: GET https://api.weather.gov/points/{lat},{lon}/stations
+ *   1. GET https://api.weather.gov/points/{lat},{lon} → properties.observationStations
+ *   2. GET that gridpoint stations URL
+ * (The old /points/{lat},{lon}/stations shortcut is a deprecated alias that NOAA
+ * now only answers with a 301 redirect to the same gridpoint URL.)
  *
  * @param   {number} lat  - Latitude (4 decimal places precision)
  * @param   {number} lon  - Longitude
@@ -1816,12 +1819,28 @@ if (document.cookie.includes('wxmap_geocodio_key=')) {
  * @throws  {Error} on non-2xx response
  */
 async function fetchStations(lat, lon) {
-  const url = `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}/stations`;
+  const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
   // The browser always sends its own User-Agent and ignores any custom one
   // (User-Agent is a forbidden fetch header), so there's no point setting it.
-  const { response: res, data } = await fetchJsonWithTimeout(url);
+  const { response: ptRes, data: point } = await fetchJsonWithTimeout(
+    `https://api.weather.gov/points/${key}`);
   // NOAA answers 404 for any point it doesn't cover (outside the US, offshore).
-  if (res.status === 404) throw new Error('No NOAA stations here — coverage is US only');
+  if (ptRes.status === 404) throw new Error('No NOAA stations here — coverage is US only');
+  if (!ptRes.ok) throw new Error(`NOAA points API returned HTTP ${ptRes.status}`);
+
+  // The alert loader asks for this same point's state right after; hand it this
+  // answer so it doesn't repeat the /points request.
+  const state = point?.properties?.relativeLocation?.properties?.state;
+  if (/^[A-Z]{2}$/.test(state || '')) {
+    setBoundedCache(alertStateCache, key, state, ALERT_STATE_CACHE_LIMIT);
+  }
+
+  // A linked URL from the response must stay on NOAA's own API before we fetch it.
+  const stationsUrl = point?.properties?.observationStations;
+  if (!stationsUrl || !isTrustedNwsApiUrl(stationsUrl, '/gridpoints/')) {
+    throw new Error('NOAA returned no station list for this location');
+  }
+  const { response: res, data } = await fetchJsonWithTimeout(stationsUrl);
   if (!res.ok) throw new Error(`NOAA stations API returned HTTP ${res.status}`);
   return data;
 }

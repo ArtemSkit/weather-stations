@@ -2137,7 +2137,7 @@ async function fetchObservations(stationId) {
 /* Cache of real forecast PoP keyed by station id.  A forecast changes slowly, so
    re-fetching it on every live-observation tick (every ≥10 s) would be wasteful and
    could exhaust the NOAA rate budget.  Entries expire after FORECAST_TTL_MS. */
-const forecastPoPCache = new Map();   // stationId → { pop: number|null, ts: number, ttl: number }
+const forecastPoPCache = new Map();   // stationId → { pop: number|null, ts: number, ttl: number, end: number }
 const FORECAST_TTL_MS  = 10 * 60 * 1000;  // 10 minutes
 // A FAILED lookup (timeout, NWS hiccup) is retried much sooner than a real answer,
 // so one slow request doesn't hide the precipitation row for ten minutes.
@@ -2211,7 +2211,8 @@ async function fetchForecastPoP(lat, lon, stationId) {
   // Cache even a null result so a missing/failed forecast isn't retried every tick.
   const ttl = failed ? FORECAST_FAILURE_TTL_MS
     : Math.max(0, Math.min(FORECAST_TTL_MS, (periodEnd - Date.now()) || FORECAST_TTL_MS));
-  setBoundedCache(forecastPoPCache, stationId, { pop, ts: Date.now(), ttl }, FORECAST_CACHE_LIMIT);
+  // `end`: when the value's hour is over (NaN when unknown — then pop is null anyway).
+  setBoundedCache(forecastPoPCache, stationId, { pop, ts: Date.now(), ttl, end: periodEnd }, FORECAST_CACHE_LIMIT);
   return pop;
 }
 
@@ -2897,8 +2898,10 @@ async function refreshStationData(stationId, generation) {
 
     // Show the observation right away — the separate forecast lookup can take many
     // seconds and must never hold it up. Use the last known rain chance even if it
-    // is due for a refresh, so the row doesn't vanish and reappear every 10 minutes.
-    const shownPoP = forecastPoPCache.get(stationId)?.pop ?? null;
+    // is due for a refresh, so the row doesn't vanish and reappear every 10 minutes
+    // — but never once its forecast hour is over ("this hr" from hours ago).
+    const popEntry = forecastPoPCache.get(stationId);
+    const shownPoP = popEntry && !(popEntry.end <= Date.now()) ? popEntry.pop : null;
     renderWeather(data, stationId, activeStationName, shownPoP);
 
     // Then fetch the real forecast PoP for the station's own coordinates

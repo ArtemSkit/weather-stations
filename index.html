@@ -1135,21 +1135,34 @@
    The document and its vendored runtime are served from one atomically installed
    shell (see sw.js), so a reload cannot mix files from different releases.
    ═════════════════════════════════════════════════════════════════════════════ */
-if ('serviceWorker' in navigator) {
+/* The service-worker container, or null where workers can't run. A file:// page
+   can never register one, and in some browsers (e.g. Firefox with site storage
+   blocked) merely reading navigator.serviceWorker throws — which would otherwise
+   abort this whole script, including the version badge below. */
+const swContainer = (() => {
+  try {
+    return location.protocol === 'file:' ? null : (navigator.serviceWorker || null);
+  } catch (_) {
+    return null;
+  }
+})();
+
+if (swContainer) {
   (() => {
     let swRegistration = null;
     let reloading = false;
 
-    // Whether a worker already controlled this page at load time. On a first visit
-    // the page is uncontrolled, and the worker's clients.claim() fires its own
-    // 'controllerchange' — we must NOT treat that initial claim as an update
-    // (doing so would reload-flash every first load).
-    const hadControllerAtStart = !!navigator.serviceWorker.controller;
+    // On a first visit the page starts uncontrolled, and the new worker's
+    // clients.claim() fires one 'controllerchange' — that initial claim is NOT an
+    // update (reloading would flash every first load), so skip exactly that one.
+    // Every later change (an update accepted here or in another window) reloads.
+    let skipNextControllerChange = !swContainer.controller;
 
     // When a NEW worker activates and takes control of an already-controlled page,
     // reload once so the page is driven by the new worker and its fresh cache.
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (reloading || !hadControllerAtStart) return;
+    swContainer.addEventListener('controllerchange', () => {
+      if (skipNextControllerChange) { skipNextControllerChange = false; return; }
+      if (reloading) return;
       reloading = true;
       window.location.reload();
     });
@@ -1161,14 +1174,14 @@ if ('serviceWorker' in navigator) {
     // updateViaCache:'none' forces the browser to byte-check sw.js (and its imports)
     // against the network on every update() instead of trusting the HTTP cache — so
     // a freshly deployed worker is always noticed promptly.
-    navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' })
+    swContainer.register('./sw.js', { scope: './', updateViaCache: 'none' })
       .then(reg => {
         swRegistration = reg;
         console.info('[WX.MAP] Service worker registered (PWA enabled)');
 
         // A worker already parked in "waiting" means an update installed during a
         // previous visit but was never activated — surface it now.
-        if (reg.waiting && navigator.serviceWorker.controller) announceUpdate();
+        if (reg.waiting && swContainer.controller) announceUpdate();
 
         // Detect a new worker finishing installation while the page is open.
         reg.addEventListener('updatefound', () => {
@@ -1176,15 +1189,18 @@ if ('serviceWorker' in navigator) {
           if (!newWorker) return;
           newWorker.addEventListener('statechange', () => {
             // 'installed' + an existing controller == an update (not a first install).
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            if (newWorker.state === 'installed' && swContainer.controller) {
               announceUpdate();
             }
           });
         });
 
         // Ask the browser to re-check sw.js for a newer version. Throttled so the
-        // visibility/focus triggers below can't hammer the network.
-        let lastCheck = 0;
+        // visibility/focus triggers below can't hammer the network. The clock starts
+        // now because loading this page already made the browser re-check sw.js
+        // (every controlled navigation triggers that check), so an immediate extra
+        // check would only download the same file twice.
+        let lastCheck = Date.now();
         const checkForUpdates = () => {
           const now = Date.now();
           if (now - lastCheck < 60 * 1000) return;   // at most once per minute
@@ -1193,11 +1209,10 @@ if ('serviceWorker' in navigator) {
             console.warn('[WX.MAP] Update check failed:', err.message));
         };
 
-        // Check now, on a periodic timer, and — crucially for an installed PWA that
-        // stays open for days — every time the user returns to the app. Re-opening a
+        // Check on a periodic timer and — crucially for an installed PWA that stays
+        // open for days — every time the user returns to the app. Re-opening a
         // backgrounded standalone window then promptly pulls any available update,
         // instead of waiting out the 30-minute timer.
-        checkForUpdates();
         setInterval(checkForUpdates, 30 * 60 * 1000);
         document.addEventListener('visibilitychange', () => {
           if (document.visibilityState === 'visible') checkForUpdates();
@@ -1222,7 +1237,7 @@ if ('serviceWorker' in navigator) {
     };
   })();
 } else {
-  console.warn('[WX.MAP] Service workers not supported — offline & update features disabled');
+  console.warn('[WX.MAP] Service workers unavailable (unsupported browser, file:// page, or blocked storage) — offline & update features disabled');
 }
 
 /* ═════════════════════════════════════════════════════════════════════════════
@@ -1242,7 +1257,7 @@ function setVersionBadge(v) {
 
 function refreshVersionBadge() {
   setVersionBadge(APP_VERSION_FALLBACK);   // show something immediately, no flash
-  const ctrl = navigator.serviceWorker && navigator.serviceWorker.controller;
+  const ctrl = swContainer && swContainer.controller;
   if (!ctrl) return;                       // no worker yet → keep the fallback
   try {
     const ch   = new MessageChannel();
@@ -1255,8 +1270,8 @@ function refreshVersionBadge() {
 refreshVersionBadge();
 // After an update activates, a new worker takes control — refresh the badge so it
 // reflects the version now actually running (covers the first-install claim too).
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('controllerchange', refreshVersionBadge);
+if (swContainer) {
+  swContainer.addEventListener('controllerchange', refreshVersionBadge);
 }
 
 /* ═════════════════════════════════════════════════════════════════════════════

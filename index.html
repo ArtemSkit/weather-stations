@@ -2621,16 +2621,16 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
    * "Feels Like" — only where it means something, as weather.gov does: the NWS
    * also fills in a heat index at mild temperatures (73.3°F at 73.4°F, or even
    * BELOW the air temperature). Heat index from 80°F; wind chill at 50°F or colder
-   * with wind above 3 mph (4.8 km/h). The cutoffs use the whole °F shown above, so
+   * with wind of 3 mph or more. The cutoffs use the whole °F and mph shown, so
    * 26.6°C (shown as 80°F) still gets its heat index.
    */
   const heatC  = p.heatIndex?.value;
   const chillC = p.windChill?.value;
-  const windKmh = p.windSpeed?.value;
+  const windMph = kmhToMph(p.windSpeed?.value);
   let feelsC = null, feelsLabel = 'Feels Like';
   if (heatC != null && tempF != null && Number(tempF) >= 80) {
     feelsC = heatC;  feelsLabel = 'Heat Index';
-  } else if (chillC != null && tempF != null && Number(tempF) <= 50 && windKmh > 4.8) {
+  } else if (chillC != null && tempF != null && Number(tempF) <= 50 && windMph != null && Number(windMph) >= 3) {
     feelsC = chillC; feelsLabel = 'Wind Chill';
   }
   const feelsF     = cToF(feelsC);
@@ -2639,8 +2639,7 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   /* ── Other observations ── */
   const dewC      = p.dewpoint?.value;
   const dewF      = cToF(dewC);
-  const windMph   = kmhToMph(p.windSpeed?.value);
-  const gustMph   = kmhToMph(p.windGust?.value);
+  const gustMph  = kmhToMph(p.windGust?.value);
   const visMi     = mToMi(p.visibility?.value);
   // barometricPressure here is the altimeter setting — what US reports and
   // weather.gov call "Barometer". Sea-level pressure (a different quantity) only
@@ -2650,7 +2649,7 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   const humidity  = p.relativeHumidity?.value != null
                   ? Math.round(p.relativeHumidity.value) : null;
   // Calm (0 wind) has no meaningful direction: stations still send 0° ("from N").
-  const isCalm    = windKmh === 0;
+  const isCalm    = p.windSpeed?.value === 0;
   const windDir   = p.windDirection?.value;
   const dirStr    = windDir != null && !isCalm ? degToCompass(windDir) : null;
 

@@ -179,7 +179,7 @@ The **⊕ crosshair button** in the bottom-right corner of the map uses your dev
 
 ## Weather Station Popup
 
-Click any station badge on the map — or focus it with `Tab` and press `Enter` — to open the info panel (`Esc` closes it and returns focus to the badge). It shows:
+Click any station badge on the map — or focus it with `Tab` and press `Enter` — to open the info panel (opening it from the keyboard moves focus into it; with focus in the panel, `Esc` closes it and returns focus to the badge — otherwise use its ✕). It shows:
 
 | Field | Source |
 |---|---|

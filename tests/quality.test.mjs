@@ -727,7 +727,11 @@ test('round-9 fixes: narrow header, drag vs click, pin-mode banner, colours, Loc
   handler(true)(click(0));    // a keyboard "click" is never a drag: closes
   assert.equal(closed, 2);
   assert.match(html, /pressStartedInMap = map\.getContainer\(\)\.contains\(e\.target\);/);
-  assert.match(html, /main:has\(#tap-place-banner\.active\) #popup-panel \{ top: 64px; max-height: calc\(100% - 80px\); \}/);
+  // Pin mode: panel and alert banner move below the pin-mode banner's real height.
+  assert.match(html, /main:has\(#tap-place-banner\.active\) #popup-panel \{\s*top: calc\(var\(--tap-banner-h, 48px\) \+ 16px\);\s*max-height: calc\(100% - var\(--tap-banner-h, 48px\) - 32px\);/);
+  assert.match(html, /main:has\(#tap-place-banner\.active\) #alert-banner \{\s*top: calc\(var\(--tap-banner-h, 48px\) \+ 16px\);/);
+  assert.match(html, /main:has\(#tap-place-banner\.active\) #alert-banner \{\s*top: calc\(var\(--tap-banner-h, 74px\) \+ 8px\);/);
+  assert.match(html, /mapEl\.parentElement\.style\.setProperty\('--tap-banner-h', `\$\{tapPlaceBanner\.offsetHeight\}px`\);/);
   assert.match(html, /max-height: 70vh !important;/);
   // The press tracker must see every press first (capture phase, on document).
   assert.match(html, /document\.addEventListener\('pointerdown', e => \{\s*pressStartedInMap = [^}]*\}, \{ capture: true \}\);/);

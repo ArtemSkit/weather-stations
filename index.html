@@ -830,7 +830,16 @@
      mid-width windows) would cover the panel's ✕ — start the panel below it.
      (Phones are unaffected: their bottom sheet pins top and max-height with
      !important in the mobile block.) */
-  main:has(#tap-place-banner.active) #popup-panel { top: 64px; max-height: calc(100% - 80px); }
+  /* --tap-banner-h is the pin-mode banner's real height (measured in section 17). */
+  main:has(#tap-place-banner.active) #popup-panel {
+    top: calc(var(--tap-banner-h, 48px) + 16px);
+    max-height: calc(100% - var(--tap-banner-h, 48px) - 32px);
+  }
+  /* The alert banner moves below it too, so the alert summary stays visible. */
+  main:has(#tap-place-banner.active) #alert-banner {
+    top: calc(var(--tap-banner-h, 48px) + 16px);
+    max-height: max(4rem, calc(100% - var(--tap-banner-h, 48px) - 16px - 110px));
+  }
 
   /* Desktop: the station panel fills the top-right column and can reach the
      bottom of the map, where the Locate Me button would cover its refresh-interval
@@ -1013,6 +1022,15 @@
     /* With the bottom sheet open: full width (undo the desktop side-by-side rule)
        and end above the Locate Me button, which then sits 12px above the sheet
        (whose real height is --sheet-h) and is 54px tall: 12 + 54 + 8px gap = 74px. */
+    /* Pin mode on phones: same idea as the desktop rule above, with phone spacing
+       (these selectors match the desktop ones in specificity and come later). */
+    main:has(#tap-place-banner.active) #alert-banner {
+      top: calc(var(--tap-banner-h, 74px) + 8px);
+      max-height: max(4rem, calc(100% - var(--tap-banner-h, 74px) - 8px - 180px - var(--safe-bottom)));
+    }
+    main.sheet-open:has(#tap-place-banner.active) #alert-banner {
+      max-height: max(4rem, calc(100% - var(--tap-banner-h, 74px) - 8px - var(--sheet-h, 70vh) - 74px));
+    }
     main.sheet-open #alert-banner {
       max-width: none;
       max-height: max(4rem, calc(100% - 8px - var(--sheet-h, 70vh) - 74px));
@@ -4187,6 +4205,13 @@ function setTapMode(active) {
   mapEl.classList.toggle('tap-mode', active);
 }
 setTapMode(false);   // initialise aria-pressed on both buttons
+
+// Publish the pin-mode banner's real height (it wraps to several lines on narrow
+// screens, and its text arrives a moment after it appears) so the CSS can move
+// the alert banner and the station panel below it instead of under it.
+new ResizeObserver(() => {
+  mapEl.parentElement.style.setProperty('--tap-banner-h', `${tapPlaceBanner.offsetHeight}px`);
+}).observe(tapPlaceBanner);
 
 dragPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
 tapPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));

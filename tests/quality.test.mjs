@@ -610,20 +610,43 @@ test('alert popups pan clear of the banner and panel, and their × never covers 
   assert.match(html, /\.wx-alert-popup \.leaflet-popup-content \{[^}]*margin: 14px 40px 14px 16px;/);
   assert.match(html, /\.wx-alert-popup \.leaflet-popup-content \{ margin-right: 52px; \}/);
 
-  // The pan padding is set before Leaflet opens the popup.
-  const options = {};
-  const area = {};
-  const prepare = vm.runInNewContext(`(${extractFunction('prepareAlertPopupPan')})`, {
-    alertAreaOwners: new Map([[area, { getPopup: () => ({ options }) }]]),
-    document: { getElementById: () => ({ getBoundingClientRect: () => ({ top: 100, bottom: 700, left: 0, right: 1000, width: 1000, height: 600 }) }) },
-    alertBanner: { classList: { contains: () => true }, getBoundingClientRect: () => ({ bottom: 260 }) },
-    popupPanel: { style: { display: 'block' }, getBoundingClientRect: () => ({ left: 670, top: 116 }) },
-    getComputedStyle: () => ({ position: 'absolute' }),
-    Math
-  });
-  prepare({ target: { closest: () => area } });
-  assert.deepEqual([...options.autoPanPaddingTopLeft], [16, 168]);      // below the banner (+8)
-  assert.deepEqual([...options.autoPanPaddingBottomRight], [338, 16]);  // left of the panel (+8)
+  /** Run prepareAlertPopupPan for a click at (x, y) on a given layout. */
+  const run = ({ x, y, map, panelStyle = 'absolute', panelRect, bannerBottom = 260 }) => {
+    const options = {};
+    const area = {};
+    vm.runInNewContext(`(${extractFunction('prepareAlertPopupPan')})`, {
+      alertAreaOwners: new Map([[area, { getPopup: () => ({ options }) }]]),
+      document: { getElementById: () => ({ getBoundingClientRect: () => map }) },
+      alertBanner: { classList: { contains: () => true }, getBoundingClientRect: () => ({ bottom: bannerBottom, right: 346 }) },
+      popupPanel: { style: { display: 'block' }, getBoundingClientRect: () => panelRect },
+      getComputedStyle: () => ({ position: panelStyle }),
+      Math
+    })({ target: { closest: () => area }, clientX: x, clientY: y });
+    return { ...options, topLeft: [...options.autoPanPaddingTopLeft], bottomRight: [...options.autoPanPaddingBottomRight] };
+  };
+  const desktop = { top: 100, bottom: 700, left: 0, right: 1000, width: 1000, height: 600 };
+  const panel = { left: 670, top: 116, bottom: 500 };
+
+  // A click under the banner pans below it; near the panel, left of it.
+  const near = run({ x: 200, y: 400, map: desktop, panelRect: panel });
+  assert.deepEqual(near.topLeft, [16, 168]);
+  assert.deepEqual(near.bottomRight, [338, 16]);
+  assert.equal(near.maxWidth, 320);
+  // A click far from both (right side, low down) doesn't pan for nothing.
+  const far = run({ x: 600, y: 690, map: desktop, panelRect: { left: 670, top: 116, bottom: 200 } });
+  assert.deepEqual(far.topLeft, [16, 16]);
+  assert.deepEqual(far.bottomRight, [16, 16]);
+
+  // Phone: full-width banner, bottom sheet, and a popup narrow enough that its ×
+  // stays on a 360px screen.
+  const phone = run({ x: 300, y: 150, map: { top: 95, bottom: 740, left: 0, right: 360, width: 360, height: 645 },
+                      panelStyle: 'fixed', panelRect: { left: 0, top: 400, bottom: 740 }, bannerBottom: 180 });
+  assert.equal(phone.maxWidth, 256);
+  assert.deepEqual(phone.topLeft, [16, 93]);
+  // The sheet would need 348px, but padding never exceeds half the map (322.5).
+  assert.deepEqual(phone.bottomRight, [16, 322.5]);
+  assert.ok(phone.maxHeight >= 120 && phone.maxHeight <= 645 - 93 - 322.5);
+
   assert.match(html, /document\.addEventListener\('click', prepareAlertPopupPan, \{ capture: true \}\);/);
 });
 
@@ -633,6 +656,56 @@ test('older Safari and safe areas: close button, focus ring, map controls, tiles
   assert.match(html, /#fab-locate:focus \{ outline: 2px solid var\(--text\);/);
   assert.match(html, /\.leaflet-left \.leaflet-control \{ margin-left: calc\(10px \+ var\(--safe-left\)\) !important; \}/);
   assert.match(html, /L\.tileLayer\('https:\/\/tile\.openstreetmap\.org\/\{z\}\/\{x\}\/\{y\}\.png'/);
+});
+
+test('ZIP fallback: when it runs, and what it accepts', async () => {
+  /** zipToCoords with a fake network: `nominatim` and `photon` return {ok,status,data} or throw. */
+  const make = ({ nominatim, photon }) => {
+    const calls = [];
+    const fn = new Function('fetchJsonWithTimeout', `
+      async ${extractFunction('zipToCoordsViaPhoton')}
+      async ${extractFunction('zipToCoords')}
+      return zipToCoords;
+    `)(async url => {
+      calls.push(url.includes('nominatim') ? 'nominatim' : 'photon');
+      const r = url.includes('nominatim') ? nominatim() : photon();
+      return { response: { ok: r.ok, status: r.status }, data: r.data };
+    });
+    return { fn, calls };
+  };
+  const us = (name, lon, lat) => ({ properties: { countrycode: 'US', name }, geometry: { coordinates: [lon, lat] } });
+
+  // A real "not found" from Nominatim is final — no second lookup.
+  const empty = make({ nominatim: () => ({ ok: true, data: [] }), photon: () => ({ ok: true, data: { features: [] } }) });
+  await assert.rejects(empty.fn('00000'), /not found/);
+  assert.deepEqual(empty.calls, ['nominatim']);
+
+  // A rate limit / server error falls back to Photon, which must match the exact ZIP.
+  const limited = make({ nominatim: () => ({ ok: false, status: 429 }),
+    photon: () => ({ ok: true, data: { features: [us('12346', -1, 1), us('12345', -73.9, 42.8)] } }) });
+  assert.deepEqual({ ...await limited.fn('12345') }, { lat: 42.8, lon: -73.9 });
+  assert.deepEqual(limited.calls, ['nominatim', 'photon']);
+
+  // Photon without a US match → not found (no foreign or merely similar code).
+  const none = make({ nominatim: () => ({ ok: false, status: 503 }),
+    photon: () => ({ ok: true, data: { features: [{ properties: { countrycode: 'ES', name: '10001' }, geometry: { coordinates: [2, 40] } }] } }) });
+  await assert.rejects(none.fn('10001'), /not found/);
+  assert.match(extractFunction('zipToCoordsViaPhoton'), /limit=50/);
+});
+
+test('round-9 fixes: narrow header, drag vs click, pin-mode banner, colours, Locate privacy', () => {
+  assert.match(html, /\.search-bar input \{\s*flex: 1;\s*min-width: 0;/);
+  // A click that ends a map drag must not close the open alert popup.
+  assert.match(extractFunction('handleAlertPopupClickAway'), /^function handleAlertPopupClickAway\(event\) \{[\s\S]*?if \(map\.dragging\?\.moved\(\)\) return;/);
+  assert.match(html, /main:has\(#tap-place-banner\.active\) #popup-panel \{ top: 64px; \}/);
+  // Alert text uses a lighter shade (≥4.5:1 for every hue) than the polygon.
+  const add = extractFunction('addAlertGeometryToMap');
+  assert.match(add, /const textColor = `hsl\(\$\{hue\}, 85%, 72%\)`;/);
+  assert.match(add, /alertAreaPopupHtml\(props, textColor\)/);
+  // Locate Me keeps the exact GPS fix out of the URL/history (3 decimals ≈ 110 m).
+  assert.match(html, /placeDragPin\(\+lat\.toFixed\(3\), \+lng\.toFixed\(3\)\);/);
+  // Older Safari keeps a visible focus ring on Locate Me.
+  assert.match(html, /#fab-locate:focus:not\(:focus-visible\) \{ outline: none; \}/);
 });
 
 test('the hidden toast never makes the page taller than the window', () => {

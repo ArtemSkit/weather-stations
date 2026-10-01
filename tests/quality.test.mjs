@@ -2016,6 +2016,12 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   assert.equal(detect('29.42 -98.49'), 'coords');
   assert.equal(detect('29 -98'), 'coords');
   assert.equal(detect('29.42-98.49'), 'badzip');
+  // A mistyped ZIP+4 is not a coordinate pair; signed / dot-first numbers are.
+  assert.equal(detect('78201 123'), 'badzip');
+  assert.equal(detect('7820 1234'), 'badzip');
+  assert.equal(detect('+29.4 -98.5'), 'coords');
+  assert.equal(detect('.5 .5'), 'coords');
+  assert.equal(detect('29., -98.'), 'coords');
   const parse = vm.runInNewContext(`(() => { ${extractFunction('parseCoords')} return parseCoords; })()`);
   assert.deepEqual({ ...parse(' 29.42   -98.49 ') }, { lat: 29.42, lon: -98.49 });
   assert.deepEqual({ ...parse('29.42 , -98.49') }, { lat: 29.42, lon: -98.49 });
@@ -2035,9 +2041,12 @@ test('a station inside a warning says so to screen readers, not just with a red 
   })([{ properties: { event: 'Flood Warning' } }]);
   flag(true);
   assert.equal(badge.title, 'KSAT — San Antonio — inside an active warning area');
-  assert.equal(outer.title, badge.title, 'the focusable Leaflet box is what gets announced');
+  assert.equal(outer.title, badge.title);
+  assert.equal(outer['aria-label'], badge.title, 'the focusable Leaflet box is what gets announced');
   flag(false);
   assert.equal(outer.title, 'KSAT — San Antonio');
+  assert.equal(outer['aria-label'], 'KSAT — San Antonio');
+  assert.match(extractFunction('makeStationMarker'), /markerEl\.setAttribute\('aria-label', label\);/);
   assert.match(extractFunction('makeStationMarker'), /iconEl\.dataset\.label = label;/);
 });
 
@@ -2076,7 +2085,8 @@ test('phone layout leaves room: sheet sized to the visible screen, toast above L
 });
 
 test('with the phone sheet open, the toast clears the lifted Locate Me button', () => {
-  assert.match(html, /main\.sheet-open ~ #toast \{\s*left: calc\(50% - 33px\);\s*max-width: calc\(100vw - 82px\);/);
+  // Only while Locate Me is shown (not crowded), and inside the side safe areas.
+  assert.match(html, /main\.sheet-open:not\(\.sheet-crowded\) ~ #toast \{\s*left: calc\(50% - 33px \+ \(var\(--safe-left\) - var\(--safe-right\)\) \/ 2\);\s*max-width: calc\(100vw - 82px - var\(--safe-left\) - var\(--safe-right\)\);/);
   assert.doesNotMatch(html, /\+ 74px\) !important/, 'lifting the toast higher pushed it onto the search bar');
   // The comment no longer claims User-Agent is a forbidden header.
   assert.doesNotMatch(html, /User-Agent is a forbidden fetch header/);

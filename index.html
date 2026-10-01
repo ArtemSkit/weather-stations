@@ -1025,9 +1025,9 @@
     /* Locate Me sits at the right just above the sheet (12–66px from the edge):
        shift the toast left of it instead of lifting it higher, which pushed it onto
        the search bar. Right edge = 100vw - 74px; left edge stays 8px. */
-    main.sheet-open ~ #toast {
-      left: calc(50% - 33px);
-      max-width: calc(100vw - 82px);
+    main.sheet-open:not(.sheet-crowded) ~ #toast {
+      left: calc(50% - 33px + (var(--safe-left) - var(--safe-right)) / 2);
+      max-width: calc(100vw - 82px - var(--safe-left) - var(--safe-right));
     }
 
     /* ── Station markers: slightly larger hit-area on touch ── */
@@ -1896,7 +1896,9 @@ intervalInput.addEventListener('change', () => {
 function detectInputType(raw) {
   const s = raw.trim();
   if (/^\d{5}([ -]?\d{4})?$/.test(s))                                 return 'zip';
-  if (/^(-?\d+(\.\d+)?)(\s*,\s*|\s+)(-?\d+(\.\d+)?)$/.test(s))       return 'coords';
+  // Each number: optional sign, at most 3 whole digits (so "78201 123", a mistyped
+  // ZIP+4, isn't taken as coordinates), optional decimals; ".5" and "29." are fine.
+  if (/^[+-]?(\d{1,3}(\.\d*)?|\.\d+)(\s*,\s*|\s+)[+-]?(\d{1,3}(\.\d*)?|\.\d+)$/.test(s)) return 'coords';
   // "7820" or "29.42-98.49" is a mistyped ZIP or coordinate pair, not an address:
   // Photon matches such numbers to some street far away and loads it silently.
   if (/^[\d\s.,+-]+$/.test(s))                                        return 'badzip';
@@ -3090,6 +3092,9 @@ function makeStationMarker(id, name, lat, lng) {
     popupCloseBtn.focus();
   };
   const markerEl = marker.getElement();
+  // Leaflet's box has role="button", so its spoken name would be just the badge
+  // text ("KSAT"); give it the full label (flagStationsInAlerts may extend it).
+  markerEl.setAttribute('aria-label', label);
   markerEl.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -3609,11 +3614,12 @@ function flagStationsInAlerts(features) {
   stationRecords.forEach(rec => {
     const inside = polygons.some(rings => pointInAlertPolygon(rec.lng, rec.lat, rings));
     rec.el.classList.toggle('alerted', inside);
-    // The red ring is visual only; put the same fact in the marker's name, which
-    // is what a screen reader announces (Leaflet's focusable box and the badge).
+    // The red ring is visual only; put the same fact in the marker's accessible
+    // name (aria-label on Leaflet's focusable box) and its hover tooltip (title).
     const title = rec.el.dataset.label + (inside ? ' — inside an active warning area' : '');
     rec.el.title = title;
-    rec.el.closest('.leaflet-marker-icon')?.setAttribute('title', title);
+    const box = rec.el.closest('.leaflet-marker-icon');
+    if (box) { box.title = title; box.setAttribute('aria-label', title); }
   });
 }
 

@@ -423,6 +423,11 @@
   .alert-card.alert-info  .alert-event { color: var(--yellow); }
 
   /* Card header (always visible) — click to reveal the full description. */
+  /* The banner scrolls (overflow-y: auto), which also clips anything drawn outside
+     it — so keyboard focus rings on its full-width buttons are drawn inside. */
+  .alert-summary:focus-visible,
+  .alert-card-head:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
+
   .alert-card-head {
     display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
     width: 100%; padding: 10px 12px; cursor: pointer; text-align: left;
@@ -1008,6 +1013,10 @@
     main.sheet-open #fab-locate {
       bottom: calc(var(--sheet-h, 70vh) + 12px);   /* the sheet height already includes its safe-area padding */
       right: calc(12px + env(safe-area-inset-right, 0px));   /* undo the desktop side-step */
+      /* When an open sheet leaves only a thin strip of map, the alert banner's
+         minimum height can reach down to this button; keep the button on top
+         and tappable (the banner's whole summary chip stays clickable). */
+      z-index: 1150;
       transition: bottom 0.3s cubic-bezier(0.32, 0.72, 0, 1);
     }
 

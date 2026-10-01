@@ -567,13 +567,20 @@ test('the alert banner stays clear of the map controls and the station panel', (
   assert.match(html, /\.station-marker\.alerted:hover,\s*\.station-marker\.alerted\.active \{ color: var\(--bg\); \}/);
   assert.match(html, /#fab-locate:focus-visible \{ outline: 2px solid var\(--text\);/);
   // A rebuilt banner keeps keyboard focus; the dead install-prompt hook is gone.
-  assert.match(extractFunction('renderAlertBanner'),
-    /if \(hadFocus\) alertBanner\.querySelector\('\[data-role="toggle"\]'\)\?\.focus\(\);/);
+  const render = extractFunction('renderAlertBanner');
+  assert.match(render, /if \(hadFocus\) alertBanner\.querySelector\('\[data-role="toggle"\]'\)\?\.focus\(\);/);
+  assert.ok(render.indexOf('const hadFocus = alertBanner.contains(document.activeElement);') <
+            render.lastIndexOf('alertBanner.innerHTML ='), 'focus must be checked before the rebuild');
+  // Focus rings on the banner's buttons are drawn inside (the banner clips).
+  assert.match(html, /\.alert-summary:focus-visible,\s*\.alert-card-head:focus-visible \{ outline: 2px solid var\(--text\); outline-offset: -3px; \}/);
   assert.doesNotMatch(html, /pwaInstallPrompt/);
   // The phone override must come AFTER the desktop side-by-side rule to win.
   const desktopRule = html.indexOf('main.sheet-open #alert-banner { max-width: calc(');
   const phoneRule = html.search(/main\.sheet-open #alert-banner \{\s*max-width: none;\s*max-height: max\(4rem, calc\(100% - 8px - var\(--sheet-h, 70vh\) - 74px\)\);/);
-  assert.ok(desktopRule > 0 && phoneRule > desktopRule);
+  const mobileBlock = html.indexOf('@media (pointer: coarse), (max-width: 640px) {');
+  assert.ok(desktopRule > 0 && mobileBlock > desktopRule && phoneRule > mobileBlock);
+  // With the sheet open on phones, Locate Me is drawn above the banner.
+  assert.match(html, /main\.sheet-open #fab-locate \{[^}]*z-index: 1150;/);
   // Delete on either pin button (touch devices only show the tap-pin) removes the pin.
   assert.match(html, /\[dragPinBtn, tapPinBtn\]\.forEach\(btn => btn\.addEventListener\('keydown'/);
 });

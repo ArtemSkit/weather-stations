@@ -1994,3 +1994,9 @@ test('alerts come before the map for keyboard users and small text keeps its con
   assert.match(html, /@media \(max-width: 340px\) \{\s*#app-version \{ bottom: calc\(20px \+ var\(--safe-bottom\)\); \}/);
   assert.doesNotMatch(html, /max-width: calc\(100vw - 84px/);
 });
+
+test('Locate Me hides instead of covering the header when the sheet leaves no room', () => {
+  assert.match(html, /mainEl\.classList\.toggle\('sheet-crowded', mainEl\.clientHeight - sheetH < 74\);/);
+  assert.match(html, /sheetSpaceObserver\.observe\(mainEl\);/);
+  assert.match(html, /main\.sheet-open\.sheet-crowded #fab-locate \{ visibility: hidden; \}/);
+});

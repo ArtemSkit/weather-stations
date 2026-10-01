@@ -1076,6 +1076,8 @@
       z-index: 1150;
       transition: bottom 0.3s cubic-bezier(0.32, 0.72, 0, 1);
     }
+    /* No room above the sheet (set in initMobile): hide rather than cover the header. */
+    main.sheet-open.sheet-crowded #fab-locate { visibility: hidden; }
 
     /* ── Toast: add safe area inset ── */
     #toast { bottom: calc(20px + var(--safe-bottom)); }
@@ -4622,9 +4624,16 @@ function initMobile() {
      so the toast and Locate Me button sit just above it instead of a fixed 70vh,
      which left them floating mid-screen over a short sheet. Set on <html> because
      #toast is not inside <main>. */
-  new ResizeObserver(() => {
-    document.documentElement.style.setProperty('--sheet-h', `${_popupPanel.offsetHeight}px`);
-  }).observe(_popupPanel);
+  const sheetSpaceObserver = new ResizeObserver(() => {
+    const sheetH = _popupPanel.offsetHeight;
+    document.documentElement.style.setProperty('--sheet-h', `${sheetH}px`);
+    // The lifted Locate Me button needs 74px of map above the sheet (54px button +
+    // 12px lift + 8px gap). With less (landscape phones), it would land on the
+    // header's FIND button, so it is hidden while the sheet is open (see CSS).
+    mainEl.classList.toggle('sheet-crowded', mainEl.clientHeight - sheetH < 74);
+  });
+  sheetSpaceObserver.observe(_popupPanel);
+  sheetSpaceObserver.observe(mainEl);   // rotating the phone changes the room too
 
   /* ── Touch-only: swipe gestures exist only on (pointer: coarse) devices. ── */
   if (!window.matchMedia('(pointer: coarse)').matches) return;

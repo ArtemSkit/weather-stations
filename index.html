@@ -2615,8 +2615,13 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   const windDir   = p.windDirection?.value;
   const dirStr    = windDir != null ? degToCompass(windDir) : null;
 
-  /* ── Cloud layers (first/primary layer only) ── */
-  const layer    = p.cloudLayers?.[0];
+  /* ── Cloud layers: show the main deck ──
+     NWS lists layers lowest first, so the first is often just a thin lower layer
+     (FEW at 1500 ft under an overcast). Show the layer with the most cover; on a
+     tie the lowest one, which is the one that matters for the ceiling. */
+  const coverRank = { CLR: 0, SKC: 0, FEW: 1, SCT: 2, BKN: 3, OVC: 4, VV: 5 };
+  const layer = (p.cloudLayers || []).reduce((best, l) =>
+    (coverRank[l?.amount] ?? -1) > (coverRank[best?.amount] ?? -1) ? l : best, p.cloudLayers?.[0]);
   const cloudAmt = layer?.amount;
   const cloudFt  = mToFt(layer?.base?.value);
   const amtMap   = {
@@ -2669,7 +2674,7 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   // Precipitation likelihood bar (full-width cell) — real NWS hourly forecast PoP
   const precipHTML = precipPct != null
     ? `<div class="weather-item full">
-         <div class="weather-item-label">Precip Chance (next hr)</div>
+         <div class="weather-item-label">Precip Chance (this hr)</div>
          <div class="weather-item-value">${precipPct}%</div>
          <div class="precip-bar-wrap">
            <div class="precip-bar" style="width:${precipPct}%"></div>

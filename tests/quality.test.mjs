@@ -792,6 +792,20 @@ test('refresh interval input: exponent forms, empty field, clamping', () => {
   assert.match(html, /#tap-pin-btn \{ display: flex !important; align-items: center; justify-content: center; padding: 0; \}/);
 });
 
+test('the sky row shows the main cloud deck, not just the lowest layer', () => {
+  // Pull the layer-picking lines out of renderWeather and run them.
+  const src = extractFunction('renderWeather');
+  const pick = src.slice(src.indexOf('const coverRank'), src.indexOf('const cloudAmt'));
+  const choose = layers => vm.runInNewContext(`(() => { const p = { cloudLayers: ${JSON.stringify(layers)} }; ${pick}; return layer; })()`);
+  // Live KSAT case: FEW 460 m, BKN 610 m, OVC 790 m → overcast, not "Few".
+  assert.equal(choose([{ amount: 'FEW', base: { value: 460 } }, { amount: 'BKN', base: { value: 610 } },
+                       { amount: 'OVC', base: { value: 790 } }]).amount, 'OVC');
+  // Tie → the lowest layer (it sets the ceiling).
+  assert.equal(choose([{ amount: 'BKN', base: { value: 300 } }, { amount: 'BKN', base: { value: 900 } }]).base.value, 300);
+  assert.equal(choose([]), undefined);
+  assert.match(html, /Precip Chance \(this hr\)/);
+});
+
 test('the hidden toast never makes the page taller than the window', () => {
   // An absolute box parked 80px below the screen let focus() scroll the whole app.
   assert.match(html, /#toast \{[^}]*position: fixed;/);

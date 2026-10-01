@@ -553,6 +553,17 @@ test('Enter that confirms an IME composition does not start a search', () => {
   assert.match(html, /e\.key === 'Enter' && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
 });
 
+test('the alert banner stays clear of the map controls and the station panel', () => {
+  // Desktop: above the bottom-left zoom control; beside an open panel in narrow windows.
+  assert.match(html, /#alert-banner \{[^}]*max-height: calc\(100% - 16px - 110px\);/);
+  assert.match(html, /main\.sheet-open #alert-banner \{ max-width: calc\(100% - 16px - 314px - 32px\); \}/);
+  // Phones: above the zoom control and Locate Me, full width even with the sheet open.
+  assert.match(html, /max-height: calc\(100% - 8px - 180px - var\(--safe-bottom\)\);/);
+  assert.match(html, /main\.sheet-open #alert-banner \{ max-width: none; \}/);
+  // Delete on either pin button (touch devices only show the tap-pin) removes the pin.
+  assert.match(html, /\[dragPinBtn, tapPinBtn\]\.forEach\(btn => btn\.addEventListener\('keydown'/);
+});
+
 test('the hidden toast never makes the page taller than the window', () => {
   // An absolute box parked 80px below the screen let focus() scroll the whole app.
   assert.match(html, /#toast \{[^}]*position: fixed;/);

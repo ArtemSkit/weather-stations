@@ -843,15 +843,37 @@ test('address lookup uses key-less Photon and keeps only US matches', async () =
   await assert.rejects(addressToCoords('paris'), /not found/);
 });
 
+test('station panel shows readings promptly and formats them cleanly', () => {
+  const toFixedClean = vm.runInNewContext(
+    html.match(/const toFixedClean = (\(n, digits\) => \{[\s\S]*?\n\});/)[1]);
+  assert.equal(toFixedClean(-0.04, 1), '0.0', 'tiny negatives must not render as "-0.0"');
+  assert.equal(toFixedClean(-1.25, 1), '-1.3');
+
+  // The observation renders before the (slow, separate) forecast lookup finishes.
+  const refresh = extractFunction('refreshStationData');
+  assert.ok(refresh.indexOf('renderWeather(') < refresh.indexOf('await fetchForecastPoP'));
+  assert.match(html, /const FORECAST_FAILURE_TTL_MS = 2 \* 60 \* 1000;/);
+
+  // The refresh interval is clamped so setInterval can't overflow into a tight loop.
+  assert.match(html, /id="interval-input"[\s\S]*?max="3600"/);
+  assert.match(html, /const MAX_REFRESH_SECONDS = 3600;/);
+
+  // Malformed station entries are skipped instead of aborting the whole plot.
+  assert.match(extractFunction('plotStations'), /Number\.isFinite\(lat\)/);
+});
+
 test('every search path allocates or receives a generation before awaiting', () => {
   const search = extractFunction('doSearch');
   assert.ok(search.indexOf('const gen = ++searchGeneration') < search.indexOf('await zipToCoords'));
   assert.match(search, /loadStationsAt\(lat, lon, gen\)/);
   assert.match(search, /catch \(e\) \{\s*if \(gen !== searchGeneration\) return;/);
 
+  // loadStationsAt never allocates its own generation: every caller passes one.
   const stationLoader = extractFunction('loadStationsAt');
-  assert.match(stationLoader, /gen = \+\+searchGeneration/);
+  assert.match(stationLoader, /^function loadStationsAt\(lat, lon, gen\)/);
   assert.match(stationLoader, /if \(gen !== searchGeneration\) return/);
+  assert.doesNotMatch(html, /loadStationsAt\(\s*\w+\s*,\s*\w+\s*\)/,
+    'every call site must pass its pre-allocated generation');
 
   const locateHandler = html.slice(html.indexOf("fabLocate.addEventListener('click'"));
   assert.ok(locateHandler.indexOf('const gen = ++searchGeneration') <

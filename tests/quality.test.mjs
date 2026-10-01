@@ -861,6 +861,8 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   assert.match(body(), /0\.25 mi/);
   obs({ visibility: { value: 1207.01 } });
   assert.match(body(), /0\.75 mi/);
+  obs({ visibility: { value: 5632.7 } });   // 5-minute reports send 3.5 mi
+  assert.match(body(), />3\.5 mi/);
   obs({ visibility: { value: 16093.44 } });
   assert.match(body(), />10 mi/);
 

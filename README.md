@@ -185,7 +185,7 @@ Click any station badge on the map — or focus it with `Tab` and press `Enter` 
 | **Feels Like** | Heat Index (from 80°F) *or* Wind Chill (50°F or colder with wind above 3 mph) + °C companion — hidden otherwise, even if NOAA sends a value |
 | **Wind** | Speed in whole mph + compass direction, or **Calm** |
 | **Gusts** | mph |
-| **Visibility** | Miles, as US reports give them — fractions (0.25, 0.75…) below 3 mi, whole miles above |
+| **Visibility** | Miles, as US reports give them — fractions (0.25, 0.75…) below 3 mi, whole or half miles above |
 | **Pressure** | Altimeter setting (the "barometer" reading US reports use) in inHg; sea-level pressure only if that is missing |
 | **Sky / Weather** | Total sky cover — the layer with the most cover and its base, to the nearest 100 ft (no height for a clear sky; *Obscured* with the vertical visibility when fog or snow hides the sky) — plus present weather in words when it adds to the description |
 | **Precip Chance (this hr)** | Real probability of precipitation for the current hour, shown as % with a colour-gradient fill bar |

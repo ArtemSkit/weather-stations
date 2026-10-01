@@ -1665,6 +1665,39 @@ test('every search path allocates or receives a generation before awaiting', () 
   assert.match(locateHandler, /const watchdog = setTimeout\(\(\) => \{\s*if \(!settle\(\) \|\| gen !== searchGeneration\) return;/);
 });
 
+test('a station that never reports says so and is not polled; the old time is cleared', async () => {
+  const elements = {};
+  const el = id => (elements[id] ||= { textContent: 'OBS: 05:15 AM CDT', innerHTML: '', classList: { add() {}, remove() {} },
+    // The loading skeleton is the only thing querySelector needs to find.
+    querySelector(sel) { return sel === '.station-loading' && this.innerHTML.includes('station-loading') ? {} : null; } });
+  const timers = [];
+  const run = vm.runInNewContext(`(() => {
+    let refreshTimer = null, activeMarkerEl = null, stationOpenGeneration = 0, activeStationId = null,
+        activeStationName = null, stationRefreshRequest = null, stationRefreshMissed = false,
+        stationNoDataGeneration = 0, refreshInterval = 60000;
+    ${escapeHtmlSource}
+    ${extractFunction('isActiveStation')}
+    async ${extractFunction('refreshStationData')}
+    async ${extractFunction('doStationRefresh')}
+    async ${extractFunction('openStation')}
+    return { openStation, timer: () => refreshTimer };
+  })()`, {
+    document: { hidden: false, getElementById: el }, popupPanel: { style: {} },
+    setInterval: () => timers.push(1), clearInterval() {},
+    fetchObservations: async id => {
+      // The footer is reset before the first request goes out.
+      assert.equal(elements['update-time'].textContent, '—');
+      throw Object.assign(new Error(`Station "${id}" not found or has no recent observations`), { status: 404 });
+    }
+  });
+  el('update-time');   // the previous station's time is showing
+  await run.openStation('PAJC', 'Test', null);
+  assert.match(elements['popup-body'].innerHTML, /not found or has no recent observations/);
+  assert.doesNotMatch(elements['popup-body'].innerHTML, /retrying/);
+  assert.equal(timers.length, 0, 'a permanent 404 must not be polled');
+  assert.equal(run.timer(), null);
+});
+
 test('station refreshes bind to one panel lifetime and zone fetches share a global limit', () => {
   const refresh = extractFunction('doStationRefresh');
   assert.match(refresh, /isActiveStation\(stationId, generation\)/);

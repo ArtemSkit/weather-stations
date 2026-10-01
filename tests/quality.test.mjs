@@ -904,7 +904,7 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   assert.match(body(), /rain showers in vicinity/);
   // NWS words for BCFG and UP (KPKB-, KAIO-like) match, so they are not repeated.
   obs({ textDescription: 'Fog/Mist and Patchy Fog', presentWeather: [{ weather: 'fog_mist' }, { modifier: 'patches', weather: 'fog' }] });
-  assert.doesNotMatch(body(), /patchy fog/);
+  assert.doesNotMatch(body(), /patch|fog mist/);
   obs({ textDescription: 'Light Unknown Precipitation', presentWeather: [{ intensity: 'light', weather: 'unknown' }] });
   assert.doesNotMatch(body(), /light unknown/);
   // A 3-hour-old report gets an age.

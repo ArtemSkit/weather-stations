@@ -2317,5 +2317,7 @@ test('keyboard: the focused map shows a ring and a held Enter searches once', ()
   // main clips overflow and the tile panes (z-index 400) would cover an inside
   // outline, so the ring is a layer above the tiles and below the controls (800).
   assert.match(html, /#map:focus-visible::after \{[^}]*z-index: 799;[^}]*box-shadow: inset 0 0 0 2px var\(--accent\);/);
+  // High Contrast mode drops box-shadow; the transparent outline becomes the ring.
+  assert.match(html, /#map:focus-visible::after \{[^}]*outline: 2px solid transparent; outline-offset: -2px;/);
   assert.match(html, /if \(e\.key === 'Enter' && !e\.repeat && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
 });

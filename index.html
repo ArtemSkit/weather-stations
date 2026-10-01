@@ -255,6 +255,9 @@
   #map:focus-visible::after {
     content: ''; position: absolute; inset: 0; z-index: 799;
     pointer-events: none; box-shadow: inset 0 0 0 2px var(--accent);
+    /* Windows High Contrast drops box-shadow but paints outlines in a system
+       colour, so this invisible outline becomes the ring there. */
+    outline: 2px solid transparent; outline-offset: -2px;
   }
 
   /* Dark-mode tile filter — desaturate + hue-rotate to match the UI palette */

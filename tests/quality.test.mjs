@@ -191,6 +191,7 @@ test('station lookup uses the documented gridpoint flow and shares its /points a
   const fetchStations = new Function('fetchJsonWithTimeout', 'alertStateCache', 'isTrustedNwsApiUrl', `
     const ALERT_STATE_CACHE_LIMIT = 100;
     function setBoundedCache(cache, key, value) { cache.set(key, value); }
+    ${extractFunction('pointStateCode')}
     async ${extractFunction('fetchStations')}
     return fetchStations;
   `)(async url => {
@@ -794,6 +795,53 @@ test('alert feeds discard malformed feature entries at the network boundary', as
   assert.deepEqual(await harness.fetchPointAlerts(29.4, -98.5), [validAlert]);
 });
 
+test('cancelled alerts and border points are handled like the live NWS feed', () => {
+  const isDisplayableAlert = vm.runInNewContext(`(${extractFunction('isDisplayableAlert')})`);
+  // Real cancellation shape: still in /alerts/active, still named "Flood Watch".
+  assert.equal(isDisplayableAlert({ properties: {
+    event: 'Flood Watch', status: 'Actual', messageType: 'Alert', response: 'AllClear',
+    urgency: 'Past', headline: 'The Flood Watch has been cancelled.' } }), false);
+  assert.equal(isDisplayableAlert({ properties: { event: 'Tornado Warning', messageType: 'Cancel' } }), false);
+  assert.equal(isDisplayableAlert({ properties: {
+    event: 'Flood Watch', status: 'Actual', messageType: 'Update', response: 'Prepare' } }), true);
+
+  // 42.0,-71.4 is in Rhode Island, but its nearest town is in Massachusetts.
+  const pointStateCode = vm.runInNewContext(`(${extractFunction('pointStateCode')})`);
+  assert.equal(pointStateCode({
+    county: 'https://api.weather.gov/zones/county/RIC007',
+    forecastZone: 'https://api.weather.gov/zones/forecast/RIZ001',
+    relativeLocation: { properties: { state: 'MA' } } }), 'RI');
+  assert.equal(pointStateCode({ relativeLocation: { properties: { state: 'TX' } } }), 'TX');
+  assert.equal(pointStateCode({}), null);
+});
+
+test('a new area cancels zone lookups queued for the old one', async () => {
+  const fetched = [];
+  const harness = new Function('fetchJsonWithTimeout', `
+    const zoneGeomCache = new Map();
+    const ZONE_GEOM_CACHE_LIMIT = 200;
+    const ZONE_FETCH_CONCURRENCY = 1;            // one at a time, so the rest queue
+    const zoneFetchQueue = [];
+    let zoneFetchActive = 0;
+    function setBoundedCache(cache, key, value) { cache.set(key, value); }
+    ${extractFunction('isTrustedNwsApiUrl')}
+    ${extractFunction('drainZoneFetchQueue')}
+    ${extractFunction('fetchZoneGeometry')}
+    return { fetchZoneGeometry, cancelQueued: () => zoneFetchQueue.splice(0).forEach(t => t.cancel()),
+             cached: url => zoneGeomCache.has(url) };
+  `)(async url => { fetched.push(url); return { response: { ok: true }, data: { geometry: { type: 'Polygon' } } }; });
+
+  const zone = n => `https://api.weather.gov/zones/forecast/Z${n}`;
+  const first = harness.fetchZoneGeometry(zone(1));    // starts immediately
+  const queued = harness.fetchZoneGeometry(zone(2));   // waits behind it
+  harness.cancelQueued();
+  assert.equal(await queued, undefined, 'a cancelled lookup resolves as a transient miss');
+  assert.equal(harness.cached(zone(2)), false, 'and is not cached');
+  await first;
+  assert.deepEqual(fetched, [zone(1)]);
+  assert.match(extractFunction('clearAlerts'), /zoneFetchQueue\.splice\(0\)\.forEach\(task => task\.cancel\(\)\)/);
+});
+
 test('alert cache expires before the next refresh tick', () => {
   // The cache clock starts when a fetch finishes, so a TTL equal to the refresh
   // interval would serve the previous result on every other tick.
@@ -1101,15 +1149,21 @@ test('only transient zone geometry failures are retried without resetting an unc
     let activeAlertAreaOwner = null;
     let shownAlerts = [];
     ${extractFunction('showAlerts')}
+    let currentViewport = null;
     async ${extractFunction('refreshAlerts')}
-    return { refreshAlerts, areaRenderCount: () => areaRenderCount };
+    return { refreshAlerts, areaRenderCount: () => areaRenderCount,
+             openPopup: () => { activeAlertAreaOwner = {}; } };
   `)([{ id: 'watch-1' }]);
 
   await refreshHarness.refreshAlerts();
   assert.equal(refreshHarness.areaRenderCount(), 1);
+  // While the user has an area popup open, the retry waits (a redraw would close it).
+  refreshHarness.openPopup();
+  await refreshHarness.refreshAlerts();
+  assert.equal(refreshHarness.areaRenderCount(), 1);
 });
 
-test('alerts survive a failed later search but not a replaced area', async () => {
+test('a first alert load is dropped only when its area is replaced', async () => {
   let resolveFetch;
   const shown = [];
   let timers = 0;
@@ -1120,6 +1174,8 @@ test('alerts survive a failed later search but not a replaced area', async () =>
     function refreshAlerts() {}
     function clearInterval() {}
     function setInterval() { return ++globalThis.__timers; }
+    let currentViewport = null;
+    function alertViewportBounds() { return null; }
     async ${extractFunction('loadAlertsForArea')}
     return { loadAlertsForArea, replaceArea: () => { alertLoadToken = null; } };
   `)(() => new Promise(resolve => { resolveFetch = resolve; }), alerts => shown.push(alerts));
@@ -1155,6 +1211,7 @@ test('a feed outage drops alerts whose hazard has ended', async () => {
     const console = { error() {} };
     async function fetchAlerts() { return null; }   // feed unreachable
     ${extractFunction('isAlertUnexpired')}
+    let currentViewport = null;
     async ${extractFunction('refreshAlerts')}
     return { refreshAlerts };
   `)(alerts => redrawn.push(alerts), [
@@ -1182,6 +1239,7 @@ test('alert refresh commits its signature only after rendering succeeds', async 
     let activeAlertAreaOwner = null;
     ${extractFunction('isAlertUnexpired')}
     ${extractFunction('showAlerts')}
+    let currentViewport = null;
     async ${extractFunction('refreshAlerts')}
     return { refreshAlerts, signature: () => lastAlertSignature };
   `)([{ id: 'watch-1' }]);

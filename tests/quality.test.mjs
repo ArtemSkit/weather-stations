@@ -740,7 +740,14 @@ test('round-9 fixes: narrow header, drag vs click, pin-mode banner, colours, Loc
   const phonePinAt = html.search(/main:has\(#tap-place-banner\.active\) #alert-banner \{\s*top: calc\(var\(--tap-banner-h, 74px\) \+ 8px\);/);
   const phoneSheetPinAt = html.search(/main\.sheet-open:has\(#tap-place-banner\.active\) #alert-banner \{\s*max-height: max\(4rem, calc\(100% - var\(--tap-banner-h, 74px\) - 8px - var\(--sheet-h, 70vh\) - 74px\)\);/);
   assert.ok(desktopPinAt > 0 && desktopPinAt < mobileBlockAt, 'desktop pin rule before the mobile block');
-  assert.ok(phonePinAt > mobileBlockAt && phoneSheetPinAt > mobileBlockAt, 'phone pin rules inside the mobile block');
+  // The block closes at the first two-space-indented "}" line after it opens
+  // (CRLF-tolerant, since a Windows checkout may convert line endings).
+  const mobileBlockEnd = mobileBlockAt + html.slice(mobileBlockAt).search(/\r?\n  \}\r?\n/);
+  assert.ok(phonePinAt > mobileBlockAt && phoneSheetPinAt > mobileBlockAt &&
+            phonePinAt < mobileBlockEnd && phoneSheetPinAt < mobileBlockEnd, 'phone pin rules inside the mobile block');
+  // Pin mode measures its banner with the text in before the first paint (no jump).
+  assert.match(extractFunction('setTapMode'),
+    /tapPlaceBanner\.textContent = TAP_BANNER_TEXT;\s*mapEl\.parentElement\.style\.setProperty\('--tap-banner-h'/);
   // The phone sheet's own cap is the one inside the mobile #popup-panel rule.
   const sheetRule = html.slice(html.indexOf('#popup-panel {', mobileBlockAt), html.indexOf('}', html.indexOf('#popup-panel {', mobileBlockAt)));
   assert.match(sheetRule, /max-height: 70vh !important;/);

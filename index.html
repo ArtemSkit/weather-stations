@@ -137,6 +137,7 @@
 
   .search-bar input {
     flex: 1;
+    min-width: 0;   /* a flex item won't shrink below its ~226px built-in width otherwise */
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -824,6 +825,11 @@
   #map.tap-mode.leaflet-container { cursor: crosshair; }
   #map.tap-mode .wx-alert-area,
   #map.tap-mode .leaflet-marker-icon { pointer-events: none; }
+
+  /* Desktop: while pin mode is on, its banner (which wraps to two lines in
+     mid-width windows) would cover the panel's ✕ — start the panel below it.
+     (Phones are unaffected: their bottom sheet uses top: auto !important.) */
+  main:has(#tap-place-banner.active) #popup-panel { top: 64px; }
 
   /* Desktop: the station panel fills the top-right column and can reach the
      bottom of the map, where the Locate Me button would cover its refresh-interval
@@ -1912,8 +1918,10 @@ async function zipToCoords(zip) {
             + `?postalcode=${encodeURIComponent(zip5)}&country=US&format=json&limit=1`;
   let res, data;
   try {
+    // A shorter limit than usual, since a slow Nominatim still leaves the
+    // Photon fallback its own full timeout.
     ({ response: res, data } = await fetchJsonWithTimeout(
-      url, { headers: { 'Accept-Language': 'en' } }));
+      url, { headers: { 'Accept-Language': 'en' } }, 8000));
   } catch {
     // Unreachable or blocked (Nominatim's CDN sometimes serves a cached answer
     // without its CORS header, which the browser reports as a network failure):
@@ -1928,9 +1936,12 @@ async function zipToCoords(zip) {
 /** Backup ZIP lookup through Photon's postcode index (US results only). */
 async function zipToCoordsViaPhoton(zip5, zipAsTyped) {
   const { response: res, data } = await fetchJsonWithTimeout(
-    `https://photon.komoot.io/api/?q=${encodeURIComponent(zip5)}&osm_tag=place:postcode&limit=5&lang=en`);
+    // limit=50: a code that also exists abroad (e.g. 12345, 20500) can rank the US
+    // entry ~10th; the exact-name check rejects a merely similar postcode.
+    `https://photon.komoot.io/api/?q=${encodeURIComponent(zip5)}&osm_tag=place:postcode&limit=50&lang=en`);
   if (!res.ok) throw new Error('ZIP geocoding request failed');
-  const match = (data?.features || []).find(f => f?.properties?.countrycode === 'US');
+  const match = (data?.features || []).find(f =>
+    f?.properties?.countrycode === 'US' && String(f.properties.name ?? zip5) === zip5);
   const [lon, lat] = match?.geometry?.coordinates || [];
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error(`ZIP code "${zipAsTyped}" not found`);
   return { lat, lon };
@@ -3108,6 +3119,9 @@ function openAlertPopupElement() {
  * - every other outside click closes the popup normally.
  */
 function handleAlertPopupClickAway(event) {
+  // Browsers fire a click when a mouse drag (map pan) ends; Leaflet ignores it,
+  // and so must we, or panning the map would close the popup.
+  if (map.dragging?.moved()) return;
   const popup = openAlertPopupElement();
   if (!popup) return;
   const target = event.target;
@@ -3143,23 +3157,37 @@ function prepareAlertPopupPan(event) {
   const popup = area ? alertAreaOwners.get(area)?.getPopup?.() : null;
   if (!popup) return;
   const mapBox = document.getElementById('map').getBoundingClientRect();
+
+  // Fit the popup to narrow phones: the content (up to 320px) plus its margins,
+  // the wrapper and the 44px × must stay inside the map, or the × is off-screen.
+  const width = Math.max(160, Math.min(320, mapBox.width - 104));
+  popup.options.maxWidth = width;
+  // The popup opens centred above the tap point; these bound its likely footprint.
+  const halfWidth = width / 2 + 40, height = 400;
+
   // Never ask for more than half the map, or the popup would have nowhere to go.
   const clampY = v => Math.max(16, Math.min(v, mapBox.height / 2));
   const clampX = v => Math.max(16, Math.min(v, mapBox.width / 2));
   let top = 16, right = 16, bottom = 16;
   if (alertBanner.classList.contains('visible')) {
-    top = clampY(alertBanner.getBoundingClientRect().bottom - mapBox.top + 8);
+    const banner = alertBanner.getBoundingClientRect();
+    // Only when the popup could reach the banner sideways (on desktop the banner
+    // is a 330px column), so a click elsewhere doesn't pan the map for nothing.
+    if (event.clientX - halfWidth < banner.right) top = clampY(banner.bottom - mapBox.top + 8);
   }
   if (popupPanel.style.display === 'block') {
     const panel = popupPanel.getBoundingClientRect();
     if (getComputedStyle(popupPanel).position === 'fixed') {   // phone bottom sheet
       bottom = clampY(mapBox.bottom - panel.top + 8);
-    } else {                                                     // desktop side panel
+    } else if (event.clientY - height < panel.bottom) {         // desktop side panel
       right = clampX(mapBox.right - panel.left + 8);
     }
   }
   popup.options.autoPanPaddingTopLeft = [16, top];
   popup.options.autoPanPaddingBottomRight = [right, bottom];
+  // Leave room for the popup's own frame and tip in what remains, so on short
+  // screens its content scrolls instead of being cut off at the map's edge.
+  popup.options.maxHeight = Math.max(120, mapBox.height - top - bottom - 60);
 }
 
 document.addEventListener('click', prepareAlertPopupPan, { capture: true });
@@ -3563,7 +3591,13 @@ function alertAreaPopupHtml(props, color) {
 }
 
 /** Draw one alert geometry (Polygon/MultiPolygon) with label and click popup. */
-function addAlertGeometryToMap(geom, props, color, label) {
+function addAlertGeometryToMap(geom, props, hue, label) {
+  // Comma-separated hsl() — Leaflet applies this as an SVG fill/stroke attribute,
+  // where the space-separated CSS Color 4 form isn't reliably parsed on older Safari.
+  const color = `hsl(${hue}, 85%, 62%)`;
+  // Text is lighter: at 62% the blue hues fall to ~3:1 contrast on the dark popup
+  // and label chip; 72% keeps every hue above 4.5:1.
+  const textColor = `hsl(${hue}, 85%, 72%)`;
   // L.geoJSON understands Polygon, MultiPolygon, and interior holes directly.
   const layer = L.geoJSON(geom, {
     style: {
@@ -3575,7 +3609,7 @@ function addAlertGeometryToMap(geom, props, color, label) {
   // Leaflet's bindPopup supplies the click/tap listener; keeping that single
   // built-in listener avoids duplicate opens. autoPan nudges the map just enough
   // that a popup opened near an edge isn't clipped (title and × button) on phones.
-  layer.bindPopup(alertAreaPopupHtml(props, color), {
+  layer.bindPopup(alertAreaPopupHtml(props, textColor), {
     className: 'wx-alert-popup', autoPan: true, autoPanPadding: [16, 16], maxWidth: 320
   });
 
@@ -3616,7 +3650,7 @@ function addAlertGeometryToMap(geom, props, color, label) {
   layer.eachLayer(registerAreaPath);
 
   // The chip is non-interactive so pointer events reach the selected polygon.
-  labelLayer?.bindTooltip(`<span style="color:${color}">${escapeHtml(label)}</span>`, {
+  labelLayer?.bindTooltip(`<span style="color:${textColor}">${escapeHtml(label)}</span>`, {
     permanent: true, direction: 'center', className: 'alert-area-label', interactive: false
   });
 
@@ -3718,13 +3752,11 @@ function renderAlertAreas(features) {
 function drawAlertArea(f, seq) {
   const p     = f.properties || {};
   // Hash the stable alert id (fall back to event) so colours persist across refreshes.
-  // Comma-separated hsl() — Leaflet applies this as an SVG fill/stroke attribute,
-  // where the space-separated CSS Color 4 form isn't reliably parsed on older Safari.
-  const color = `hsl(${alertHue(f.id || p.id || p.event)}, 85%, 62%)`;
+  const hue   = alertHue(f.id || p.id || p.event);
   const label = shortAlertLabel(p.event);
 
   if (f.geometry) {
-    addAlertGeometryToMap(f.geometry, p, color, label);   // storm-based: inline polygon
+    addAlertGeometryToMap(f.geometry, p, hue, label);   // storm-based: inline polygon
     return;
   }
   // Zone-only product: resolve every affected zone's outline, then draw them as a
@@ -3737,7 +3769,7 @@ function drawAlertArea(f, seq) {
     const parts = geoms.filter(Boolean);
     if (geoms.some(geom => geom === undefined)) alertAreasNeedRetry = true;
     if (!parts.length) return;                            // no outlines resolved — skip
-    addAlertGeometryToMap({ type: 'GeometryCollection', geometries: parts }, p, color, label);
+    addAlertGeometryToMap({ type: 'GeometryCollection', geometries: parts }, p, hue, label);
   }).catch(error => {
     if (seq !== alertAreaSeq) return;
     // Keep the banner usable and retry this supplementary map layer next tick.
@@ -4255,8 +4287,10 @@ fabLocate.addEventListener('click', () => {
       const { latitude: lat, longitude: lng } = position.coords;
 
       // Place a pin and kick off the station search — loadStationsAt (reached
-      // via triggerPinSearch) pans the map to the location itself.
-      placeDragPin(lat, lng);
+      // via triggerPinSearch) pans the map to the location itself. Rounded to 3
+      // decimals (~110 m): plenty to find nearby stations, without writing the
+      // exact GPS fix into the address bar, browser history and shared links.
+      placeDragPin(+lat.toFixed(3), +lng.toFixed(3));
     },
 
     // ── Error ─────────────────────────────────────────────────────────────────

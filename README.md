@@ -158,7 +158,7 @@ The **⊕ crosshair button** in the bottom-right corner of the map uses your dev
 2. The browser prompts for location permission (first time only).
 3. On success:
    - The map pans and zooms to your location.
-   - A draggable search pin is dropped at your coordinates.
+   - A draggable search pin is dropped at your coordinates, rounded to about 110 m — close enough to find nearby stations, without writing your exact GPS position into the address bar, history or shared links.
    - Nearby weather stations are fetched and plotted.
 
 **Error handling:**
@@ -222,7 +222,7 @@ Every search pulls the **active National Weather Service alerts** that contain t
 
 ### Tier 1 — area alert banner
 
-A banner floats at the top-left of the map whenever the searched point or the visible same-state map area has active alerts (and stays hidden when neither does). The map's zoom control sits at the **bottom-left**, and the banner caps its own height (scrolling when many alerts are active) so it stays clear of the zoom control and the Locate Me button — except when very little map is visible (a very short screen, or a tall station sheet open on a phone). Then keeping the alert summary visible wins, and the Locate Me button is drawn on top of the banner so it stays tappable. The banner lists every included alert, ranked **most-dangerous-first** and colour-coded:
+A banner floats at the top-left of the map whenever the searched point or the visible same-state map area has active alerts (and stays hidden when neither does). The map's zoom control sits at the **bottom-left**, and the banner caps its own height (scrolling when many alerts are active) so it stays clear of the zoom control and the Locate Me button — except when very little map is visible (a very short screen, or a tall station sheet open on a phone). Then keeping the alert summary visible wins; with a phone's station sheet open, the Locate Me button is drawn on top of the banner so it stays tappable. The banner lists every included alert, ranked **most-dangerous-first** and colour-coded:
 
 | Class | Examples | Colour |
 |---|---|---|

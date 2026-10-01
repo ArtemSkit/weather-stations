@@ -639,7 +639,7 @@ test('the alert banner stays clear of the map controls and the station panel', (
   assert.ok(render.indexOf('const hadFocus = alertBanner.contains(document.activeElement);') <
             render.lastIndexOf('alertBanner.innerHTML ='), 'focus must be checked before the rebuild');
   // Focus rings on the banner's buttons are drawn inside (the banner clips).
-  assert.match(html, /\.alert-summary:focus-visible,\s*\.alert-card-head:focus-visible \{ outline: 2px solid var\(--text\); outline-offset: -3px; \}/);
+  assert.match(html, /\.alert-summary:focus-visible,\s*\.alert-card-head:focus-visible,\s*(\/\*[\s\S]*?\*\/\s*)?\.alert-card-body:focus-visible \{ outline: 2px solid var\(--text\); outline-offset: -3px; \}/);
   assert.doesNotMatch(html, /pwaInstallPrompt/);
   // The phone override must come AFTER the desktop side-by-side rule to win.
   const desktopRule = html.indexOf('main.sheet-open #alert-banner { max-width: calc(');

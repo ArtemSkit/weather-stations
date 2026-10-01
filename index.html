@@ -4608,6 +4608,7 @@ function initMobile() {
   const mainEl      = document.querySelector('main');
   const _popupPanel = document.getElementById('popup-panel');
   const _popupClose = document.getElementById('popup-close');
+  const _fabLocate  = document.getElementById('fab-locate');
 
   /**
    * Observe display changes on #popup-panel so sheet-aware CSS (FAB and toast
@@ -4624,16 +4625,25 @@ function initMobile() {
      so the toast and Locate Me button sit just above it instead of a fixed 70vh,
      which left them floating mid-screen over a short sheet. Set on <html> because
      #toast is not inside <main>. */
-  const sheetSpaceObserver = new ResizeObserver(() => {
+  const syncSheetSpace = () => {
     const sheetH = _popupPanel.offsetHeight;
     document.documentElement.style.setProperty('--sheet-h', `${sheetH}px`);
     // The lifted Locate Me button needs 74px of map above the sheet (54px button +
     // 12px lift + 8px gap). With less (landscape phones), it would land on the
     // header's FIND button, so it is hidden while the sheet is open (see CSS).
-    mainEl.classList.toggle('sheet-crowded', mainEl.clientHeight - sheetH < 74);
-  });
+    // Measured against the visible window: without dvh (iOS < 15.4) <main> runs
+    // taller than the screen, so its own height would overstate the room.
+    const room = window.innerHeight - mainEl.getBoundingClientRect().top - sheetH;
+    mainEl.classList.toggle('sheet-crowded', room < 74);
+    // Don't leave keyboard focus on a button that just became invisible.
+    if (document.activeElement === _fabLocate && getComputedStyle(_fabLocate).visibility === 'hidden') {
+      _popupClose.focus();
+    }
+  };
+  const sheetSpaceObserver = new ResizeObserver(syncSheetSpace);
   sheetSpaceObserver.observe(_popupPanel);
-  sheetSpaceObserver.observe(mainEl);   // rotating the phone changes the room too
+  sheetSpaceObserver.observe(mainEl);                  // rotating the phone changes the room
+  window.addEventListener('resize', syncSheetSpace);   // so do Safari's collapsing toolbars
 
   /* ── Touch-only: swipe gestures exist only on (pointer: coarse) devices. ── */
   if (!window.matchMedia('(pointer: coarse)').matches) return;

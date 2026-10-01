@@ -1239,7 +1239,9 @@ if (swContainer) {
         // an update taking over — not the first-install claim — and updates must
         // still be announced, so "has a worker" means controller OR active worker.
         const hasActiveWorker = () => !!(swContainer.controller || reg.active);
-        if (!swContainer.controller && reg.active) skipNextControllerChange = false;
+        // "activated" (not just present): a page loaded while the very first worker
+        // is still activating would otherwise treat that first claim as an update.
+        if (!swContainer.controller && reg.active?.state === 'activated') skipNextControllerChange = false;
 
         // A worker already parked in "waiting" means an update installed during a
         // previous visit but was never activated — surface it now.
@@ -1654,6 +1656,18 @@ function showToast(msg) {
 function stationCountLabel() {
   const n = stationMarkers.length;
   return `${n} STATION${n !== 1 ? 'S' : ''}`;
+}
+
+/**
+ * Whether a load that just finished for search `gen` may update the status bar
+ * and overlay: it is the newest search, or the newest search has already ended
+ * (every running search keeps the overlay up). Otherwise a newer search that is
+ * still geocoding owns them. Without the second case, an area that finishes
+ * loading after a newer search FAILED would sit under a stale "ERROR".
+ * @param {number} gen
+ */
+function mayUpdateSearchUi(gen) {
+  return gen === searchGeneration || !mapOverlay.classList.contains('visible');
 }
 
 /**
@@ -2723,10 +2737,12 @@ async function openStation(stationId, stationName, markerEl) {
 }
 
 /** Close the popup and stop the refresh timer. */
-document.getElementById('popup-close').addEventListener('click', () => {
+document.getElementById('popup-close').addEventListener('click', e => {
   // Keyboard users closing the panel go back to the marker they opened it from,
-  // instead of being dropped at the start of the page.
-  const returnFocusTo = popupPanel.contains(document.activeElement)
+  // instead of being dropped at the start of the page. Only for keyboard use
+  // (:focus-visible): browsers also focus a clicked button, and focusing the
+  // marker makes Leaflet pan the map back to it, which a mouse user never asked for.
+  const returnFocusTo = e.currentTarget.matches(':focus-visible')
     ? activeMarkerEl?.closest('.leaflet-marker-icon') : null;
   popupPanel.style.display = 'none';
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
@@ -2841,8 +2857,8 @@ async function loadStationsAt(lat, lon, gen) {
   if (area !== areaGeneration) return false;     // a newer area replaced this one
   plotStations(data);
 
-  // A newer search still geocoding owns the status bar and overlay; leave them.
-  if (gen === searchGeneration) {
+  // A newer search still running owns the status bar and overlay; leave them.
+  if (mayUpdateSearchUi(gen)) {
     setStatus('ok', stationCountLabel());
     hideOverlay();
   }
@@ -4070,12 +4086,15 @@ fabLocate.addEventListener('click', () => {
     // while this (up to 15 s) fetch is in flight, that newer search bumps it and this
     // stale deep-link result must not hijack their session (popup, timer, markers).
     const gen = ++searchGeneration;
+    // Like loadStationsAt: the map belongs to the newest AREA. A user search that
+    // fails before reaching the map must not throw this station away.
+    const area = ++areaGeneration;
     try {
       setStatus('loading', 'LOADING STATION…');
       showOverlay(`Fetching station ${stationParam}…`);
 
       const data   = await fetchObservations(stationParam);
-      if (gen !== searchGeneration) return;       // superseded by a user search
+      if (area !== areaGeneration) return;        // a user search replaced the map
       const [lng, lat] = data.geometry?.coordinates || [];  // GeoJSON: [lng, lat]
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
         throw new Error('No coordinates in station response');
@@ -4091,8 +4110,10 @@ fabLocate.addEventListener('click', () => {
       // register it for Tier-3 alert flagging by hand.
       stationRecords = [{ el: iconEl, lat, lng }];
 
-      hideOverlay();
-      setStatus('ok', stationParam);
+      if (mayUpdateSearchUi(gen)) {
+        hideOverlay();
+        setStatus('ok', stationParam);
+      }
 
       // Reuse the standard open flow (loading skeleton → observation + forecast
       // PoP fetch → render → guarded live-refresh timer) instead of duplicating

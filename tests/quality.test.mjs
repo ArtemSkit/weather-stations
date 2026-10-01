@@ -94,6 +94,31 @@ test('inline scripts compile and document IDs remain unique', () => {
   for (const [, references] of html.matchAll(/\saria-(?:labelledby|describedby)="([^"]+)"/g)) {
     for (const id of references.split(/\s+/)) assert.ok(idSet.has(id), `missing ARIA target #${id}`);
   }
+  // Every element the scripts look up must exist, or a handler silently never binds.
+  for (const [, id] of html.matchAll(/getElementById\('([^']+)'\)/g)) {
+    assert.ok(idSet.has(id), `script looks up missing element #${id}`);
+  }
+});
+
+test('search pin works by drop, click, tap, and keyboard', () => {
+  // The pin is placed on a real `drop` (Escape-cancelled drags never fire it).
+  const pinSection = html.slice(html.indexOf("dragPinBtn.addEventListener('dragstart'"),
+                                html.indexOf('function triggerPinSearch('));
+  assert.match(pinSection, /document\.addEventListener\('drop', e => \{[\s\S]*?placeDragPin\(/);
+  assert.doesNotMatch(pinSection.slice(pinSection.indexOf("addEventListener('dragend'")).split('});')[0],
+    /placeDragPin/, 'dragend must not place the pin');
+  assert.match(pinSection, /setData\('text\/plain', ''\)/, 'Firefox needs drag data to start a drag');
+
+  // Leaflet fires 'add' inside addTo(), so the key handler must bind directly.
+  const place = extractFunction('placeDragPin');
+  assert.doesNotMatch(place, /\.on\('add'/);
+  assert.match(place, /getElement\(\)\.addEventListener\('keydown'/);
+
+  // Click/tap-to-place is wired for both pin buttons and passes through alert areas.
+  assert.match(pinSection, /dragPinBtn\.addEventListener\('click'/);
+  assert.match(pinSection, /tapPinBtn\.addEventListener\('click'/);
+  assert.match(html, /#map\.tap-mode \.wx-alert-area \{ pointer-events: none; \}/);
+  assert.doesNotMatch(html, /window\._wxmap|window\.placeDragPin/);
 });
 
 test('request timeout remains active while a JSON response body is read', async () => {
@@ -888,7 +913,11 @@ test('every search path allocates or receives a generation before awaiting', () 
   const locateHandler = html.slice(html.indexOf("fabLocate.addEventListener('click'"));
   assert.ok(locateHandler.indexOf('const gen = ++searchGeneration') <
     locateHandler.indexOf('navigator.geolocation.getCurrentPosition'));
-  assert.match(locateHandler, /fabLocate\.disabled = false;\s*if \(gen !== searchGeneration\) return;/);
+  // Every outcome (success, error, or the watchdog for a prompt that never answers)
+  // releases the button first, then honours a newer search.
+  assert.match(locateHandler, /function settle\(\) \{[\s\S]*?fabLocate\.disabled = false;/);
+  assert.equal((locateHandler.match(/if \(!settle\(\)\) return;\s*if \(gen !== searchGeneration\) return;/g) || []).length, 2);
+  assert.match(locateHandler, /const watchdog = setTimeout\(\(\) => \{\s*if \(!settle\(\) \|\| gen !== searchGeneration\) return;/);
 });
 
 test('station refreshes bind to one panel lifetime and zone fetches share a global limit', () => {

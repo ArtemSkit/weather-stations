@@ -1042,7 +1042,8 @@
         <div class="update-dot" id="update-dot"></div>
         <!--
           Interval input: the user can change the auto-refresh period.
-          Minimum is enforced at 10 seconds to avoid hammering the API.
+          Clamped to 10 s – 1 h: the minimum avoids hammering the API, and the
+          maximum keeps the delay inside what setInterval can represent.
         -->
         <div class="interval-wrap">
           LIVE ·
@@ -1051,7 +1052,8 @@
             id="interval-input"
             value="60"
             min="10"
-            title="Refresh interval in seconds (minimum 10 s)"
+            max="3600"
+            title="Refresh interval in seconds (10 s – 3600 s)"
             aria-label="Refresh interval in seconds"
           />
           S
@@ -1471,6 +1473,14 @@ let stationRecords = [];
 let activeStationId = null;
 
 /**
+ * Human-readable name of the open station from the station list, or null when it
+ * had none. Kept as state (not read back from the header) so the observation's
+ * own stationName can fill in when the list provided no name.
+ * @type {string|null}
+ */
+let activeStationName = null;
+
+/**
  * Identifies one specific panel opening, including re-opening the same ICAO id.
  * Incrementing it invalidates requests from an earlier panel lifetime.
  */
@@ -1501,7 +1511,7 @@ let activeMarkerEl = null;
 
 /**
  * Auto-refresh period in milliseconds.  Driven by #interval-input.
- * Minimum enforced value: 10 000 ms (10 s).
+ * Clamped to 10 s – 1 h by the interval editor.
  * @type {number}
  */
 let refreshInterval = 60_000;
@@ -1581,12 +1591,16 @@ function hideOverlay() {
    in the popup footer.  The change takes effect immediately if a station
    panel is already open.
    ───────────────────────────────────────────────────────────────────────────── */
+const MIN_REFRESH_SECONDS = 10;
+// Browsers store timer delays as 32-bit integers: anything above ~24.8 days wraps
+// around and fires almost immediately, which would poll NOAA back-to-back.
+const MAX_REFRESH_SECONDS = 3600;
+
 intervalInput.addEventListener('change', () => {
-  let seconds = parseInt(intervalInput.value, 10);
-  if (isNaN(seconds) || seconds < 10) {
-    seconds = 10;
-    intervalInput.value = 10;
-  }
+  const parsed  = parseInt(intervalInput.value, 10);
+  const seconds = Number.isNaN(parsed) ? MIN_REFRESH_SECONDS
+    : Math.min(MAX_REFRESH_SECONDS, Math.max(MIN_REFRESH_SECONDS, parsed));
+  intervalInput.value = seconds;   // show the value actually in use
   refreshInterval = seconds * 1000;
 
   // If a station is currently active, restart the timer immediately at the
@@ -1771,6 +1785,8 @@ async function fetchStations(lat, lon) {
   // The browser always sends its own User-Agent and ignores any custom one
   // (User-Agent is a forbidden fetch header), so there's no point setting it.
   const { response: res, data } = await fetchJsonWithTimeout(url);
+  // NOAA answers 404 for any point it doesn't cover (outside the US, offshore).
+  if (res.status === 404) throw new Error('No NOAA stations here — coverage is US only');
   if (!res.ok) throw new Error(`NOAA stations API returned HTTP ${res.status}`);
   return data;
 }
@@ -1795,8 +1811,11 @@ async function fetchObservations(stationId) {
 /* Cache of real forecast PoP keyed by station id.  A forecast changes slowly, so
    re-fetching it on every live-observation tick (every ≥10 s) would be wasteful and
    could exhaust the NOAA rate budget.  Entries expire after FORECAST_TTL_MS. */
-const forecastPoPCache = new Map();   // stationId → { pop: number|null, ts: number }
+const forecastPoPCache = new Map();   // stationId → { pop: number|null, ts: number, ttl: number }
 const FORECAST_TTL_MS  = 10 * 60 * 1000;  // 10 minutes
+// A FAILED lookup (timeout, NWS hiccup) is retried much sooner than a real answer,
+// so one slow request doesn't hide the precipitation row for ten minutes.
+const FORECAST_FAILURE_TTL_MS = 2 * 60 * 1000;
 const FORECAST_CACHE_LIMIT = 100;
 
 /** Store a cache entry with insertion-order eviction to bound long-lived PWA memory. */
@@ -1828,10 +1847,11 @@ function setBoundedCache(cache, key, value, limit) {
  */
 async function fetchForecastPoP(lat, lon, stationId) {
   // Serve a still-fresh cached value to avoid hitting NOAA on every refresh tick.
-  const cached = forecastPoPCache.get(stationId);
-  if (cached && Date.now() - cached.ts < FORECAST_TTL_MS) return cached.pop;
+  const cached = cachedForecastPoP(stationId);
+  if (cached !== undefined) return cached;
 
   let pop = null;
+  let failed = false;
   try {
     // Step 1 — turn the coordinate into a forecast grid. The /points response tells
     // us which Weather Forecast Office and grid cell this location belongs to, and
@@ -1853,11 +1873,23 @@ async function fetchForecastPoP(lat, lon, stationId) {
   } catch (e) {
     // Forecast is supplementary — swallow and fall back to "no data".
     pop = null;
+    failed = true;
   }
 
   // Cache even a null result so a missing/failed forecast isn't retried every tick.
-  setBoundedCache(forecastPoPCache, stationId, { pop, ts: Date.now() }, FORECAST_CACHE_LIMIT);
+  const ttl = failed ? FORECAST_FAILURE_TTL_MS : FORECAST_TTL_MS;
+  setBoundedCache(forecastPoPCache, stationId, { pop, ts: Date.now(), ttl }, FORECAST_CACHE_LIMIT);
   return pop;
+}
+
+/**
+ * The cached PoP for a station while it is still fresh.
+ * @returns {number|null|undefined} the value (null = no forecast available), or
+ *                                  undefined when it is missing or stale
+ */
+function cachedForecastPoP(stationId) {
+  const cached = forecastPoPCache.get(stationId);
+  return cached && Date.now() - cached.ts < cached.ttl ? cached.pop : undefined;
 }
 
 /* Point and state alert feeds use the same short TTL. This keeps nearby polygons
@@ -2156,8 +2188,14 @@ async function fetchAlerts(lat, lon) {
    9. UNIT-CONVERSION HELPERS
    ───────────────────────────────────────────────────────────────────────────── */
 
+/** n.toFixed(digits), but never "-0.0": tiny negatives such as -0.04 °C round to 0. */
+const toFixedClean = (n, digits) => {
+  const s = n.toFixed(digits);
+  return Number(s) === 0 ? (0).toFixed(digits) : s;
+};
+
 /** Celsius → Fahrenheit (string, 1 decimal place). Returns null if input is null. */
-const cToF = c => c != null ? ((c * 9/5) + 32).toFixed(1) : null;
+const cToF = c => c != null ? toFixedClean((c * 9/5) + 32, 1) : null;
 
 /** km/h → mph (1 decimal place). */
 const kmhToMph = k => k != null ? (k * 0.621371).toFixed(1) : null;
@@ -2184,7 +2222,9 @@ function formatTime(ts) {
 }
 
 /**
- * Safely render a nullable value for HTML insertion.
+ * Render a nullable value, or an "N/A" placeholder, for HTML insertion.
+ * It does NOT escape: pass only numbers or app-made strings. Feed text must go
+ * through escapeHtml() first.
  * @param   {*}      v     - Value to render (null/undefined → N/A)
  * @param   {string} unit  - Unit suffix appended when v is not null
  * @param   {string} na    - Fallback text
@@ -2229,7 +2269,7 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   const tempF     = cToF(tempC);
   // Display the actual °C value (not a °F→°C round-trip, which would re-introduce
   // rounding error from the already-rounded Fahrenheit string).
-  const tempCDisp = tempC != null ? tempC.toFixed(1) : null;
+  const tempCDisp = tempC != null ? toFixedClean(tempC, 1) : null;
 
   /*
    * "Feels Like" — heat index takes priority over wind chill because both
@@ -2242,7 +2282,7 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   if      (heatC  != null) { feelsC = heatC;  feelsLabel = 'Heat Index'; }
   else if (chillC != null) { feelsC = chillC; feelsLabel = 'Wind Chill'; }
   const feelsF     = cToF(feelsC);
-  const feelsCDisp = feelsC != null ? feelsC.toFixed(1) : null;
+  const feelsCDisp = feelsC != null ? toFixedClean(feelsC, 1) : null;
 
   /* ── Other observations ── */
   const dewC      = p.dewpoint?.value;
@@ -2394,6 +2434,9 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
  */
 async function doStationRefresh(stationId, generation) {
   if (!isActiveStation(stationId, generation)) return;
+  // Don't poll NOAA for a screen nobody can see (background tab, minimised app);
+  // the visibilitychange handler below catches up as soon as it's visible again.
+  if (document.hidden) { stationRefreshMissed = true; return; }
 
   // A timer can fire again before a slow observation+forecast request completes.
   // Reuse the existing request so responses cannot race or duplicate API traffic.
@@ -2410,6 +2453,15 @@ async function doStationRefresh(stationId, generation) {
     if (stationRefreshRequest?.promise === promise) stationRefreshRequest = null;
   }
 }
+
+/** True when a refresh was skipped because the page was hidden. */
+let stationRefreshMissed = false;
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !stationRefreshMissed) return;
+  stationRefreshMissed = false;
+  if (activeStationId) doStationRefresh(activeStationId, stationOpenGeneration);
+});
 
 /** True only while the exact station-panel lifetime that started a request is open. */
 function isActiveStation(stationId, generation) {
@@ -2428,16 +2480,20 @@ async function refreshStationData(stationId, generation) {
     const data = await fetchObservations(stationId);
     if (!isActiveStation(stationId, generation)) return;
 
-    // Real forecast PoP for the station's own coordinates (best-effort, cached).
-    // GeoJSON geometry is [lon, lat]; a missing/failed forecast resolves to null.
-    let precipPct = null;
-    const coords = data.geometry?.coordinates;
-    if (Array.isArray(coords) && coords.length >= 2) {
-      precipPct = await fetchForecastPoP(coords[1], coords[0], stationId);
-      if (!isActiveStation(stationId, generation)) return;
-    }
+    // Show the observation right away (with the cached rain chance, if fresh) —
+    // the separate forecast lookup can take many seconds and must never hold it up.
+    const shownPoP = cachedForecastPoP(stationId) ?? null;
+    renderWeather(data, stationId, activeStationName, shownPoP);
 
-    renderWeather(data, stationId, document.getElementById('popup-name').textContent, precipPct);
+    // Then fetch the real forecast PoP for the station's own coordinates
+    // (best-effort, cached) and re-render only if it changes what is shown.
+    // GeoJSON geometry is [lon, lat]; a missing/failed forecast resolves to null.
+    const coords = data.geometry?.coordinates;
+    if (Array.isArray(coords) && Number.isFinite(coords[0]) && Number.isFinite(coords[1])) {
+      const precipPct = await fetchForecastPoP(coords[1], coords[0], stationId);
+      if (!isActiveStation(stationId, generation)) return;
+      if (precipPct !== shownPoP) renderWeather(data, stationId, activeStationName, precipPct);
+    }
   } catch (e) {
     if (isActiveStation(stationId, generation)) {
       document.getElementById('update-time').textContent = 'Error fetching data';
@@ -2485,6 +2541,7 @@ async function openStation(stationId, stationName, markerEl) {
   if (markerEl) markerEl.classList.add('active');
 
   activeStationId = stationId;
+  activeStationName = stationName || null;
   popupPanel.style.display = 'block';
   document.getElementById('popup-id').textContent    = stationId;
   document.getElementById('popup-name').textContent  = stationName || '—';
@@ -2495,14 +2552,11 @@ async function openStation(stationId, stationName, markerEl) {
 
   await doStationRefresh(stationId, generation);
 
-  // The user may have closed the panel or opened a different station while the
-  // first fetch was in flight — only start the live-refresh timer if this station
-  // is still the active one, otherwise we'd leak an orphaned interval.
+  // The user may have closed the panel or opened a different station (or the same
+  // one again — every opening gets a new generation) while the first fetch was in
+  // flight. Only the still-current opening starts the live-refresh timer, so an
+  // orphaned or duplicate interval can never be created.
   if (!isActiveStation(stationId, generation)) return;
-  // Re-opening the SAME station while its first fetch was in flight passes the
-  // guard above in both calls — clear any timer the earlier call already started
-  // so two intervals never stack.
-  if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(
     () => doStationRefresh(stationId, generation),
     refreshInterval
@@ -2540,17 +2594,16 @@ function clearStations() {
  * @returns {HTMLElement}   The .station-marker div
  */
 function makeStationMarker(id, name, lat, lng) {
+  // Some stations have no name; never show the word "undefined" as a tooltip.
+  const label  = name ? `${id} — ${name}` : id;
   const iconEl = document.createElement('div');
   iconEl.className   = 'station-marker';
   iconEl.textContent = id;
-  iconEl.title       = name;
+  iconEl.title       = label;
 
   const icon   = L.divIcon({ html: iconEl, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
-  const marker = L.marker([lat, lng], {
-    icon,
-    title: name,
-    alt: `${id} — ${name}`
-  }).addTo(map);
+  // (Leaflet's `alt` option only applies to <img> icons, so it isn't used here.)
+  const marker = L.marker([lat, lng], { icon, title: label }).addTo(map);
   marker.on('click', () => openStation(id, name, iconEl));
   stationMarkers.push(marker);
   return iconEl;
@@ -2565,10 +2618,12 @@ function makeStationMarker(id, name, lat, lng) {
 function plotStations(geoJSON) {
   clearStations();
   (geoJSON.features || []).forEach(f => {
-    const coords = f.geometry?.coordinates;
-    if (!coords) return;                         // skip any feature without a location
-    const [lng, lat] = coords;                   // GeoJSON order is [lng, lat]
-    const el = makeStationMarker(f.properties.stationIdentifier, f.properties.name, lat, lng);
+    // Skip any malformed entry (no id or no usable location): Leaflet throws on a
+    // non-numeric position, which would abort plotting every station after it.
+    const [lng, lat] = f?.geometry?.coordinates || [];   // GeoJSON order is [lng, lat]
+    const id = f?.properties?.stationIdentifier;
+    if (!id || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const el = makeStationMarker(id, f.properties.name, lat, lng);
     // Remember each marker so flagStationsInAlerts() (Tier 3) can later test it
     // against the active warning polygons and toggle its .alerted ring.
     stationRecords.push({ el, lat, lng });
@@ -2589,9 +2644,9 @@ function plotStations(geoJSON) {
  * @param {number} lat
  * @param {number} lon
  */
-async function loadStationsAt(lat, lon, gen = ++searchGeneration) {
-  // Callers that geocode first allocate and pass their generation before awaiting.
-  // Direct coordinate/pin calls use the default, which starts a generation here.
+async function loadStationsAt(lat, lon, gen) {
+  // Every caller allocates its search generation before its first await and
+  // passes it in, so a slower earlier search can never overwrite this one.
 
   // Drop any alerts from the previous area so a stale banner isn't shown for the
   // new location while its stations and alerts are being fetched.
@@ -2604,6 +2659,10 @@ async function loadStationsAt(lat, lon, gen = ++searchGeneration) {
   stationOpenGeneration++;
   activeStationId = null;
   if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
+  // Remove the old area's markers now too: the map is about to fly away, so they
+  // must not linger (or stay clickable and open a stale panel) during the fetch,
+  // nor be left behind next to the new location if the station fetch fails.
+  clearStations();
 
   setStatus('loading', 'FETCHING STATIONS…');
   overlayText.textContent = 'Fetching weather stations…';
@@ -2613,7 +2672,7 @@ async function loadStationsAt(lat, lon, gen = ++searchGeneration) {
   if (gen !== searchGeneration) return;          // superseded by a newer search
   plotStations(data);
 
-  const count = (data.features || []).length;
+  const count = stationMarkers.length;   // malformed entries are skipped, so count what's plotted
   setStatus('ok', `${count} STATION${count !== 1 ? 'S' : ''}`);
   hideOverlay();
 

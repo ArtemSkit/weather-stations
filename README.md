@@ -30,7 +30,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Multi-mode search** | ZIP code, lat/lon coordinates, or street address |
 | **Interactive map** | Leaflet.js + OpenStreetMap tiles, dark-mode filtered |
 | **Station markers** | All nearby NOAA stations plotted as clickable badges |
-| **Live observations** | Auto-refreshing weather data (configurable interval, ≥10 s) |
+| **Live observations** | Auto-refreshing weather data (configurable interval, 10 s – 1 h; paused while the app is in the background) |
 | **Dual temperature** | °F displayed prominently; °C shown alongside it |
 | **Feels Like** | Heat Index or Wind Chill, whichever is applicable |
 | **Precipitation chance** | Real next-hour probability of precipitation from the NWS gridded forecast |
@@ -186,7 +186,7 @@ Click any station badge on the map to open the info panel. It shows:
 > 1. `GET /points/{lat},{lon}` → the station's `forecastHourly` grid URL.
 > 2. `GET {forecastHourly}` → `periods[0].probabilityOfPrecipitation.value` (current hour).
 >
-> Because a forecast changes slowly, the result is **cached per station for 10 minutes** rather than re-fetched on every live-observation tick. The forecast fetch is best-effort: if it fails or is unavailable, the Precip Chance row is simply omitted and the rest of the observation still renders.
+> Because a forecast changes slowly, the result is **cached per station for 10 minutes** rather than re-fetched on every live-observation tick. The forecast fetch is best-effort and never delays the observation: the readings appear as soon as they arrive, and the Precip Chance row is added once the forecast answers. If it fails or is unavailable, the row is simply omitted, and a failed lookup is retried after 2 minutes.
 
 ### Live refresh
 
@@ -194,7 +194,7 @@ The popup footer shows:
 - **OBS:** the observation timestamp of the currently displayed data.
 - **LIVE · [N] S** — the auto-refresh interval in seconds.
 
-**To change the refresh interval:** click the number in the footer, type a new value (minimum 10 s), and press Enter or click away. The new interval takes effect immediately.
+**To change the refresh interval:** click the number in the footer, type a new value (10–3600 s), and press Enter or click away. The new interval takes effect immediately. While the tab or installed app is hidden, refreshes pause; the panel catches up as soon as it is visible again.
 
 The pulsing dot indicates a refresh in progress; steady green means data is current. If an observation fetch fails the footer reads **Error fetching data**; when the *first* load fails the panel shows a brief "couldn't load — retrying" note rather than hanging on the loading state, and the next successful tick fills in the data.
 

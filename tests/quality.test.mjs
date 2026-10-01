@@ -1671,36 +1671,69 @@ test('every search path allocates or receives a generation before awaiting', () 
 });
 
 test('a station that never reports says so and is not polled; the old time is cleared', async () => {
-  const elements = {};
-  const el = id => (elements[id] ||= { textContent: 'OBS: 05:15 AM CDT', innerHTML: '', classList: { add() {}, remove() {} },
-    // The loading skeleton is the only thing querySelector needs to find.
-    querySelector(sel) { return sel === '.station-loading' && this.innerHTML.includes('station-loading') ? {} : null; } });
-  const timers = [];
-  const run = vm.runInNewContext(`(() => {
-    let refreshTimer = null, activeMarkerEl = null, stationOpenGeneration = 0, activeStationId = null,
-        activeStationName = null, stationRefreshRequest = null, stationRefreshMissed = false,
-        stationNoDataGeneration = 0, refreshInterval = 60000;
-    ${escapeHtmlSource}
-    ${extractFunction('isActiveStation')}
-    async ${extractFunction('refreshStationData')}
-    async ${extractFunction('doStationRefresh')}
-    async ${extractFunction('openStation')}
-    return { openStation, timer: () => refreshTimer };
-  })()`, {
-    document: { hidden: false, getElementById: el }, popupPanel: { style: {} },
-    setInterval: () => timers.push(1), clearInterval() {},
-    fetchObservations: async id => {
-      // The footer is reset before the first request goes out.
-      assert.equal(elements['update-time'].textContent, '—');
-      throw Object.assign(new Error(`Station "${id}" not found or has no recent observations`), { status: 404 });
-    }
+  // Runs the real panel code with a fake page, live timers and a scripted feed.
+  function makePanel(fetchObservations, hidden = false) {
+    const elements = {};
+    const el = id => (elements[id] ||= { textContent: 'OBS: 05:15 AM CDT', innerHTML: '', classList: { add() {}, remove() {} },
+      // The loading skeleton is the only thing querySelector needs to find.
+      querySelector(sel) { return sel === '.station-loading' && this.innerHTML.includes('station-loading') ? {} : null; } });
+    const doc = { hidden, getElementById: el };
+    const live = new Set();
+    let nextTimer = 1;
+    const panel = vm.runInNewContext(`(() => {
+      let refreshTimer = null, activeMarkerEl = null, stationOpenGeneration = 0, activeStationId = null,
+          activeStationName = null, stationRefreshRequest = null, stationRefreshMissed = false,
+          stationNoDataGeneration = 0, refreshInterval = 60000;
+      ${escapeHtmlSource}
+      ${extractFunction('isActiveStation')}
+      async ${extractFunction('refreshStationData')}
+      async ${extractFunction('doStationRefresh')}
+      async ${extractFunction('openStation')}
+      // What the visibilitychange catch-up does once the tab is shown again.
+      const tick = () => doStationRefresh(activeStationId, stationOpenGeneration);
+      return { openStation, tick };
+    })()`, {
+      document: doc, popupPanel: { style: {} }, forecastPoPCache: new Map(), fetchObservations,
+      setInterval: () => { live.add(nextTimer); return nextTimer++; }, clearInterval: id => live.delete(id),
+      renderWeather: () => { el('popup-body').innerHTML = 'readings'; el('update-time').textContent = 'OBS: now'; }
+    });
+    el('update-time');   // the previous station's time is showing
+    return { ...panel, elements, doc, live };
+  }
+  const notFound = id => Object.assign(new Error(`Station "${id}" not found or has no recent observations`), { status: 404 });
+
+  // Visible tab: the 404 is shown (not "retrying…") and no timer is started.
+  let p = makePanel(async id => {
+    assert.equal(p.elements['update-time'].textContent, '—', 'old time cleared before the request');
+    throw notFound(id);
   });
-  el('update-time');   // the previous station's time is showing
-  await run.openStation('PAJC', 'Test', null);
-  assert.match(elements['popup-body'].innerHTML, /not found or has no recent observations/);
-  assert.doesNotMatch(elements['popup-body'].innerHTML, /retrying/);
-  assert.equal(timers.length, 0, 'a permanent 404 must not be polled');
-  assert.equal(run.timer(), null);
+  await p.openStation('PAJC', 'Test', null);
+  assert.match(p.elements['popup-body'].innerHTML, /not found or has no recent observations/);
+  assert.doesNotMatch(p.elements['popup-body'].innerHTML, /retrying/);
+  assert.equal(p.live.size, 0, 'a permanent 404 must not be polled');
+
+  // Hidden tab: the timer starts before the first fetch; the catch-up 404 stops it.
+  p = makePanel(async id => { throw notFound(id); }, true);
+  await p.openStation('PAJC', 'Test', null);
+  assert.equal(p.live.size, 1);
+  p.doc.hidden = false;
+  await p.tick();
+  assert.equal(p.live.size, 0);
+
+  // A passing outage on first load still says "retrying…" and keeps polling.
+  p = makePanel(async () => { throw new Error('NOAA observations API returned HTTP 500'); });
+  await p.openStation('KORD', 'Test', null);
+  assert.match(p.elements['popup-body'].innerHTML, /retrying/);
+  assert.equal(p.live.size, 1);
+
+  // A 404 after data has shown is a failed refresh: data kept, error flagged, still polled.
+  let calls = 0;
+  p = makePanel(async id => { if (calls++) throw notFound(id); return {}; });
+  await p.openStation('KORD', 'Test', null);
+  await p.tick();
+  assert.equal(p.elements['popup-body'].innerHTML, 'readings');
+  assert.equal(p.elements['update-time'].textContent, 'Error fetching data');
+  assert.equal(p.live.size, 1);
 });
 
 test('station refreshes bind to one panel lifetime and zone fetches share a global limit', () => {

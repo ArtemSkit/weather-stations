@@ -1842,10 +1842,8 @@ async function fetchStations(lat, lon) {
 
   // The alert loader asks for this same point's state right after; hand it this
   // answer so it doesn't repeat the /points request.
-  const state = point?.properties?.relativeLocation?.properties?.state;
-  if (/^[A-Z]{2}$/.test(state || '')) {
-    setBoundedCache(alertStateCache, key, state, ALERT_STATE_CACHE_LIMIT);
-  }
+  const state = pointStateCode(point?.properties);
+  if (state) setBoundedCache(alertStateCache, key, state, ALERT_STATE_CACHE_LIMIT);
 
   // A linked URL from the response must stay on NOAA's own API before we fetch it.
   const stationsUrl = point?.properties?.observationStations;
@@ -1983,11 +1981,34 @@ const ALERT_STATE_CACHE_LIMIT = 100;
  * break sorting, signatures, polygon checks, or rendering later. NWS also sends
  * "Test"/"Exercise"/"Draft" messages through the live feed; only real ("Actual")
  * alerts are shown, so nobody sees a TEST MESSAGE presented as a real warning.
+ *
+ * A cancelled alert also stays in the "active" feed until its original end time,
+ * still named after the original event (e.g. "Flood Watch") with its area. It is
+ * marked by response "AllClear" (or messageType "Cancel") and must not be shown
+ * as if the hazard were still in force.
  */
 function isDisplayableAlert(feature) {
-  return !!feature && typeof feature === 'object' &&
-    !!feature.properties && typeof feature.properties === 'object' &&
-    (feature.properties.status ?? 'Actual') === 'Actual';
+  if (!feature || typeof feature !== 'object') return false;
+  const p = feature.properties;
+  if (!p || typeof p !== 'object') return false;
+  return (p.status ?? 'Actual') === 'Actual' &&
+         p.messageType !== 'Cancel' && p.response !== 'AllClear';
+}
+
+/**
+ * Two-letter state (or territory) code for an NWS /points response. The county
+ * zone id ("RIC007") names the state the point is actually IN; relativeLocation
+ * is the nearest town, which can be across a state line (42.0,-71.4 is in Rhode
+ * Island but its nearest town is in Massachusetts), so it is only a fallback.
+ * @returns {string|null}
+ */
+function pointStateCode(pointProps) {
+  for (const zoneUrl of [pointProps?.county, pointProps?.forecastZone]) {
+    const code = String(zoneUrl || '').split('/').pop().slice(0, 2);
+    if (/^[A-Z]{2}$/.test(code)) return code;
+  }
+  const state = pointProps?.relativeLocation?.properties?.state;
+  return /^[A-Z]{2}$/.test(state || '') ? state : null;
 }
 
 /** True while an alert's hazard (or, lacking `ends`, the message) has not ended yet. */
@@ -2100,7 +2121,10 @@ function mergeVisibleAlerts(pointAlerts, regionalAlerts, viewport) {
 /** Calculate the map bounds produced by centering this search at zoom level 10. */
 function alertViewportBounds(lat, lon) {
   const zoom = 10;
-  const halfSize = map.getSize().divideBy(2);
+  // A map laid out while hidden reports 0×0; estimate with the window instead
+  // of collapsing the area to a single point (which would find no polygons).
+  const size = map.getSize();
+  const halfSize = (size.x && size.y ? size : L.point(window.innerWidth, window.innerHeight)).divideBy(2);
   const center = map.project([lat, lon], zoom);
   const northWest = map.unproject(center.subtract(halfSize), zoom);
   const southEast = map.unproject(center.add(halfSize), zoom);
@@ -2163,7 +2187,7 @@ async function fetchPointAlerts(lat, lon) {
   }
 }
 
-/** Resolve the two-letter state containing a coordinate through the NWS points API. */
+/** Resolve the two-letter state containing a coordinate through the NWS points API (see pointStateCode). */
 async function fetchAlertState(lat, lon) {
   const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
   if (alertStateCache.has(key)) return alertStateCache.get(key);
@@ -2179,8 +2203,8 @@ async function fetchAlertState(lat, lon) {
         if (res.status === 404) setBoundedCache(alertStateCache, key, null, ALERT_STATE_CACHE_LIMIT);
         return null;
       }
-      const state = data.properties?.relativeLocation?.properties?.state;
-      if (!/^[A-Z]{2}$/.test(state || '')) return null;
+      const state = pointStateCode(data?.properties);
+      if (!state) return null;
       setBoundedCache(alertStateCache, key, state, ALERT_STATE_CACHE_LIMIT);
       return state;
     } catch {
@@ -2213,7 +2237,7 @@ async function fetchStateAlerts(state) {
       const { response: res, data } = await fetchJsonWithTimeout(
         `https://api.weather.gov/alerts/active?area=${encodeURIComponent(state)}`);
       if (!res.ok) {
-        const retryable = res.status === 0 || res.status === 408 || res.status === 425 ||
+        const retryable = res.status === 408 || res.status === 425 ||
                           res.status === 429 || res.status >= 500;
         return retryable ? fallbackAlerts : null;
       }
@@ -2237,8 +2261,11 @@ async function fetchStateAlerts(state) {
  * Fetch alerts affecting the searched point plus inline polygons visible nearby.
  * Regional lookups are best-effort: the original point feed remains usable if the
  * state metadata or state alert index cannot be reached.
+ * @param {number} lat
+ * @param {number} lon
+ * @param {Object} viewport - map area (alertViewportBounds) regional polygons must touch
  */
-async function fetchAlerts(lat, lon) {
+async function fetchAlerts(lat, lon, viewport) {
   const [pointAlerts, state] = await Promise.all([
     fetchPointAlerts(lat, lon),
     fetchAlertState(lat, lon)
@@ -2248,7 +2275,7 @@ async function fetchAlerts(lat, lon) {
 
   const regionalAlerts = await fetchStateAlerts(state);
   if (regionalAlerts === null) return pointAlerts;
-  return mergeVisibleAlerts(pointAlerts, regionalAlerts, alertViewportBounds(lat, lon));
+  return mergeVisibleAlerts(pointAlerts, regionalAlerts, viewport);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2777,6 +2804,9 @@ async function loadStationsAt(lat, lon, gen) {
 /** Coordinates of the most recent search — the location the alerts belong to. */
 let currentLat  = null;
 let currentLon  = null;
+/* Map area used to pick nearby regional polygons. Fixed when the area loads, so
+   later window resizes can't add or drop alerts (which would reset the banner). */
+let currentViewport = null;
 /** setInterval handle for the alert refresh loop, or null when no loop is active. */
 let alertsTimer = null;
 /** Cached banner element (lives above the script, so it always resolves). */
@@ -3292,7 +3322,7 @@ function drainZoneFetchQueue() {
   while (zoneFetchActive < ZONE_FETCH_CONCURRENCY && zoneFetchQueue.length) {
     const task = zoneFetchQueue.shift();
     zoneFetchActive++;
-    task().finally(() => {
+    task.run().finally(() => {
       zoneFetchActive--;
       drainZoneFetchQueue();
     });
@@ -3315,9 +3345,17 @@ function fetchZoneGeometry(url) {
 
   // Cache the Promise itself so concurrent alerts sharing a zone share one request.
   setBoundedCache(zoneGeomCache, url, request, ZONE_GEOM_CACHE_LIMIT);
+  // Settle the shared request. Only transient failures (undefined) are evicted, so
+  // a later render asks again; permanent absence (null) and real outlines stay
+  // cached so refreshes don't refetch them and rebuild every alert layer.
+  function settle(geom) {
+    if (geom === undefined && zoneGeomCache.get(url) === request) zoneGeomCache.delete(url);
+    resolveRequest(geom);
+  }
+
   // Newer alert renders go to the front, so a large stale area cannot delay the
   // current location behind all of its not-yet-started zone requests.
-  zoneFetchQueue.unshift(async () => {
+  zoneFetchQueue.unshift({ run: async () => {
     let geom;
     try {
       const { response: res, data } = await fetchJsonWithTimeout(url);
@@ -3332,11 +3370,11 @@ function fetchZoneGeometry(url) {
     } catch {
       // Zone outlines are supplementary; the alert banner remains usable without one.
     }
-    // Only transient failures are evicted. Cache permanent absence so refreshes do
-    // not repeatedly fetch the same unavailable zone and rebuild all alert layers.
-    if (geom === undefined && zoneGeomCache.get(url) === request) zoneGeomCache.delete(url);
-    resolveRequest(geom);
-  });
+    settle(geom);
+  },
+  // Dropped before it started because a new area replaced the old one (see
+  // clearAlerts): resolve as a transient miss so nothing stale gets cached.
+  cancel: () => settle(undefined) });
   drainZoneFetchQueue();
   return request;
 }
@@ -3407,7 +3445,11 @@ function clearAlerts() {
   alertBanner.className = '';
   alertBanner.innerHTML = '';
   clearAlertAreas();
+  // Queued (not yet started) zone lookups for the old area are now useless —
+  // drop them instead of spending the NWS rate limit on outlines nobody will see.
+  zoneFetchQueue.splice(0).forEach(task => task.cancel());
   currentLat = currentLon = null; // invalidate any refresh already awaiting the network
+  currentViewport = null;
   alertLoadToken = null;          // …and any first load still awaiting it
   lastAlertSignature = null;   // next render is for a new area — always draw it
   shownAlerts = [];
@@ -3441,10 +3483,11 @@ async function loadAlertsForArea(lat, lon) {
   alertLoadToken = token;
   currentLat = lat;
   currentLon = lon;
+  currentViewport = alertViewportBounds(lat, lon);
   if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
 
   try {
-    const alerts = await fetchAlerts(lat, lon);
+    const alerts = await fetchAlerts(lat, lon, currentViewport);
     if (token !== alertLoadToken) return;   // a newer area replaced this one
 
     // alerts === null means the feed was unreachable on this first load — leave the
@@ -3470,7 +3513,7 @@ async function refreshAlerts() {
     // fetch is in flight, currentLat/currentLon change and we discard this result so
     // it can't overwrite the newer area's alerts.
     const lat = currentLat, lon = currentLon;
-    const alerts = await fetchAlerts(lat, lon);
+    const alerts = await fetchAlerts(lat, lon, currentViewport);
     if (lat !== currentLat || lon !== currentLon) return;
     if (alerts === null) {
       // Transient feed failure — keep the current display and retry next tick, but

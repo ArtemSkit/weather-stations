@@ -741,18 +741,22 @@
   /* Prevent tap-highlight flash on touch */
   * { -webkit-tap-highlight-color: transparent; }
 
-  /* Touch-action: allow map panning but prevent pull-to-refresh */
-  body { touch-action: pan-x pan-y; overscroll-behavior: none; }
+  /* Prevent pull-to-refresh, and drop double-tap zoom (taps respond instantly).
+     `manipulation` still allows pinch-zoom, which low-vision users rely on; the
+     map handles its own gestures (Leaflet sets touch-action on its container). */
+  body { touch-action: manipulation; overscroll-behavior: none; }
 
   /* ════════════════════════════════════════════════════════════════════════════
      TAP-TO-PLACE MODE INDICATOR
-     Shown in the header when the user activates "tap to place" on touch devices.
+     Shown across the top of the map (inside <main>, so it never hides the header
+     or slips under a phone's notch) while tap/click-to-place mode is armed.
      ════════════════════════════════════════════════════════════════════════════ */
   #tap-place-banner {
     display: none;
     position: absolute;
     top: 0; left: 0; right: 0;
-    background: rgba(255,107,53,0.15);
+    background-color: var(--surface);   /* opaque base under the tinted fill */
+    background-image: linear-gradient(rgba(255,107,53,0.15), rgba(255,107,53,0.15));
     border-bottom: 1px solid var(--accent2);
     color: var(--accent2);
     font-family: 'Space Mono', monospace;
@@ -761,19 +765,23 @@
     text-transform: uppercase;
     text-align: center;
     padding: 7px 12px;
-    z-index: 1001;
+    z-index: 1150;                       /* above the alert banner while the mode is armed */
     animation: slideIn 0.2s ease;
   }
   #tap-place-banner.active { display: block; }
+
+  /* While placing a pin: crosshair cursor, and alert polygons let clicks through
+     to the map (they would otherwise open their own popup instead). */
+  #map.tap-mode.leaflet-container { cursor: crosshair; }
+  #map.tap-mode .wx-alert-area { pointer-events: none; }
 
   /* ════════════════════════════════════════════════════════════════════════════
      TOUCH-ONLY CONTROL SWAP
      Drag-and-drop isn't available on touch screens, so the drag-pin is replaced by
      the tap-to-place button. Deliberately gated on (pointer: coarse) alone — NOT
      the width-based mobile query below — because a narrow desktop window is still
-     mouse-driven: it must keep the drag-pin and never show the tap button. The
-     button's click handler in initMobile() is gated on the SAME (pointer: coarse)
-     condition, so visibility and behaviour can never disagree.
+     mouse-driven: it must keep the drag-pin and never show the tap button. Both
+     buttons share one click handler (section 17), so either works wherever shown.
      ════════════════════════════════════════════════════════════════════════════ */
   @media (pointer: coarse) {
     #drag-pin    { display: none !important; }
@@ -961,15 +969,16 @@
 
     <!--
       Draggable pin — drag this emoji onto the map to place a search pin
-      at any arbitrary location.  Double-clicking the dropped pin or pressing
-      Delete while this button is focused removes the pin.
+      at any arbitrary location, or click it (mouse or keyboard) and then click
+      the map.  Double-clicking the dropped pin or pressing Delete while this
+      button is focused removes the pin.
       Hidden on touch devices (replaced by tap-pin-btn below).
     -->
     <button
       id="drag-pin"
       draggable="true"
-      title="Drag onto map to search by location"
-      aria-label="Drag pin onto map"
+      title="Drag onto the map — or click, then click the map — to search by location"
+      aria-label="Place a search pin on the map"
     >📍</button>
 
     <!--
@@ -994,11 +1003,6 @@
   </div>
 </header>
 
-<!-- Tap-to-place mode banner (mobile only) -->
-<div id="tap-place-banner" role="status" aria-live="polite">
-  📍 Tap the map to place a pin — tap the pin button again to cancel
-</div>
-
 <!-- Ghost pin that follows the mouse cursor during a drag operation -->
 <div id="pin-ghost" aria-hidden="true">📍</div>
 
@@ -1006,6 +1010,10 @@
      MAIN MAP AREA
      ════════════════════════════════════════════════════════════════ -->
 <main>
+  <!-- Tap/click-to-place mode banner, shown across the top of the map -->
+  <div id="tap-place-banner" role="status" aria-live="polite">
+    📍 Tap or click the map to place a pin — press the pin button again (or Esc) to cancel
+  </div>
   <div id="map" role="region" aria-label="Interactive weather station map"></div>
 
   <!-- Full-map loading overlay shown during async operations -->
@@ -1421,7 +1429,6 @@ document.addEventListener('DOMContentLoaded', function () {
  * Tile layer: OpenStreetMap standard (free, no API key required).
  */
 const map = L.map('map', { zoomControl: false }).setView([39.5, -98.35], 4);
-window._wxmap = map;   // expose for mobile tap-to-place
 
 // Zoom control lives bottom-left so it never sits under the top-left alert banner
 // or the top-right station panel (the right side is taken by the panel, the FAB,
@@ -3535,7 +3542,8 @@ zipInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); }
    ─────────────────────────────────────────────────────────────────────────────
    The pin button in the header can be dragged onto the map.  While dragging,
    a ghost pin follows the cursor.  On drop, a draggable Leaflet marker is placed
-   at the computed lat/lon and a station search is triggered.
+   at the computed lat/lon and a station search is triggered.  Clicking the pin
+   button instead (or tapping the touch-only pin button) arms tap/click-to-place.
 
    The dropped pin can be:
      • Dragged to a new position  → triggers a new search
@@ -3545,96 +3553,59 @@ zipInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); }
 
 /** Whether the pin button is currently being dragged. */
 let pinIsDragging = false;
+const mapEl = document.getElementById('map');
 
 dragPinBtn.addEventListener('dragstart', e => {
-  try {
-    e.dataTransfer.effectAllowed = 'copy';
-    // Suppress the browser's default ghost thumbnail — we use our own
-    e.dataTransfer.setDragImage(new Image(), 0, 0);
-    pinIsDragging = true;
-    pinGhost.style.display = 'block';
-    console.debug('[WX.MAP] Pin drag started');
-  } catch (err) {
-    console.error('[WX.MAP] dragstart error:', err);
-  }
+  e.dataTransfer.effectAllowed = 'copy';
+  // Firefox only starts a drag that carries some data.
+  e.dataTransfer.setData('text/plain', '');
+  // Suppress the browser's default ghost thumbnail — we use our own
+  e.dataTransfer.setDragImage(new Image(), 0, 0);
+  pinIsDragging = true;
+  pinGhost.style.display = 'block';
 });
 
-// Move the ghost pin with the cursor across the whole document
+// Move the ghost pin with the cursor; preventDefault marks every spot as a valid
+// drop target so the browser fires `drop` instead of animating a cancelled drag.
 document.addEventListener('dragover', e => {
   if (!pinIsDragging) return;
-  try {
-    e.preventDefault();
-    pinGhost.style.left = e.clientX + 'px';
-    pinGhost.style.top  = e.clientY + 'px';
-  } catch (err) {
-    console.error('[WX.MAP] dragover error:', err);
-  }
+  e.preventDefault();
+  pinGhost.style.left = e.clientX + 'px';
+  pinGhost.style.top  = e.clientY + 'px';
 });
 
-dragPinBtn.addEventListener('dragend', e => {
-  try {
-    if (!pinIsDragging) return;
+// The pin is placed on `drop`, not `dragend`: only a real drop fires it, so a drag
+// cancelled with Escape places nothing, and drop coordinates are reliable in every
+// browser (Firefox reports bogus dragend coordinates). A drop on anything that
+// isn't the map itself (header, alert banner, station panel) places nothing.
+document.addEventListener('drop', e => {
+  if (!pinIsDragging) return;
+  e.preventDefault();   // never let the browser handle the drop (e.g. insert text)
+  if (!mapEl.contains(e.target)) return;
+  const rect   = mapEl.getBoundingClientRect();
+  const latlng = map.containerPointToLatLng([e.clientX - rect.left, e.clientY - rect.top]);
+  placeDragPin(latlng.lat, latlng.lng);
+});
 
-    pinIsDragging = false;
-    pinGhost.style.display = 'none';
-
-    // Ensure map and its methods are available (critical in PWA standalone mode)
-    if (!map || typeof map.containerPointToLatLng !== 'function') {
-      console.warn('[WX.MAP] Map not ready when pin dropped');
-      return;
-    }
-
-    // Convert viewport-relative drop position to Leaflet map coordinates
-    const mapEl = document.getElementById('map');
-    if (!mapEl) {
-      console.warn('[WX.MAP] Map element not found');
-      return;
-    }
-
-    const rect  = mapEl.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    // Ignore drops outside the map area
-    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
-      console.debug('[WX.MAP] Pin dropped outside map area');
-      return;
-    }
-
-    const latlng = map.containerPointToLatLng([x, y]);
-    console.debug('[WX.MAP] Pin dropped at', latlng);
-    placeDragPin(latlng.lat, latlng.lng);
-  } catch (err) {
-    console.error('[WX.MAP] dragend handler error:', err);
-    pinIsDragging = false;
-    pinGhost.style.display = 'none';
-  }
+// Dropped or cancelled, the drag is over: hide the ghost.
+dragPinBtn.addEventListener('dragend', () => {
+  pinIsDragging = false;
+  pinGhost.style.display = 'none';
 });
 
 // Allow keyboard removal when the drag-pin button itself has focus
 dragPinBtn.addEventListener('keydown', e => {
-  try {
-    if ((e.key === 'Delete' || e.key === 'Backspace') && droppedPinMarker) {
-      removeDragPin();
-      e.preventDefault();
-    }
-  } catch (err) {
-    console.error('[WX.MAP] keydown handler error:', err);
+  if ((e.key === 'Delete' || e.key === 'Backspace') && droppedPinMarker) {
+    removeDragPin();
+    e.preventDefault();
   }
 });
 
 /** Remove the dropped pin marker from the map. */
 function removeDragPin() {
-  try {
-    if (droppedPinMarker && map) {
-      map.removeLayer(droppedPinMarker);
-      droppedPinMarker = null;
-      console.debug('[WX.MAP] Pin removed');
-    }
-  } catch (err) {
-    console.error('[WX.MAP] Error removing pin:', err);
-    droppedPinMarker = null; // Clear reference even if removal fails
-  }
+  if (!droppedPinMarker) return;
+  map.removeLayer(droppedPinMarker);
+  droppedPinMarker = null;
 }
 
 /**
@@ -3668,74 +3639,73 @@ function buildPinIcon(lat, lng) {
  * @param {number} lng
  */
 function placeDragPin(lat, lng) {
-  try {
-    // Ensure map is available (critical for PWA standalone mode)
-    if (!map) {
-      console.error('[WX.MAP] Map not initialized in placeDragPin');
-      return;
+  removeDragPin();
+
+  droppedPinMarker = L.marker([lat, lng], {
+    icon: buildPinIcon(lat, lng),
+    draggable: true,
+    zIndexOffset: 500,
+    title: 'Search location pin — drag to move, press Delete to remove'
+  }).addTo(map);
+
+  // Leaflet already makes the marker focusable (tabindex 0, role "button"). Its
+  // 'add' event fires synchronously inside addTo(), so a listener registered
+  // afterwards would never run — attach the key handler to the element directly.
+  droppedPinMarker.getElement().addEventListener('keydown', e => {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      removeDragPin();
     }
+  });
 
-    removeDragPin();
+  // Double-click to remove
+  droppedPinMarker.on('dblclick', removeDragPin);
 
-    const icon = buildPinIcon(lat, lng);
-    droppedPinMarker = L.marker([lat, lng], {
-      icon,
-      draggable: true,
-      zIndexOffset: 500,
-      title: 'Search location pin',
-      alt: 'Draggable search location pin'
-    }).addTo(map);
+  // When the user re-drags the pin on the map, update the label and re-search
+  droppedPinMarker.on('dragend', () => {
+    const pos = droppedPinMarker.getLatLng();
+    const lbl = droppedPinMarker.getElement()?.querySelector('.dropped-pin-coords');
+    if (lbl) lbl.textContent = `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`;
+    triggerPinSearch(pos.lat, pos.lng);
+  });
 
-    // Double-click to remove
-    droppedPinMarker.on('dblclick', () => {
-      try {
-        removeDragPin();
-      } catch (err) {
-        console.error('[WX.MAP] Error removing pin on dblclick:', err);
-      }
-    });
-
-    // Allow keyboard removal when the marker element itself has focus
-    droppedPinMarker.on('add', () => {
-      try {
-        const el = droppedPinMarker.getElement();
-        if (el) {
-          el.setAttribute('tabindex', '0');
-          el.addEventListener('keydown', e => {
-            try {
-              if (e.key === 'Delete' || e.key === 'Backspace') removeDragPin();
-            } catch (err) {
-              console.error('[WX.MAP] Error in marker keydown:', err);
-            }
-          });
-        }
-      } catch (err) {
-        console.error('[WX.MAP] Error in marker add handler:', err);
-      }
-    });
-
-    // When the user re-drags the pin on the map, update the label and re-search
-    droppedPinMarker.on('dragend', () => {
-      try {
-        const pos = droppedPinMarker.getLatLng();
-        const el  = droppedPinMarker.getElement();
-        if (el) {
-          const lbl = el.querySelector('.dropped-pin-coords');
-          if (lbl) lbl.textContent = `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`;
-        }
-        console.debug('[WX.MAP] Pin re-dragged to', pos);
-        triggerPinSearch(pos.lat, pos.lng);
-      } catch (err) {
-        console.error('[WX.MAP] Error in marker dragend:', err);
-      }
-    });
-
-    triggerPinSearch(lat, lng);
-  } catch (err) {
-    console.error('[WX.MAP] Error in placeDragPin:', err);
-  }
+  triggerPinSearch(lat, lng);
 }
-window.placeDragPin = placeDragPin;   // expose for mobile tap-to-place
+
+/* ── Tap/click-to-place mode ─────────────────────────────────────────────────
+   Pressing a pin button — the drag-pin on desktop (by click or keyboard) or the
+   touch-only tap-pin — arms a one-shot mode: the next tap/click on the map puts
+   the search pin there. It is the no-drag alternative to drag-and-drop, which
+   touch screens don't support and keyboard users can't perform. */
+const tapPinBtn      = document.getElementById('tap-pin-btn');
+const tapPlaceBanner = document.getElementById('tap-place-banner');
+let tapModeActive = false;
+
+function setTapMode(active) {
+  tapModeActive = active;
+  tapPlaceBanner.classList.toggle('active', active);
+  tapPinBtn.classList.toggle('active', active);
+  [dragPinBtn, tapPinBtn].forEach(btn => btn.setAttribute('aria-pressed', String(active)));
+  // Shows a crosshair and lets clicks pass through alert polygons (which would
+  // otherwise swallow them to open their own popup), so a pin can be placed
+  // inside a warning area too.
+  mapEl.classList.toggle('tap-mode', active);
+}
+setTapMode(false);   // initialise aria-pressed on both buttons
+
+dragPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
+tapPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && tapModeActive) setTapMode(false);
+});
+
+// Markers keep their own clicks (Leaflet doesn't pass them on to the map), so
+// this only runs for a click on the map itself.
+map.on('click', e => {
+  if (!tapModeActive) return;
+  setTapMode(false);   // one-shot: leave the mode once the pin is placed
+  placeDragPin(e.latlng.lat, e.latlng.lng);
+});
 
 /**
  * Populate the search input with pin coordinates, update the URL, and
@@ -3787,11 +3757,31 @@ fabLocate.addEventListener('click', () => {
   setStatus('loading', 'LOCATING…');
   showOverlay('Requesting device location…');
 
+  // The 15 s `timeout` below only starts once permission is granted. If the user
+  // dismisses the permission prompt, some browsers never call back at all — so a
+  // watchdog makes sure the button and the map overlay are always released.
+  let settled = false;
+  /** Restore the button exactly once; false when this request already finished. */
+  function settle() {
+    if (settled) return false;
+    settled = true;
+    clearTimeout(watchdog);
+    fabLocate.classList.remove('locating');
+    fabLocate.disabled = false;
+    return true;
+  }
+  const watchdog = setTimeout(() => {
+    if (!settle() || gen !== searchGeneration) return;
+    hideOverlay();
+    setStatus('error', 'ERROR');
+    showToast('No location received. Please try again.');
+  }, 30_000);
+
   navigator.geolocation.getCurrentPosition(
     // ── Success ──────────────────────────────────────────────────────────────
     position => {
-      fabLocate.classList.remove('locating');
-      fabLocate.disabled = false;
+      // A late answer after the watchdog already gave up is ignored.
+      if (!settle()) return;
       if (gen !== searchGeneration) return;
       hideOverlay();
 
@@ -3804,8 +3794,7 @@ fabLocate.addEventListener('click', () => {
 
     // ── Error ─────────────────────────────────────────────────────────────────
     err => {
-      fabLocate.classList.remove('locating');
-      fabLocate.disabled = false;
+      if (!settle()) return;
       if (gen !== searchGeneration) return;
       hideOverlay();
       setStatus('error', 'ERROR');
@@ -3922,12 +3911,12 @@ initMobile(); // Initialize mobile-specific features
 /* ─────────────────────────────────────────────────────────────────────────────
    MOBILE ENHANCEMENTS — added for PWA mobile optimisation
    ─────────────────────────────────────────────────────────────────────────────
-   • Tracks main.sheet-open on ALL devices — the bottom-sheet CSS is width- or
-     pointer-driven (≤640 px OR coarse pointer), so a narrow desktop window uses
-     the sheet too and its FAB/toast lift rules must still fire.
-   • On coarse-pointer (touch) devices only — the same gate as the CSS block that
-     swaps the drag-pin for the tap button — wires up "tap-to-place" mode and
-     swipe-down-to-dismiss for the bottom sheet.
+   • Tracks main.sheet-open (and the sheet's real height) on ALL devices — the
+     bottom-sheet CSS is width- or pointer-driven (≤640 px OR coarse pointer), so
+     a narrow desktop window uses the sheet too and its FAB/toast lift rules must
+     still fire.
+   • On coarse-pointer (touch) devices only, wires up swipe-down-to-dismiss for
+     the bottom sheet. (Tap-to-place lives with the draggable pin, section 17.)
    ───────────────────────────────────────────────────────────────────────────── */
 function initMobile() {
   const mainEl      = document.querySelector('main');
@@ -3945,74 +3934,16 @@ function initMobile() {
   });
   sheetObserver.observe(_popupPanel, { attributes: true, attributeFilter: ['style'] });
 
-  /* ── Touch-specific features below. Gated on (pointer: coarse) — deliberately
-        the SAME condition as the CSS that shows #tap-pin-btn, so the button is
-        never visible without its click handler or vice versa. ── */
+  /* The sheet is only as tall as its content (up to 70vh). Publish its real height
+     so the toast and Locate Me button sit just above it instead of a fixed 70vh,
+     which left them floating mid-screen over a short sheet. Set on <html> because
+     #toast is not inside <main>. */
+  new ResizeObserver(() => {
+    document.documentElement.style.setProperty('--sheet-h', `${_popupPanel.offsetHeight}px`);
+  }).observe(_popupPanel);
+
+  /* ── Touch-only: swipe gestures exist only on (pointer: coarse) devices. ── */
   if (!window.matchMedia('(pointer: coarse)').matches) return;
-
-  const tapPinBtn      = document.getElementById('tap-pin-btn');
-  const tapPlaceBanner = document.getElementById('tap-place-banner');
-
-  /* Ensure accessible state for the tap-pin button (the CSS makes it visible) */
-  tapPinBtn.setAttribute('aria-pressed', 'false');
-
-  /* ── Tap-to-place mode ── */
-  let tapModeActive = false;
-
-  function setTapMode(active) {
-    tapModeActive = active;
-    tapPlaceBanner.classList.toggle('active', active);
-    tapPinBtn.classList.toggle('active', active);
-    tapPinBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
-
-    if (active) {
-      // Change Leaflet cursor to crosshair to signal the mode
-      document.getElementById('map').style.cursor = 'crosshair';
-    } else {
-      document.getElementById('map').style.cursor = '';
-    }
-  }
-
-  /* Toggle mode when the mobile pin button is pressed. The drag-pin is hidden on
-     touch devices, so only the tap-pin button drives this. */
-  tapPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
-
-  /*
-   * Wait for the Leaflet map to be available in the outer DOMContentLoaded
-   * scope.  The map is created synchronously in section 1, so it is ready
-   * immediately after DOMContentLoaded fires.  We use a tiny rAF delay to
-   * ensure the outer listener has finished before we hook into the map.
-   */
-  requestAnimationFrame(() => {
-    const leafletMap = window._wxmap;
-    if (!leafletMap) {
-      console.warn('[WX.MAP mobile] Could not get Leaflet map reference for tap-mode');
-      return;
-    }
-
-    leafletMap.on('click', function (e) {
-      if (!tapModeActive) return;
-
-      // Check if the click target is a marker or any interactive element
-      const target = e.originalEvent?.target;
-      if (target && (
-        target.classList?.contains('leaflet-marker-icon') ||
-        target.classList?.contains('station-marker') ||
-        target.classList?.contains('dropped-pin-wrap') ||
-        target.closest('.dropped-pin-wrap')
-      )) {
-        // Click was on a marker or interactive element — don't interfere
-        return;
-      }
-
-      // Place the pin at the tapped location (on empty map area)
-      if (typeof placeDragPin === 'function') {
-        placeDragPin(e.latlng.lat, e.latlng.lng);
-      }
-
-      setTapMode(false);   // exit tap mode after placing
-    });
-  });
 
   /* ── Swipe-down-to-dismiss the bottom sheet ── */
   let sheetTouchStartY = 0;

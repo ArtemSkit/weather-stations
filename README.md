@@ -124,8 +124,17 @@ The **📍 pin button** next to the search input lets you search by any map loca
 
 1. **Drag** the 📍 button from the header onto the map.
 2. A ghost pin follows your cursor while dragging.
-3. **Drop** it anywhere on the map — a labelled pin marker appears at that location.
+3. **Drop** it anywhere on the map — a labelled pin marker appears at that location. Pressing `Esc` mid-drag cancels it.
 4. The coordinates are automatically entered into the search field and nearby stations are fetched.
+
+### Tap or click to place
+
+Dragging isn't possible on touch screens or from a keyboard, so the pin also works without it:
+
+1. **Click** the 📍 button (or focus it and press `Enter`/`Space`). On touch devices, **tap** the 📍 button that replaces it.
+2. A banner across the top of the map confirms the mode is on.
+3. **Tap or click** anywhere on the map — even inside an alert area — to place the pin there.
+4. Press the 📍 button again, or `Esc`, to cancel.
 
 ### Moving the pin
 
@@ -159,6 +168,7 @@ The **⊕ crosshair button** in the bottom-right corner of the map uses your dev
 | Permission denied | "Location access denied. Please allow it in your browser settings." |
 | Position unavailable | "Location unavailable. Check your device settings." |
 | Timeout (>15 s) | "Location request timed out. Please try again." |
+| No answer at all (e.g. the permission prompt was dismissed) | "No location received. Please try again." — after 30 s the button and map are released |
 
 ---
 

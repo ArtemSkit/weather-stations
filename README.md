@@ -349,9 +349,9 @@ weather-stations/
 │   │   ├── #pin-ghost              (follows cursor during drag)
 │   │   ├── <main>
 │   │   │   ├── #tap-place-banner   (shown while tap/click-to-place is armed)
+│   │   │   ├── #alert-banner       (active NWS watches/warnings — before the map in tab order)
 │   │   │   ├── #map                (Leaflet map container — also holds alert area polygons)
 │   │   │   ├── #map-overlay        (loading spinner)
-│   │   │   ├── #alert-banner       (active NWS watches/warnings)
 │   │   │   ├── #popup-panel        (station info / mobile bottom sheet)
 │   │   │   └── #fab-locate         (GPS floating action button)
 │   │   ├── #app-version           (bottom-left version badge)
@@ -435,7 +435,7 @@ These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifes
 
 | Feature | Chrome | Firefox | Edge | Safari |
 |---|---|---|---|---|
-| Map + search | ✅ | ✅ | ✅ | ✅ (Safari 13.1+ / iOS 13.4+) |
+| Map + search | ✅ | ✅ | ✅ | ✅ (Safari 14.1+ / iOS 14.5+) |
 | Draggable pin | ✅ | ✅† | ✅ | ✅ |
 | Locate Me (GPS) | ✅* | ✅* | ✅* | ✅* |
 | Service Worker (PWA) | ✅ | ✅ | ✅ | ✅ (iOS 11.3+) |

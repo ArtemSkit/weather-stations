@@ -587,6 +587,8 @@ test('rain chance uses the hour in progress, not an hour that already ended', as
   // Cached only until that hour ends (one minute away), not the usual 10 minutes.
   assert.ok(forecastPoPCache.get('KSAT').ttl <= 60_000);
   assert.ok(forecastPoPCache.get('KSAT').ttl > 0);
+  // The hour's end is stored, so the panel's first render can drop it once over.
+  assert.equal(forecastPoPCache.get('KSAT').end, Date.parse(iso(now + 60_000)));
 });
 
 test('Enter that confirms an IME composition does not start a search', () => {
@@ -2024,9 +2026,12 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   assert.equal(detect('+29.4 -98.5'), 'coords');
   assert.equal(detect('.5 .5'), 'coords');
   assert.equal(detect('29., -98.'), 'coords');
+  assert.equal(detect('0029.4, -98.5'), 'coords');      // leading zeros, as before
+  assert.equal(detect('29.42 −98.49'), 'coords');  // pasted Unicode minus
   const parse = vm.runInNewContext(`(() => { ${extractFunction('parseCoords')} return parseCoords; })()`);
   assert.deepEqual({ ...parse(' 29.42   -98.49 ') }, { lat: 29.42, lon: -98.49 });
   assert.deepEqual({ ...parse('29.42 , -98.49') }, { lat: 29.42, lon: -98.49 });
+  assert.deepEqual({ ...parse('29.42 −98.49') }, { lat: 29.42, lon: -98.49 });
   assert.equal(detect('29.4, -98.5'), 'coords');
   assert.equal(detect('1600 Pennsylvania Ave'), 'address');
   assert.match(extractFunction('doSearch'), /type === 'badzip'\) \{\s*(\/\/.*\s*)?throw new Error\('Not a valid ZIP code/);

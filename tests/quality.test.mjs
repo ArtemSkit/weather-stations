@@ -645,6 +645,13 @@ test('alert popups pan clear of the banner and panel, and their × never covers 
   const narrow = { top: 100, bottom: 700, left: 0, right: 700, width: 700, height: 600 };
   const pushed = run({ x: 600, y: 690, map: narrow, panelRect: { left: 690, top: 116, bottom: 120 } });
   assert.deepEqual(pushed.topLeft, [16, 168]);
+  // The panel's right padding pushes the popup left too: here the click alone
+  // (560 - 200 = 360) clears the banner, but after the push (1100 - 438 - 400 = 262)
+  // it doesn't — so the right padding must be computed before the banner check.
+  const wide = { top: 100, bottom: 700, left: 0, right: 1100, width: 1100, height: 600 };
+  const viaPanel = run({ x: 560, y: 450, map: wide, panelRect: { left: 670, top: 116, bottom: 500 } });
+  assert.deepEqual(viaPanel.bottomRight, [438, 16]);
+  assert.deepEqual(viaPanel.topLeft, [16, 168]);
 
   // Phone: full-width banner, bottom sheet, and a popup narrow enough that its ×
   // stays on a 360px screen.
@@ -721,6 +728,9 @@ test('round-9 fixes: narrow header, drag vs click, pin-mode banner, colours, Loc
   assert.equal(closed, 2);
   assert.match(html, /pressStartedInMap = map\.getContainer\(\)\.contains\(e\.target\);/);
   assert.match(html, /main:has\(#tap-place-banner\.active\) #popup-panel \{ top: 64px; max-height: calc\(100% - 80px\); \}/);
+  assert.match(html, /max-height: 70vh !important;/);
+  // The press tracker must see every press first (capture phase, on document).
+  assert.match(html, /document\.addEventListener\('pointerdown', e => \{\s*pressStartedInMap = [^}]*\}, \{ capture: true \}\);/);
   // Alert text uses a lighter shade (≥4.5:1 for every hue) than the polygon.
   const add = extractFunction('addAlertGeometryToMap');
   assert.match(add, /const textColor = `hsl\(\$\{hue\}, 85%, 72%\)`;/);

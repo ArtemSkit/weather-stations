@@ -50,8 +50,17 @@
 </script>
 
 <!-- Fonts -->
+<!-- The font files themselves come from fonts.gstatic.com, so warm that up too. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Loaded without blocking the first paint (media swap): on a slow network or a
+     captive portal the installed app must not sit blank waiting for a cross-origin
+     stylesheet. Text shows in fallback fonts until it arrives. -->
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap"
+      rel="stylesheet" media="print" onload="this.media='all'">
+<noscript>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+</noscript>
 
 <!-- Leaflet is vendored so the map shell can initialize without a CDN connection. -->
 <link rel="stylesheet" href="./leaflet.css"/>
@@ -589,7 +598,8 @@
     font-family: 'Syne', sans-serif; font-weight: 600;
     font-size: 0.85rem; color: var(--accent);
   }
-  .weather-item-value.na { color: var(--text-muted); font-size: 0.75rem; }
+  /* val() puts the "N/A" placeholder INSIDE the value element. */
+  .weather-item-value .na { color: var(--text-muted); font-size: 0.75rem; }
   .feels-c { font-size: 0.7rem; color: var(--text-muted); font-weight: 400; }
 
   /* Precipitation likelihood progress bar */
@@ -964,9 +974,10 @@
 
     /* ── Interval input: bigger touch target ── */
     #interval-input {
-      width: 44px;
+      width: 56px;
       height: 28px;
-      font-size: 0.65rem !important;
+      /* 16px: iOS Safari zooms the whole page into any smaller input on focus. */
+      font-size: 16px !important;
       padding: 0 4px;
     }
     /* ── FAB shift: above bottom sheet when open ── */
@@ -1117,7 +1128,7 @@
   <!--
     Floating Action Button — requests the device's GPS location and
     pans the map to it, placing a search pin automatically.
-    Icon: ⊕ navigation crosshair (rendered as Unicode).
+    Icon: navigation crosshair (inline SVG).
   -->
   <button
     id="fab-locate"
@@ -1207,16 +1218,21 @@ if (swContainer) {
     let swRegistration = null;
     let reloading = false;
 
-    // On a first visit the page starts uncontrolled, and the new worker's
-    // clients.claim() fires one 'controllerchange' — that initial claim is NOT an
-    // update (reloading would flash every first load), so skip exactly that one.
-    // Every later change (an update accepted here or in another window) reloads.
-    let skipNextControllerChange = !swContainer.controller;
+    // Whether a worker controlled this page before the current change, and
+    // whether the user pressed REFRESH NOW here (window.__wxActivateUpdate below).
+    let hadController = !!swContainer.controller;
+    let userAcceptedUpdate = false;
 
-    // When a NEW worker activates and takes control of an already-controlled page,
-    // reload once so the page is driven by the new worker and its fresh cache.
+    // Reload once when a NEW worker takes over a page that was already running
+    // under the previous one, so it uses the new release. A page that was NOT
+    // controlled yet is different: the first visit (the worker's initial claim)
+    // and a hard reload (Ctrl+Shift+R; with no controlled page holding it back, a
+    // new worker even activates on its own) both loaded straight from the network,
+    // so they only reload when the user accepted the update right here.
     swContainer.addEventListener('controllerchange', () => {
-      if (skipNextControllerChange) { skipNextControllerChange = false; return; }
+      const wasControlled = hadController;
+      hadController = true;
+      if (!wasControlled && !userAcceptedUpdate) return;
       if (reloading) return;
       reloading = true;
       window.location.reload();
@@ -1235,13 +1251,10 @@ if (swContainer) {
         console.info('[WX.MAP] Service worker registered (PWA enabled)');
 
         // A hard reload (Ctrl+Shift+R) leaves the page uncontrolled even though a
-        // worker is already active. For such a page the next controller change is
-        // an update taking over — not the first-install claim — and updates must
-        // still be announced, so "has a worker" means controller OR active worker.
+        // worker is already active; updates must still be announced there, so
+        // "has a worker" means controller OR active worker. (On a first visit both
+        // are absent until the first install, so no false update banner.)
         const hasActiveWorker = () => !!(swContainer.controller || reg.active);
-        // "activated" (not just present): a page loaded while the very first worker
-        // is still activating would otherwise treat that first claim as an update.
-        if (!swContainer.controller && reg.active?.state === 'activated') skipNextControllerChange = false;
 
         // A worker already parked in "waiting" means an update installed during a
         // previous visit but was never activated — surface it now.
@@ -1294,6 +1307,7 @@ if (swContainer) {
         console.warn('[WX.MAP] Update activation requested without a waiting worker');
         return;
       }
+      userAcceptedUpdate = true;
       worker.postMessage({ type: 'SKIP_WAITING' });
       setTimeout(() => {
         if (!reloading) { reloading = true; window.location.reload(); }
@@ -1356,8 +1370,9 @@ function getBrowserInfo() {
   // Brave stopped identifying itself in the UA string years ago; the only reliable
   // signal is the navigator.brave object it injects.
   if (navigator.brave && ua.includes('chrome')) return 'Brave';
-  if (ua.includes('chrome') && !ua.includes('chromium')) return 'Chrome';
+  // Opera's user agent also contains "Chrome", so it must be checked first.
   if (ua.includes('opr/') || ua.includes('opera')) return 'Opera';
+  if (ua.includes('chrome') && !ua.includes('chromium')) return 'Chrome';
   if (ua.includes('firefox')) return 'Firefox';
   if (ua.includes('safari') && !ua.includes('chrome')) return 'Safari';
   return 'Unknown';
@@ -1880,14 +1895,18 @@ async function addressToCoords(address, near) {
    ───────────────────────────────────────────────────────────────────────────── */
 
 try { localStorage.removeItem('wxmap_geocodio_key'); } catch (_) { /* storage blocked — nothing to clean */ }
-if (document.cookie.includes('wxmap_geocodio_key=')) {
-  // Expire it on both paths old releases used: early ones wrote path=/, later
-  // ones the app's own folder. A cookie is only removed by its exact path.
-  const appFolder = location.pathname.replace(/[^/]*$/, '') || '/';
-  new Set(['/', appFolder]).forEach(path => {
-    document.cookie = `wxmap_geocodio_key=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=${path};SameSite=Strict`;
-  });
-}
+// Reading document.cookie throws in an opaque origin (e.g. a sandboxed iframe);
+// an uncaught error here would stop the whole app script from wiring up.
+try {
+  if (document.cookie.includes('wxmap_geocodio_key=')) {
+    // Expire it on both paths old releases used: early ones wrote path=/, later
+    // ones the app's own folder. A cookie is only removed by its exact path.
+    const appFolder = location.pathname.replace(/[^/]*$/, '') || '/';
+    new Set(['/', appFolder]).forEach(path => {
+      document.cookie = `wxmap_geocodio_key=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=${path};SameSite=Strict`;
+    });
+  }
+} catch (_) { /* cookies unavailable — nothing to clean */ }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    8. WEATHER API HELPERS
@@ -2737,19 +2756,32 @@ async function openStation(stationId, stationName, markerEl) {
 }
 
 /** Close the popup and stop the refresh timer. */
-document.getElementById('popup-close').addEventListener('click', e => {
-  // Keyboard users closing the panel go back to the marker they opened it from,
-  // instead of being dropped at the start of the page. Only for keyboard use
-  // (:focus-visible): browsers also focus a clicked button, and focusing the
-  // marker makes Leaflet pan the map back to it, which a mouse user never asked for.
-  const returnFocusTo = e.currentTarget.matches(':focus-visible')
-    ? activeMarkerEl?.closest('.leaflet-marker-icon') : null;
+const popupCloseBtn = document.getElementById('popup-close');
+
+/**
+ * Close the station panel and stop its refresh timer.
+ * @param {boolean} returnFocus - keyboard use: move focus back to the marker the
+ *   panel was opened from instead of dropping it at the start of the page. Not for
+ *   mouse/touch: focusing the marker makes Leaflet pan the map back to it.
+ */
+function closeStationPanel(returnFocus) {
+  const returnFocusTo = returnFocus ? activeMarkerEl?.closest('.leaflet-marker-icon') : null;
   popupPanel.style.display = 'none';
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   stationOpenGeneration++;
   activeStationId = null;
   if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
   returnFocusTo?.focus();
+}
+
+// Browsers also focus a button that is clicked, so :focus-visible is what tells a
+// keyboard press apart from a mouse click or tap.
+popupCloseBtn.addEventListener('click', e => closeStationPanel(e.currentTarget.matches(':focus-visible')));
+// Escape anywhere inside the panel closes it, like any dialog.
+popupPanel.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  e.preventDefault();   // consumed: pin mode's Escape handler skips it
+  closeStationPanel(true);
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2785,6 +2817,16 @@ function makeStationMarker(id, name, lat, lng) {
   // (Leaflet's `alt` option only applies to <img> icons, so it isn't used here.)
   const marker = L.marker([lat, lng], { icon, title: label }).addTo(map);
   marker.on('click', () => openStation(id, name, iconEl));
+  // Leaflet makes the marker focusable (role "button") but never turns Enter or
+  // Space into a click, so keyboard users could reach a station but not open it.
+  marker.getElement().addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    openStation(id, name, iconEl);
+    // Move focus into the panel: its details get announced and are reachable
+    // without tabbing past every other marker on the map.
+    popupCloseBtn.focus();
+  });
   stationMarkers.push(marker);
   return iconEl;
 }
@@ -2920,13 +2962,23 @@ const zoneFetchQueue = [];
 let zoneFetchActive = 0;
 
 /**
+ * The element of the alert popup that is open right now, or null. Tracked via
+ * popupopen/popupclose rather than a DOM query: Leaflet leaves a closed popup in
+ * the page for its 200 ms fade-out, which a query would still report as open.
+ * @returns {HTMLElement|null}
+ */
+function openAlertPopupElement() {
+  return activeAlertAreaOwner?.getPopup?.()?.getElement?.() || null;
+}
+
+/**
  * Apply the alert-popup click contract before Leaflet handles the click:
  * - the active area toggles closed and consumes the event;
  * - a different area continues to Leaflet so it replaces and repositions the popup;
  * - every other outside click closes the popup normally.
  */
 function handleAlertPopupClickAway(event) {
-  const popup = document.querySelector('.wx-alert-popup');
+  const popup = openAlertPopupElement();
   if (!popup) return;
   const target = event.target;
   if (popup.contains(target)) return;
@@ -2943,7 +2995,7 @@ function handleAlertPopupClickAway(event) {
 
 /** Close an alert popup on Escape even when keyboard focus is outside the map. */
 function handleAlertPopupEscape(event) {
-  if (event.key === 'Escape' && document.querySelector('.wx-alert-popup')) {
+  if (event.key === 'Escape' && openAlertPopupElement()) {
     map.closePopup();
     event.preventDefault();   // consumed: other Escape handlers (pin mode) skip it
   }
@@ -2988,7 +3040,7 @@ function alertsSignature(features) {
 function alertClass(props) {
   const event = (props.event || '').toLowerCase();
   const sev   = props.severity || '';
-  // Life-threatening, act-now products get the loudest (red, pulsing) treatment.
+  // Life-threatening, act-now products get the loudest (red) treatment.
   if (event.includes('tornado warning') || event.includes('flash flood warning')) return 'crit';
   if (event.includes('warning')) return 'warn';
   // Watches mean "conditions are favourable, be prepared" → amber. Checked before
@@ -3353,10 +3405,11 @@ function addAlertGeometryToMap(geom, props, color, label) {
     }
   });
 
-  // Leaflet's bindPopup supplies the click/tap listener. Keeping that single
-  // built-in listener avoids duplicate opens while autoPan prevents map movement.
+  // Leaflet's bindPopup supplies the click/tap listener; keeping that single
+  // built-in listener avoids duplicate opens. autoPan nudges the map just enough
+  // that a popup opened near an edge isn't clipped (title and × button) on phones.
   layer.bindPopup(alertAreaPopupHtml(props, color), {
-    className: 'wx-alert-popup', autoPan: false, maxWidth: 320
+    className: 'wx-alert-popup', autoPan: true, autoPanPadding: [16, 16], maxWidth: 320
   });
 
   alertAreaGroup.addLayer(layer);
@@ -3606,7 +3659,7 @@ async function refreshAlerts() {
   try {
     if (currentLat == null) return;
     // Like the station panel: no polling for a screen nobody can see. The
-    // visibilitychange handler below catches up as soon as it is visible again.
+    // visibilitychange handler above catches up as soon as it is visible again.
     if (document.hidden) { alertsRefreshMissed = true; return; }
     // Capture the location for this tick. If the user searches elsewhere while the
     // fetch is in flight, currentLat/currentLon change and we discard this result so

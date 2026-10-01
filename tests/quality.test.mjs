@@ -164,7 +164,6 @@ test('the ?station deep link follows the same area rule as searches', () => {
 
 test('hidden tabs pause alert polling and hard-reloaded tabs still get updates', () => {
   assert.match(extractFunction('refreshAlerts'), /if \(document\.hidden\) \{ alertsRefreshMissed = true; return; \}/);
-  assert.match(html, /if \(!swContainer\.controller && reg\.active\?\.state === 'activated'\) skipNextControllerChange = false;/);
   assert.match(html, /if \(reg\.waiting && hasActiveWorker\(\)\) announceUpdate\(\);/);
   // One live region for progress (the status bar), and no manifest fetch on file://.
   assert.match(html, /<div id="map-overlay">/);
@@ -420,8 +419,84 @@ test('update flow survives file:// and reloads after a first-visit claim', () =>
   // cannot abort the registration script (and the version badge with it).
   assert.match(html, /const swContainer = \(\(\) => \{\s*try \{[\s\S]*?location\.protocol === 'file:'/);
   assert.doesNotMatch(html, /'serviceWorker' in navigator|navigator\.serviceWorker\.(controller|register|addEventListener)/);
-  // Only the very first claim is ignored; a later update must still reload the page.
-  assert.match(html, /if \(skipNextControllerChange\) \{ skipNextControllerChange = false; return; \}/);
+});
+
+/** Run the page's real update-flow block (if (swContainer) {...}) with stub objects. */
+async function runUpdateFlow({ controller, active = null, waiting = null }) {
+  const start = html.indexOf('if (swContainer) {');
+  const block = html.slice(start, html.indexOf('} else {', start) + 1);
+  const handlers = {};
+  const reg = { active, waiting, addEventListener() {}, update: async () => {} };
+  const swContainer = {
+    controller,
+    addEventListener: (type, fn) => { handlers[type] = fn; },
+    register: async () => reg
+  };
+  const state = { reloads: 0, announced: 0 };
+  const window = {
+    location: { reload: () => { state.reloads++; } },
+    dispatchEvent: () => { state.announced++; },
+    addEventListener() {}
+  };
+  vm.runInNewContext(block, {
+    swContainer, window, CustomEvent: class {},
+    document: { addEventListener() {}, visibilityState: 'visible' },
+    console: { info() {}, warn() {}, error() {} },
+    setInterval() {}, setTimeout() {}, Date
+  });
+  await new Promise(resolve => setImmediate(resolve));   // let register() resolve
+  return { state, change: () => handlers.controllerchange(), accept: () => window.__wxActivateUpdate() };
+}
+
+test('round-4 UI fixes: popups, keyboard panel, iOS zoom, cookies, fonts', () => {
+  // A closed popup lingers in the DOM for Leaflet's 200 ms fade; ask the tracked owner.
+  const openAlertPopupElement = vm.runInNewContext(
+    `(activeAlertAreaOwner => (${extractFunction('openAlertPopupElement')})())`);
+  assert.equal(openAlertPopupElement(null), null);
+  const el = {};
+  assert.equal(openAlertPopupElement({ getPopup: () => ({ getElement: () => el }) }), el);
+  assert.doesNotMatch(extractFunction('handleAlertPopupClickAway') + extractFunction('handleAlertPopupEscape'),
+    /querySelector/);
+  assert.match(extractFunction('addAlertGeometryToMap'), /autoPan: true, autoPanPadding: \[16, 16\]/);
+
+  // Keyboard users can open a station (Leaflet never maps Enter to a marker click)
+  // and close the panel with Escape.
+  assert.match(extractFunction('makeStationMarker'),
+    /e\.key !== 'Enter' && e\.key !== ' '[\s\S]*?openStation\(id, name, iconEl\);\s*[\s\S]*?popupCloseBtn\.focus\(\);/);
+  assert.match(html, /popupPanel\.addEventListener\('keydown', e => \{\s*if \(e\.key !== 'Escape'\) return;/);
+
+  assert.match(html, /\.weather-item-value \.na \{/);                 // the N/A span is a child
+  assert.match(html, /#interval-input \{[^}]*font-size: 16px !important;/);   // no iOS zoom
+  assert.match(html, /try \{\s*if \(document\.cookie\.includes\('wxmap_geocodio_key='\)\)/);
+  assert.match(html, /rel="stylesheet" media="print" onload="this\.media='all'"/);
+  assert.match(html, /<link rel="preconnect" href="https:\/\/fonts\.gstatic\.com" crossorigin>/);
+});
+
+test('update flow reloads only pages that were running an older release', async () => {
+  // First visit: the worker's initial claim must not reload (no flash).
+  const first = await runUpdateFlow({ controller: null });
+  first.change();
+  assert.equal(first.state.reloads, 0);
+  // …but a later update accepted in another window does reload it.
+  first.change();
+  assert.equal(first.state.reloads, 1);
+
+  // Controlled page: an update taking over reloads exactly once.
+  const normal = await runUpdateFlow({ controller: {}, active: {} });
+  normal.change();
+  normal.change();
+  assert.equal(normal.state.reloads, 1);
+
+  // Hard-reloaded page (uncontrolled, worker active): a new worker that activates
+  // on its own must not reload it; an update the user accepts here must.
+  const hard = await runUpdateFlow({ controller: null, active: {}, waiting: { postMessage() {} } });
+  assert.equal(hard.state.announced, 1, 'a waiting update is still announced');
+  hard.change();
+  assert.equal(hard.state.reloads, 0);
+  const hardAccepted = await runUpdateFlow({ controller: null, active: {}, waiting: { postMessage() {} } });
+  hardAccepted.accept();
+  hardAccepted.change();
+  assert.equal(hardAccepted.state.reloads, 1);
 });
 
 test('vendored Leaflet and its license match the pinned release', () => {
@@ -483,7 +558,8 @@ test('alert banner text is phone-readable and NWS hard wraps are unwrapped', () 
 test('alert popup selection toggles, switches areas, and closes on click-away or Escape', () => {
   let activePopup = null;
   let closeCount = 0;
-  const documentStub = { querySelector: () => activePopup };
+  // The handlers ask which popup is open (tracked state), never the DOM.
+  const openAlertPopupElement = () => activePopup;
   const mapStub = { closePopup: () => { closeCount++; } };
   const activeAreaElement = {};
   const siblingAreaElement = {};
@@ -495,10 +571,10 @@ test('alert popup selection toggles, switches areas, and closes on click-away or
     [siblingAreaElement, activeAlertAreaOwner],
     [differentAreaElement, differentAlertAreaOwner]
   ]);
-  const clickAway = new Function('document', 'map', 'alertAreaOwners', 'activeAlertAreaOwner', `
+  const clickAway = new Function('openAlertPopupElement', 'map', 'alertAreaOwners', 'activeAlertAreaOwner', `
     ${extractFunction('handleAlertPopupClickAway')}
     return handleAlertPopupClickAway;
-  `)(documentStub, mapStub, alertAreaOwners, activeAlertAreaOwner);
+  `)(openAlertPopupElement, mapStub, alertAreaOwners, activeAlertAreaOwner);
 
   const makeEvent = ({ insidePopup = false, alertArea = null } = {}) => ({
     target: {
@@ -544,10 +620,10 @@ test('alert popup selection toggles, switches areas, and closes on click-away or
   assert.equal(closeCount, 3);
   assert.equal(ordinaryClickAway.propagationStopped, false);
 
-  const handleEscape = new Function('document', 'map', `
+  const handleEscape = new Function('openAlertPopupElement', 'map', `
     ${extractFunction('handleAlertPopupEscape')}
     return handleAlertPopupEscape;
-  `)(documentStub, mapStub);
+  `)(openAlertPopupElement, mapStub);
   const keyEvent = key => ({ key, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } });
   handleEscape(keyEvent('Enter'));
   assert.equal(closeCount, 3);

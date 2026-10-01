@@ -2271,8 +2271,16 @@ async function fetchForecastPoP(lat, lon, stationId) {
     failed = !e.lasting;
   }
 
+  // A passing failure (timeout, NWS 5xx) keeps a value whose hour is still running,
+  // so the row doesn't blink out; only the retry comes sooner (capped at that hour).
+  const prev = forecastPoPCache.get(stationId);
+  if (failed && prev && prev.pop != null && prev.end > Date.now()) {
+    pop = prev.pop;
+    periodEnd = prev.end;
+  }
   // Cache even a null result so a missing/failed forecast isn't retried every tick.
-  const ttl = failed ? FORECAST_FAILURE_TTL_MS
+  const ttl = failed
+    ? Math.max(0, Math.min(FORECAST_FAILURE_TTL_MS, Number.isFinite(periodEnd) ? periodEnd - Date.now() : FORECAST_FAILURE_TTL_MS))
     // Number.isFinite, not `|| TTL`: an hour ending exactly now (difference 0) must
     // get a 0 TTL, not the full 10 minutes.
     : Math.max(0, Math.min(FORECAST_TTL_MS, Number.isFinite(periodEnd) ? periodEnd - Date.now() : FORECAST_TTL_MS));

@@ -201,7 +201,7 @@ Click any station badge on the map — or focus it with `Tab` and press `Enter` 
 > 1. `GET /points/{lat},{lon}` → the station's `forecastHourly` grid URL.
 > 2. `GET {forecastHourly}` → `probabilityOfPrecipitation.value` of the hour in progress (the first period that hasn't ended — a forecast issued a while ago still starts with a finished hour).
 >
-> Because a forecast changes slowly, the result is **cached per station for up to 10 minutes** (never past the end of the hour it describes) rather than re-fetched on every live-observation tick. The forecast fetch is best-effort and never delays the observation: the readings appear as soon as they arrive, and the Precip Chance row is added once the forecast answers. If it fails or is unavailable, the row is simply omitted, and a failed lookup is retried after 2 minutes.
+> Because a forecast changes slowly, the result is **cached per station for up to 10 minutes** (never past the end of the hour it describes) rather than re-fetched on every live-observation tick. The forecast fetch is best-effort and never delays the observation: the readings appear as soon as they arrive, and the Precip Chance row is added once the forecast answers. If it is unavailable, the row is simply omitted. A failed lookup is retried after 2 minutes; meanwhile a value already shown for the current hour stays (otherwise the row is omitted).
 
 ### Live refresh
 
@@ -402,7 +402,7 @@ weather-stations/
 |---|---|---|
 | [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, hourly forecast (precip chance), active alerts, alert-area zone geometry | No |
 | [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates | No |
-| [Photon (komoot)](https://photon.komoot.io/) | Street address → coordinates | No |
+| [Photon (komoot)](https://photon.komoot.io/) | Street address → coordinates (+ ZIP fallback) | No |
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |
 | [Browser Geolocation API](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation_API) | Device GPS | User permission |
 

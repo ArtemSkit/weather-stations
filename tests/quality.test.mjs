@@ -2217,3 +2217,22 @@ test('a ?station link places the marker at the station record, not the rounded o
   // The optional record must not hold the deep link for the default 15 s.
   assert.match(extractFunction('fetchStationPoint'), /encodeURIComponent\(stationId\)\}`, \{\}, 4000\)/);
 });
+
+test('a passing forecast failure keeps the current hour\'s rain chance', async () => {
+  const now = Date.now();
+  const cache = new Map([['KSEA', { pop: 40, ts: now - 11 * 60_000, ttl: 600_000, end: now + 30 * 60_000 }]]);
+  const fetchForecastPoP = new Function('fetchJsonWithTimeout', 'forecastPoPCache', `
+    const FORECAST_TTL_MS = 600000, FORECAST_FAILURE_TTL_MS = 120000, FORECAST_CACHE_LIMIT = 100;
+    function setBoundedCache(c, k, v) { c.set(k, v); }
+    function isTrustedNwsApiUrl() { return true; }
+    ${extractFunction('cachedForecastPoP')}
+    async ${extractFunction('fetchForecastPoP')}
+    return fetchForecastPoP;
+  `)(async () => ({ response: { ok: false, status: 503 }, data: null }), cache);
+  // The hour has 30 minutes left: a 503 must not blank the row.
+  assert.equal(await fetchForecastPoP(47.4, -122.3, 'KSEA'), 40);
+  assert.equal(cache.get('KSEA').ttl, 120000, 'retried soon');
+  // Once that hour is over, a failure means "no value".
+  cache.set('KSEA', { pop: 40, ts: now - 11 * 60_000, ttl: 600_000, end: now - 1 });
+  assert.equal(await fetchForecastPoP(47.4, -122.3, 'KSEA'), null);
+});

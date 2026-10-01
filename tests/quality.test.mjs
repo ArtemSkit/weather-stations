@@ -888,8 +888,13 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
         presentWeather: [{ intensity: 'light', weather: 'rain' }, { weather: 'fog_mist' }] });
   assert.doesNotMatch(body(), /fog mist/);
   // Showers seen only nearby (VCSH) say so.
-  obs({ textDescription: 'Cloudy', presentWeather: [{ modifier: 'showers', weather: 'rain', inVicinity: true }] });
+  obs({ textDescription: ' Rain', presentWeather: [{ modifier: 'showers', weather: 'rain', inVicinity: true }] });
   assert.match(body(), /rain showers in vicinity/);
+  // NWS words for BCFG and UP (KPKB-, KAIO-like) match, so they are not repeated.
+  obs({ textDescription: 'Fog/Mist and Patchy Fog', presentWeather: [{ weather: 'fog_mist' }, { modifier: 'patches', weather: 'fog' }] });
+  assert.doesNotMatch(body(), /patchy fog/);
+  obs({ textDescription: 'Light Unknown Precipitation', presentWeather: [{ intensity: 'light', weather: 'unknown' }] });
+  assert.doesNotMatch(body(), /light unknown/);
   // A 3-hour-old report gets an age.
   render({ properties: { timestamp: new Date(Date.now() - 3 * 3_600_000).toISOString() } }, 'KTST', 'Test');
   assert.match(elements['update-time'].textContent, /3 h old/);

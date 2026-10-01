@@ -894,6 +894,9 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   assert.match(body(), /Heat Index/);
   obs({ temperature: { value: 10.2 }, windSpeed: { value: 9.3 }, windChill: { value: 9 } });
   assert.match(body(), /Wind Chill/);
+  // 2 kt (shown as 2 mph) is below the 3 mph wind-chill cutoff.
+  obs({ temperature: { value: 3 }, windSpeed: { value: 3.7 }, windChill: { value: 2 } });
+  assert.doesNotMatch(body(), /Wind Chill/);
   obs({ temperature: { value: 3 }, windSpeed: { value: 5.5 }, windChill: { value: 1 } });
   assert.match(body(), /Wind Chill/);
   // "Fog/Mist" vs fog_mist is the same thing — not repeated.

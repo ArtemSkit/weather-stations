@@ -182,7 +182,7 @@ Click any station badge on the map — or focus it with `Tab` and press `Enter` 
 | **Conditions** | Text description (e.g. "Partly Cloudy") |
 | **Dewpoint** | °F |
 | **Humidity** | Relative humidity % |
-| **Feels Like** | Heat Index (from 80°F) *or* Wind Chill (50°F or colder with wind above 3 mph) + °C companion — hidden otherwise, even if NOAA sends a value |
+| **Feels Like** | Heat Index (from 80°F) *or* Wind Chill (50°F or colder with wind of 3 mph or more) + °C companion — hidden otherwise, even if NOAA sends a value |
 | **Wind** | Speed in whole mph + compass direction, or **Calm** |
 | **Gusts** | mph |
 | **Visibility** | Miles, as US reports give them — fractions (0.25, 0.75…) below 3 mi, whole or half miles above |

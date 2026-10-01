@@ -1961,3 +1961,16 @@ test('dismissing an update cannot schedule an automatic reload', () => {
   assert.match(updateHandler, /dismissBtn\.onclick/);
   assert.doesNotMatch(updateHandler, /setTimeout|auto-applying|display-mode: standalone/);
 });
+
+test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are not addresses', () => {
+  const detect = vm.runInNewContext(`(() => { ${extractFunction('detectInputType')} return detectInputType; })()`);
+  assert.equal(detect('80201'), 'zip');
+  assert.equal(detect('90210-1234'), 'zip');
+  assert.equal(detect(' 902101234 '), 'zip');
+  // "8020" as an address matches some house number far away — reject it instead.
+  assert.equal(detect('8020'), 'badzip');
+  assert.equal(detect('802011'), 'badzip');
+  assert.equal(detect('39.4, -104.5'), 'coords');
+  assert.equal(detect('1600 Pennsylvania Ave'), 'address');
+  assert.match(extractFunction('doSearch'), /type === 'badzip'\) \{\s*throw new Error\('ZIP codes have 5 digits/);
+});

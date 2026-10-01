@@ -206,7 +206,7 @@ The popup footer shows:
 
 **To change the refresh interval:** click the number in the footer, type a new value (10–3600 s), and press Enter or click away. The new interval takes effect immediately. While the tab or installed app is hidden, refreshes pause; the panel catches up as soon as it is visible again.
 
-The pulsing dot indicates a refresh in progress; steady green means data is current. If an observation fetch fails the footer reads **Error fetching data**; when the *first* load fails the panel shows a brief "couldn't load — retrying" note rather than hanging on the loading state, and the next successful tick fills in the data.
+The pulsing dot indicates a refresh in progress; steady green means data is current. If an observation fetch fails the footer reads **Error fetching data**; when the *first* load fails the panel shows a brief "couldn't load — retrying" note rather than hanging on the loading state, and the next successful tick fills in the data. A listed station that has never reported (NOAA answers 404) says so instead and is not polled.
 
 ### On mobile
 

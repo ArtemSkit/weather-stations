@@ -2092,7 +2092,10 @@ async function fetchObservations(stationId) {
   // The browser always sends its own User-Agent and ignores any custom one
   // (User-Agent is a forbidden fetch header), so there's no point setting it.
   const { response: res, data } = await fetchJsonWithTimeout(url);
-  if (res.status === 404) throw new Error(`Station "${stationId}" not found or has no recent observations`);
+  // Tagged so the station panel can tell "never reports" apart from a passing outage.
+  if (res.status === 404) {
+    throw Object.assign(new Error(`Station "${stationId}" not found or has no recent observations`), { status: 404 });
+  }
   if (!res.ok) throw new Error(`NOAA observations API returned HTTP ${res.status}`);
   return data;
 }
@@ -2833,6 +2836,8 @@ async function doStationRefresh(stationId, generation) {
 
 /** True when a refresh was skipped because the page was hidden. */
 let stationRefreshMissed = false;
+/** The panel opening whose station has no observations at all (404) — never polled. */
+let stationNoDataGeneration = 0;
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !stationRefreshMissed) return;
@@ -2873,14 +2878,24 @@ async function refreshStationData(stationId, generation) {
     }
   } catch (e) {
     if (isActiveStation(stationId, generation)) {
-      document.getElementById('update-time').textContent = 'Error fetching data';
+      const noData = e.status === 404;
+      document.getElementById('update-time').textContent = noData ? '—' : 'Error fetching data';
       // If the very first fetch failed we're still showing the loading skeleton —
       // swap it for an error so the panel doesn't hang forever on "Fetching…". The
       // .station-loading marker is kept, so a later successful tick still replaces
       // this; once real data has rendered (no skeleton present) a refresh error
       // leaves the good data untouched and only the footer note changes.
       const body = document.getElementById('popup-body');
-      if (body.querySelector('.station-loading')) {
+      if (noData && body.querySelector('.station-loading')) {
+        // Listed stations that have never reported answer 404 every time: say so
+        // and stop polling instead of promising a retry that can't succeed.
+        if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+        stationNoDataGeneration = generation;
+        body.innerHTML =
+          `<div style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
+             ${escapeHtml(e.message)}
+           </div>`;
+      } else if (body.querySelector('.station-loading')) {
         body.innerHTML =
           `<div class="station-loading" style="text-align:center;color:var(--red);font-size:0.7rem;padding:20px 0">
              Couldn't load observations — retrying…
@@ -2926,6 +2941,8 @@ async function openStation(stationId, stationName, markerEl) {
   popupPanel.style.display = 'block';
   document.getElementById('popup-id').textContent    = stationId;
   document.getElementById('popup-name').textContent  = stationName || '—';
+  // Clear the previous station's observation time until this one's arrives.
+  document.getElementById('update-time').textContent = '—';
   document.getElementById('popup-body').innerHTML    =
     `<div class="station-loading" style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
        Fetching observations…
@@ -2936,8 +2953,9 @@ async function openStation(stationId, stationName, markerEl) {
   // The user may have closed the panel or opened a different station (or the same
   // one again — every opening gets a new generation) while the first fetch was in
   // flight. Only the still-current opening starts the live-refresh timer, so an
-  // orphaned or duplicate interval can never be created.
-  if (!isActiveStation(stationId, generation)) return;
+  // orphaned or duplicate interval can never be created. A station with no
+  // observations at all (404) is not polled.
+  if (!isActiveStation(stationId, generation) || stationNoDataGeneration === generation) return;
   refreshTimer = setInterval(
     () => doStationRefresh(stationId, generation),
     refreshInterval

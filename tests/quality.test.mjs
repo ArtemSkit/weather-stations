@@ -1998,7 +1998,14 @@ test('alerts come before the map for keyboard users and small text keeps its con
 });
 
 test('Locate Me hides instead of covering the header when the sheet leaves no room', () => {
-  assert.match(html, /mainEl\.classList\.toggle\('sheet-crowded', mainEl\.clientHeight - sheetH < 74\);/);
+  assert.match(html, /const room = window\.innerHeight - mainEl\.getBoundingClientRect\(\)\.top - sheetH;\s*mainEl\.classList\.toggle\('sheet-crowded', room < 74\);/);
   assert.match(html, /sheetSpaceObserver\.observe\(mainEl\);/);
-  assert.match(html, /main\.sheet-open\.sheet-crowded #fab-locate \{ visibility: hidden; \}/);
+  assert.match(html, /window\.addEventListener\('resize', syncSheetSpace\);/);
+  // initMobile runs outside the main script's closure: it must look the button up itself.
+  assert.doesNotMatch(extractFunction('initMobile'), /\bfabLocate\b/);
+  // The hiding rule must live inside the phone/sheet media block only.
+  const rule = html.indexOf('main.sheet-open.sheet-crowded #fab-locate { visibility: hidden; }');
+  const mobileBlock = html.indexOf('@media (pointer: coarse), (max-width: 640px) {');
+  assert.ok(mobileBlock > 0 && rule > mobileBlock && rule < html.indexOf('</style>'));
+  assert.equal(html.indexOf('#fab-locate { visibility: hidden; }'), html.lastIndexOf('#fab-locate { visibility: hidden; }'));
 });

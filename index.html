@@ -4208,8 +4208,11 @@ setTapMode(false);   // initialise aria-pressed on both buttons
 
 // Publish the pin-mode banner's real height (it wraps to several lines on narrow
 // screens, and its text arrives a moment after it appears) so the CSS can move
-// the alert banner and the station panel below it instead of under it.
+// the alert banner and the station panel below it instead of under it. Only
+// measure it with its text in: it is briefly empty when the mode turns on, and
+// that short height would make everything below move down in two steps.
 new ResizeObserver(() => {
+  if (!tapPlaceBanner.textContent) return;
   mapEl.parentElement.style.setProperty('--tap-banner-h', `${tapPlaceBanner.offsetHeight}px`);
 }).observe(tapPlaceBanner);
 

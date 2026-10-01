@@ -1671,9 +1671,9 @@ test('station panel shows readings promptly and formats them cleanly', () => {
   assert.equal(toFixedClean(-0.04, 1), '0.0', 'tiny negatives must not render as "-0.0"');
   assert.equal(toFixedClean(-1.25, 1), '-1.3');
 
-  // The observation renders before the (slow, separate) forecast lookup finishes.
-  const refresh = extractFunction('refreshStationData');
-  assert.ok(refresh.indexOf('renderWeather(') < refresh.indexOf('await fetchForecastPoP'));
+  // The (slow, separate) forecast lookup is not awaited by the refresh itself — see
+  // the behavioural test 'a slow rain-chance lookup never holds up the next refresh'.
+  assert.doesNotMatch(extractFunction('refreshStationData'), /await fetchForecastPoP/);
   assert.match(html, /const FORECAST_FAILURE_TTL_MS = 2 \* 60 \* 1000;/);
 
   // The refresh interval is clamped so setInterval can't overflow into a tight loop.
@@ -2237,4 +2237,39 @@ test('a passing forecast failure keeps the current hour\'s rain chance', async (
   // Once that hour is over, a failure means "no value".
   cache.set('KSEA', { pop: 40, ts: now - 11 * 60_000, ttl: 600_000, end: now - 1 });
   assert.equal(await fetchForecastPoP(47.4, -122.3, 'KSEA'), null);
+});
+
+test('a slow rain-chance lookup never holds up the next refresh', async () => {
+  const shown = [];
+  let resolveForecast;
+  let forecastCalls = 0;
+  const dot = { cls: new Set(), classList: { add(c) { dot.cls.add(c); }, remove(...c) { c.forEach(x => dot.cls.delete(x)); } } };
+  let observation = 1;
+  const ctx = vm.createContext({
+    document: { getElementById: id => (id === 'update-dot' ? dot : { classList: { add() {}, remove() {} }, textContent: '' }) },
+    fetchObservations: async () => ({ obs: observation++, geometry: { coordinates: [-98.5, 29.5] } }),
+    fetchForecastPoP: () => { forecastCalls++; return new Promise(r => { resolveForecast = r; }); },   // hangs
+    renderWeather: (data, id, name, pop) => shown.push([data.obs, pop]),
+    forecastPoPCache: new Map(), Set, Array, Number, Date
+  });
+  const run = vm.runInContext(`(() => {
+    let activeStationId = 'KSAT', stationOpenGeneration = 1, activeStationName = 'Test';
+    ${extractFunction('isActiveStation')}
+    let shownStation = null;
+    const forecastPending = new Set();
+    async ${extractFunction('refreshStationForecast')}
+    async ${extractFunction('refreshStationData')}
+    return refreshStationData;
+  })()`, ctx);
+
+  await run('KSAT', 1);   // returns although the forecast never answered
+  assert.ok(!dot.cls.has('refreshing'), 'no yellow pulse once the readings are shown');
+  await run('KSAT', 1);   // the next tick fetches a new observation right away
+  assert.deepEqual(shown.map(s => s[0]), [1, 2]);
+  assert.equal(forecastCalls, 1, 'one forecast lookup at a time per station');
+
+  // When the forecast finally answers, the NEWEST observation is re-rendered with it.
+  resolveForecast(55);
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(shown.at(-1), [2, 55]);
 });

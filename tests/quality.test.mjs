@@ -620,7 +620,7 @@ test('shared coordinate links never use exponent notation', () => {
 
 test('Enter that confirms an IME composition does not start a search', () => {
   // Safari ends the composition before keydown, so keyCode 229 is checked too.
-  assert.match(html, /e\.key === 'Enter' && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
+  assert.match(html, /e\.key === 'Enter' && !e\.repeat && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
 });
 
 test('the alert banner stays clear of the map controls and the station panel', () => {
@@ -2307,4 +2307,10 @@ test('a late rain chance reaches a reopened panel and keeps an "update failed" n
   await new Promise(r => setTimeout(r, 0));
   assert.equal(shown.at(-1), 70, 'the reopened panel gets the rain chance');
   assert.equal(timeEl.textContent, 'OBS: 1 · update failed', 'the failure note survives the re-render');
+});
+
+test('keyboard: the focused map shows a ring and a held Enter searches once', () => {
+  // main clips overflow, so the ring must be drawn inside the map.
+  assert.match(html, /#map:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: -2px; \}/);
+  assert.match(html, /if \(e\.key === 'Enter' && !e\.repeat && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
 });

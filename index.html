@@ -145,11 +145,12 @@
     color: var(--text);
     font-family: 'Space Mono', monospace;
     font-size: 0.8rem;
-    outline: 2px solid transparent;   /* transparent, not none: Windows High Contrast paints it as the focus ring */
+    outline: none;
     transition: border-color 0.2s;
     letter-spacing: 0.05em;
   }
-  .search-bar input:focus   { border-color: var(--accent); }
+  /* Windows High Contrast paints even a transparent outline (in a system colour): it shows only on focus. */
+  .search-bar input:focus   { border-color: var(--accent); outline: 2px solid transparent; }
   .search-bar input::placeholder { color: var(--text-muted); }
 
   /* FIND button */
@@ -186,12 +187,12 @@
     color: var(--accent2);
     transition: border-color 0.15s, transform 0.15s;
     user-select: none;
-    outline: 2px solid transparent;   /* transparent, not none: Windows High Contrast paints it as the focus ring */
+    outline: none;
     padding: 0;
     line-height: 1;
   }
   #drag-pin:hover  { border-color: var(--accent2); transform: scale(1.1); }
-  #drag-pin:focus  { border-color: var(--accent); }
+  #drag-pin:focus  { border-color: var(--accent); outline: 2px solid transparent; }   /* see .search-bar input:focus */
   #drag-pin:active { cursor: grabbing; }
 
   /*
@@ -677,7 +678,7 @@
     background: var(--bg); border: 1px solid var(--border);
     border-radius: 2px; color: var(--accent);
     font-family: 'Space Mono', monospace; font-size: 0.58rem;
-    text-align: center; padding: 1px 3px; outline: 2px solid transparent;   /* transparent, not none: Windows High Contrast paints it as the focus ring */
+    text-align: center; padding: 1px 3px; outline: none;
     transition: border-color 0.15s;
     appearance: textfield;  /* hide number spinner arrows */
     -moz-appearance: textfield;
@@ -687,7 +688,7 @@
     -webkit-appearance: none;
     appearance: none;
   }
-  #interval-input:focus { border-color: var(--accent); }
+  #interval-input:focus { border-color: var(--accent); outline: 2px solid transparent; }   /* see .search-bar input:focus */
 
   /* ════════════════════════════════════════════════════════════════════════════
      FLOATING ACTION BUTTON — "Locate Me"

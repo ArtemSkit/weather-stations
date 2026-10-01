@@ -274,8 +274,8 @@ Every successful search updates the page URL, making results **bookmarkable and 
 ### `?station=KSAT`
 
 When the `station` parameter is present:
-1. The latest observation is fetched from the NOAA API.
-2. The station's `geometry.coordinates` from the response is used to pan the map.
+1. The latest observation and the station's own record are fetched from the NOAA API together.
+2. The station record's exact location is used to pan the map and place the marker (the observation's location is rounded, sometimes ~2 km off, and is only a fallback).
 3. A station marker is plotted and the info popup opens immediately.
 4. Live refresh starts automatically.
 5. Active [dangerous-weather alerts](#dangerous-weather-alerts) for the station's location are loaded too — banner plus a danger ring on the marker if it sits inside a warning polygon.

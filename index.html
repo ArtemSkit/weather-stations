@@ -440,7 +440,10 @@
   /* The banner scrolls (overflow-y: auto), which also clips anything drawn outside
      it — so keyboard focus rings on its full-width buttons are drawn inside. */
   .alert-summary:focus-visible,
-  .alert-card-head:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
+  .alert-card-head:focus-visible,
+  /* A long card body scrolls, so newer browsers let Tab focus it (to scroll with
+     the arrow keys); the card's overflow:hidden would clip an outside ring. */
+  .alert-card-body:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
 
   .alert-card-head {
     /* Wraps so a long "from … until …" time drops under the event name instead of

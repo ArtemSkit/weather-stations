@@ -1022,6 +1022,11 @@
       /* --sheet-h is the sheet's real height, measured in initMobile() */
       bottom: calc(var(--sheet-h, 70vh) + 8px) !important;
     }
+    /* With room for Locate Me above the sheet, clear it too (12px lift + 54px +
+       8px gap), so an error about the button doesn't cover the button. */
+    main.sheet-open:not(.sheet-crowded) ~ #toast {
+      bottom: calc(var(--sheet-h, 70vh) + 74px) !important;
+    }
 
     /* ── Station markers: slightly larger hit-area on touch ── */
     .station-marker {
@@ -2078,8 +2083,8 @@ try {
  */
 async function fetchStations(lat, lon) {
   const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
-  // The browser always sends its own User-Agent and ignores any custom one
-  // (User-Agent is a forbidden fetch header), so there's no point setting it.
+  // No custom User-Agent: Chrome drops it anyway, and where it is sent it is not a
+  // CORS-safelisted header, so it would add a preflight request to every NWS call.
   const { response: ptRes, data: point } = await fetchJsonWithTimeout(
     `https://api.weather.gov/points/${key}`);
   // NOAA answers 404 for any point it doesn't cover (outside the US, offshore).
@@ -2111,8 +2116,8 @@ async function fetchStations(lat, lon) {
  */
 async function fetchObservations(stationId) {
   const url = `https://api.weather.gov/stations/${encodeURIComponent(stationId)}/observations/latest`;
-  // The browser always sends its own User-Agent and ignores any custom one
-  // (User-Agent is a forbidden fetch header), so there's no point setting it.
+  // No custom User-Agent: Chrome drops it anyway, and where it is sent it is not a
+  // CORS-safelisted header, so it would add a preflight request to every NWS call.
   const { response: res, data } = await fetchJsonWithTimeout(url);
   // Tagged so the station panel can tell "never reports" apart from a passing outage.
   if (res.status === 404) {

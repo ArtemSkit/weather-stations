@@ -2046,3 +2046,9 @@ test('phone layout leaves room: sheet sized to the visible screen, toast above L
   assert.match(html, /'extreme heat warning': 'EXTREME HEAT'/);
   assert.doesNotMatch(html, /excessive heat/i);
 });
+
+test('with the phone sheet open, the toast clears the lifted Locate Me button', () => {
+  assert.match(html, /main\.sheet-open:not\(\.sheet-crowded\) ~ #toast \{\s*bottom: calc\(var\(--sheet-h, 70vh\) \+ 74px\) !important;/);
+  // The comment no longer claims User-Agent is a forbidden header.
+  assert.doesNotMatch(html, /User-Agent is a forbidden fetch header/);
+});

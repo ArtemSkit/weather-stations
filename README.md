@@ -170,6 +170,7 @@ The **⊕ crosshair button** in the bottom-right corner of the map uses your dev
 | Error | Message shown |
 |---|---|
 | Permission denied | "Location access denied. Please allow it in your browser settings." |
+| Page opened over plain `http://` (not localhost) | "Locate Me needs the app to be opened over HTTPS (or localhost)." — browsers only share location with secure pages |
 | Position unavailable | "Location unavailable. Check your device settings." |
 | Timeout (>15 s) | "Location request timed out. Please try again." |
 | No answer at all (e.g. the permission prompt was dismissed) | "No location received. Please try again." — after 60 s the button and map are released; a location that still arrives later is used |

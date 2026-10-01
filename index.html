@@ -1887,25 +1887,32 @@ intervalInput.addEventListener('change', () => {
  *    (first, so "78201 1234" isn't read as two coordinates)
  *  • Two numbers split by a comma and/or spaces → 'coords' (e.g. "29.42, -98.49"
  *    or "29.42 -98.49")
- *  • Any other digits/punctuation only (a mistyped ZIP or coordinates) → 'badzip'
+ *  • Digits and punctuation only, or coordinate-style text with a decimal or a
+ *    degree mark ("29.42 N, 98.49 W") → 'badzip' (a mistyped ZIP or coordinates).
+ *    Grid addresses such as Utah's "200 S 300 E" stay addresses.
  *  • Anything else                           → 'address'
  *
  * @param   {string} raw  - Raw value from the search input
  * @returns {'coords'|'zip'|'badzip'|'address'}
  */
 function detectInputType(raw) {
-  // A pasted Unicode minus or en/em dash ("−98.49", "–98.49") counts as "-".
-  const s = raw.trim().replace(/[−–—]/g, '-');
+  // Pasted minus signs and dashes (Unicode minus, hyphen variants including the
+  // non-breaking one from Word/Docs, en/em dash, fullwidth) count as "-".
+  const s = raw.trim().replace(/[‐-―−﹣－]/g, '-');
   if (/^\d{5}([ -]?\d{4})?$/.test(s))                                 return 'zip';
+  // A mistyped ZIP that starts with 0 ("00601 12") isn't a coordinate pair either.
+  if (/^0\d{4}(?![\d.])/.test(s))                                     return 'badzip';
   // Each number: optional sign, at most 3 whole digits after any leading zeros (so
   // "78201 123", a mistyped ZIP+4, isn't taken as coordinates), optional decimals;
   // ".5" and "29." are fine.
   if (/^[+-]?(0*\d{1,3}(\.\d*)?|\.\d+)(\s*,\s*|\s+)[+-]?(0*\d{1,3}(\.\d*)?|\.\d+)$/.test(s)) return 'coords';
   // "7820", "29.42-98.49" or "29.42°N 98.49°W" is a mistyped ZIP or a coordinate
   // format we don't read, not an address: Photon matches such numbers to some
-  // street far away (Tacoma, WA) and loads it silently.
+  // street far away (Tacoma, WA) and loads it silently. N/S/E/W letters only count
+  // with a decimal or a degree mark, so "200 S 300 E" (a real Utah address) passes.
   // (\x27 and \x22 are the ASCII minute and second marks.)
-  if (/\d/.test(s) && /^[\d\s.,+\-°\x27′\x22″NSEW]+$/i.test(s))     return 'badzip';
+  if (/\d/.test(s) && (/^[\d\s.,+-]+$/.test(s) ||
+      (/\d\.\d|[°′″\x27\x22]/.test(s) && /^[\d\s.,+\-°\x27′\x22″NSEW]+$/i.test(s)))) return 'badzip';
   return 'address';
 }
 
@@ -1919,7 +1926,7 @@ function detectInputType(raw) {
 function parseCoords(raw) {
   // Comma and/or spaces between the two numbers; Unicode minus / dashes allowed
   // (see detectInputType).
-  const parts = raw.trim().replace(/[−–—]/g, '-').split(/[\s,]+/);
+  const parts = raw.trim().replace(/[‐-―−﹣－]/g, '-').split(/[\s,]+/);
   return { lat: parseFloat(parts[0]), lon: parseFloat(parts[1]) };
 }
 
@@ -1936,7 +1943,8 @@ function parseCoords(raw) {
  * @param   {RequestInit} [options={}]
  * @param   {number}      [timeoutMs=15000]
  * @returns {Promise<{ response: Response, data: Object|null }>}
- * @throws  {Error} 'Request timed out…' on abort, or the underlying network error
+ * @throws  {Error} 'Request timed out…' on abort, 'Network error…' when offline,
+ *                  blocked, or answered with non-JSON (original error as \`cause\`)
  */
 async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15_000) {
   const controller = new AbortController();
@@ -1958,7 +1966,9 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15_000) {
     // "Load failed"…), and a captive portal's HTML page fails JSON parsing with a
     // SyntaxError — neither raw browser text belongs in a user-facing toast.
     if (err.name === 'TypeError' || err.name === 'SyntaxError') {
-      throw new Error('Network error — check your connection and try again');
+      // Keep the original for debugging; the user only sees the plain message.
+      console.warn('[WX.MAP] request failed:', url, err);
+      throw new Error('Network error — check your connection and try again', { cause: err });
     }
     throw err;
   } finally {

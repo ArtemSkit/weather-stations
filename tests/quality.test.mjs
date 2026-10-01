@@ -591,6 +591,21 @@ test('rain chance uses the hour in progress, not an hour that already ended', as
   assert.ok(forecastPoPCache.get('KSAT').ttl > 0);
   // The hour's end is stored, so the panel's first render can drop it once over.
   assert.equal(forecastPoPCache.get('KSAT').end, Date.parse(iso(now + 60_000)));
+  // The TTL comes from Number.isFinite, not `|| 10 min`: an hour ending right now
+  // (difference 0) must not be cached for ten minutes.
+  assert.match(extractFunction('fetchForecastPoP'), /Number\.isFinite\(periodEnd\) \? periodEnd - Date\.now\(\) : FORECAST_TTL_MS/);
+});
+
+test('shared coordinate links never use exponent notation', () => {
+  let written = '';
+  const push = vm.runInNewContext(`(() => { ${extractFunction('parseCoords')} ${extractFunction('pushQueryParam')} return pushQueryParam; })()`, {
+    URLSearchParams, String, Number, parseFloat,
+    window: { location: { pathname: '/' }, history: { replaceState: (s, t, url) => { written = url; } } }
+  });
+  push('coords', '0.0000001, 5');
+  assert.equal(written, '/?lat=0&long=5');   // String(1e-7) would write "1e-7"
+  push('coords', '29.4241, -98.4936');
+  assert.equal(written, '/?lat=29.4241&long=-98.4936');
 });
 
 test('Enter that confirms an IME composition does not start a search', () => {
@@ -2035,6 +2050,15 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   assert.equal(detect('29.42°N 98.49°W'), 'badzip');
   assert.equal(detect('29.42 N, 98.49 W'), 'badzip');
   assert.equal(detect('news'), 'address');            // N/S/E/W letters need a digit
+  // Utah-style grid addresses are real addresses, not coordinates.
+  assert.equal(detect('200 S 300 E'), 'address');
+  assert.equal(detect('350 S 200 E'), 'address');
+  assert.equal(detect('2100 E'), 'address');
+  // A 0-leading ZIP typo is a ZIP problem, not "invalid coordinates".
+  assert.equal(detect('00601 12'), 'badzip');
+  assert.equal(detect('00601'), 'zip');
+  // Non-breaking hyphen pasted from Word/Docs works as a minus.
+  assert.equal(detect('29.42 ‑98.49'), 'coords');
   const parse = vm.runInNewContext(`(() => { ${extractFunction('parseCoords')} return parseCoords; })()`);
   assert.deepEqual({ ...parse(' 29.42   -98.49 ') }, { lat: 29.42, lon: -98.49 });
   assert.deepEqual({ ...parse('29.42 , -98.49') }, { lat: 29.42, lon: -98.49 });

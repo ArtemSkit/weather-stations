@@ -649,6 +649,7 @@
     width: 5px; height: 5px; border-radius: 50%;
     background: var(--green); flex-shrink: 0;
   }
+  .update-dot.stale      { background: var(--red); }   /* the last refresh failed */
   .update-dot.refreshing { animation: pulse 0.8s infinite; background: var(--yellow); }
 
   /* Editable refresh interval — inline number input */
@@ -1195,7 +1196,7 @@
     </div>
     <div class="popup-footer">
       <div class="update-time" id="update-time">—</div>
-      <div class="update-indicator">
+      <div class="update-indicator" id="update-indicator">
         <div class="update-dot" id="update-dot"></div>
         <!--
           Interval input: the user can change the auto-refresh period.
@@ -2876,6 +2877,7 @@ async function refreshStationData(stationId, generation) {
   try {
     const data = await fetchObservations(stationId);
     if (!isActiveStation(stationId, generation)) return;
+    dotEl.classList.remove('stale');   // fresh data again after a failed refresh
 
     // Show the observation right away — the separate forecast lookup can take many
     // seconds and must never hold it up. Use the last known rain chance even if it
@@ -2904,12 +2906,19 @@ async function refreshStationData(stationId, generation) {
       // A 404 before any data means the station has no observations to show; a 404
       // after data is just a failed refresh (the old reading stays, flagged below).
       const noData = e.status === 404 && firstLoad;
-      document.getElementById('update-time').textContent = noData ? '—' : 'Error fetching data';
+      const timeEl = document.getElementById('update-time');
+      if (noData) timeEl.textContent = '—';
+      else if (firstLoad) timeEl.textContent = 'Error fetching data';
+      // Keep the time of the readings still on screen, so their age stays visible.
+      else if (!timeEl.textContent.endsWith(' · update failed')) timeEl.textContent += ' · update failed';
+      dotEl.classList.toggle('stale', !noData);
       if (noData) {
         // Listed stations with no recent observations answer 404 every time: say so
         // and stop polling instead of promising a retry that can't succeed.
         if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
         stationNoDataGeneration = generation;
+        // Nothing is polled, so don't show "LIVE · N s".
+        document.getElementById('update-indicator').style.display = 'none';
         body.innerHTML =
           `<div style="text-align:center;color:var(--text-muted);font-size:0.7rem;padding:20px 0">
              ${escapeHtml(e.message)}
@@ -2956,7 +2965,8 @@ async function openStation(stationId, stationName, markerEl) {
   activeStationName = stationName || null;
   // A request from the previous panel may still be pulsing the dot; this panel
   // starts idle and its own refresh turns the pulse on.
-  document.getElementById('update-dot').classList.remove('refreshing');
+  document.getElementById('update-dot').classList.remove('refreshing', 'stale');
+  document.getElementById('update-indicator').style.display = '';   // shown again after a no-data station
   popupPanel.style.display = 'block';
   document.getElementById('popup-id').textContent    = stationId;
   document.getElementById('popup-name').textContent  = stationName || '—';

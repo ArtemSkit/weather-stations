@@ -2312,7 +2312,8 @@ test('a late rain chance reaches a reopened panel and keeps an "update failed" n
 });
 
 test('keyboard: the focused map shows a ring and a held Enter searches once', () => {
-  // main clips overflow, so the ring must be drawn inside the map.
-  assert.match(html, /#map:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: -2px; \}/);
+  // main clips overflow and the tile panes (z-index 400) would cover an inside
+  // outline, so the ring is a layer above the tiles and below the controls (800).
+  assert.match(html, /#map:focus-visible::after \{[^}]*z-index: 799;[^}]*box-shadow: inset 0 0 0 2px var\(--accent\);/);
   assert.match(html, /if \(e\.key === 'Enter' && !e\.repeat && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
 });

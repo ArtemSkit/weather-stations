@@ -2617,16 +2617,17 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   /*
    * "Feels Like" — only where it means something, as weather.gov does: the NWS
    * also fills in a heat index at mild temperatures (73.3°F at 73.4°F, or even
-   * BELOW the air temperature). Heat index from 80°F (26.7°C); wind chill at 50°F
-   * (10°C) or colder with wind above 3 mph (4.8 km/h).
+   * BELOW the air temperature). Heat index from 80°F; wind chill at 50°F or colder
+   * with wind above 3 mph (4.8 km/h). The cutoffs use the whole °F shown above, so
+   * 26.6°C (shown as 80°F) still gets its heat index.
    */
   const heatC  = p.heatIndex?.value;
   const chillC = p.windChill?.value;
   const windKmh = p.windSpeed?.value;
   let feelsC = null, feelsLabel = 'Feels Like';
-  if (heatC != null && tempC != null && tempC >= 26.7) {
+  if (heatC != null && tempF != null && Number(tempF) >= 80) {
     feelsC = heatC;  feelsLabel = 'Heat Index';
-  } else if (chillC != null && tempC != null && tempC <= 10 && windKmh > 4.8) {
+  } else if (chillC != null && tempF != null && Number(tempF) <= 50 && windKmh > 4.8) {
     feelsC = chillC; feelsLabel = 'Wind Chill';
   }
   const feelsF     = cToF(feelsC);

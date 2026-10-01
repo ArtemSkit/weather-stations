@@ -1981,3 +1981,10 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   assert.equal(detect('1600 Pennsylvania Ave'), 'address');
   assert.match(extractFunction('doSearch'), /type === 'badzip'\) \{\s*(\/\/.*\s*)?throw new Error\('Not a valid ZIP code/);
 });
+
+test('alerts come before the map for keyboard users and small text keeps its contrast', () => {
+  // Tab order follows the DOM: the alert banner must precede the map's many markers.
+  assert.ok(html.indexOf('<div id="alert-banner"') < html.indexOf('<div id="map"'));
+  assert.match(html, /\.overlay-text \{[\s\S]*?color: var\(--text\);/);
+  assert.match(html, /\.leaflet-tooltip\.alert-area-label \{[\s\S]*?background: rgba\(10,14,23,0\.92\);/);
+});

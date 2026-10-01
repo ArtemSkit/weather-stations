@@ -85,7 +85,7 @@ function loadServiceWorker({ cachesImpl, fetchImpl = async () => ({ ok: true, cl
 test('inline scripts compile and document IDs remain unique', () => {
   const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)]
     .map(match => match[1]);
-  assert.equal(scripts.length, 2);
+  assert.equal(scripts.length, 3);
   scripts.forEach(script => new Function(script));
 
   const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map(match => match[1]);
@@ -98,6 +98,55 @@ test('inline scripts compile and document IDs remain unique', () => {
   for (const [, id] of html.matchAll(/getElementById\('([^']+)'\)/g)) {
     assert.ok(idSet.has(id), `script looks up missing element #${id}`);
   }
+});
+
+test('a failed newer search keeps the area that is loading or shown', async () => {
+  const log = [];
+  let resolveFetch;
+  const h = new Function('fetchStations', 'log', `
+    let searchGeneration = 0, areaGeneration = 0, stationOpenGeneration = 0;
+    let refreshTimer = null, activeStationId = null, activeMarkerEl = null;
+    let stationMarkers = [];
+    const popupPanel = { style: {} };
+    const overlayText = {};
+    function clearAlerts() {}
+    function clearStations() { stationMarkers = []; }
+    function moveMapTo() {}
+    function plotStations() { stationMarkers = [1, 2]; log.push('plotted'); }
+    function setStatus(state, text) { log.push('status:' + state + ':' + text); }
+    function hideOverlay() { log.push('overlay hidden'); }
+    function showToast(m) { log.push('toast:' + m); }
+    function loadAlertsForArea() { log.push('alerts'); }
+    ${extractFunction('stationCountLabel')}
+    ${extractFunction('reportSearchError')}
+    async ${extractFunction('loadStationsAt')}
+    return {
+      loadStationsAt, reportSearchError,
+      newSearch: () => ++searchGeneration
+    };
+  `)(() => new Promise(resolve => { resolveFetch = resolve; }), log);
+
+  // Search A reaches the map; while its stations load, search B starts geocoding.
+  const loadA = h.loadStationsAt(1, 2, h.newSearch());
+  h.newSearch();
+  resolveFetch({ features: [] });
+  assert.equal(await loadA, true, 'A still owns the map — no newer area exists');
+  assert.ok(log.includes('plotted') && log.includes('alerts'));
+  assert.ok(!log.includes('overlay hidden'), 'B (still geocoding) keeps its loading overlay');
+
+  // B then fails before reaching the map: the status describes what is shown.
+  h.reportSearchError('ZIP code "00000" not found');
+  assert.deepEqual(log.slice(-3), ['overlay hidden', 'toast:ZIP code "00000" not found', 'status:ok:2 STATIONS']);
+});
+
+test('hidden tabs pause alert polling and hard-reloaded tabs still get updates', () => {
+  assert.match(extractFunction('refreshAlerts'), /if \(document\.hidden\) \{ alertsRefreshMissed = true; return; \}/);
+  assert.match(html, /if \(!swContainer\.controller && reg\.active\) skipNextControllerChange = false;/);
+  assert.match(html, /if \(reg\.waiting && hasActiveWorker\(\)\) announceUpdate\(\);/);
+  // One live region for progress (the status bar), and no manifest fetch on file://.
+  assert.match(html, /<div id="map-overlay">/);
+  assert.match(html, /if \(location\.protocol !== 'file:'\) \{\s*const manifestLink/);
+  assert.doesNotMatch(html, /<link rel="manifest"/);
 });
 
 test('links opened in a hidden tab still load (no flyTo on a 0×0 map)', () => {
@@ -1044,7 +1093,7 @@ test('every search path allocates or receives a generation before awaiting', () 
     locateHandler.indexOf('navigator.geolocation.getCurrentPosition'));
   // Every outcome (success, error, or the watchdog for a prompt that never answers)
   // releases the button first, then honours a newer search.
-  assert.match(locateHandler, /function settle\(\) \{[\s\S]*?fabLocate\.disabled = false;/);
+  assert.match(locateHandler, /function settle\(\) \{[\s\S]*?fabLocate\.removeAttribute\('aria-disabled'\);/);
   // A late success is still used (unless superseded); a late error is not re-reported.
   assert.match(locateHandler, /settle\(\);\s*if \(gen !== searchGeneration\) return;/);
   assert.match(locateHandler, /err => \{\s*if \(!settle\(\)\) return;\s*if \(gen !== searchGeneration\) return;/);
@@ -1167,6 +1216,7 @@ test('only transient zone geometry failures are retried without resetting an unc
     let shownAlerts = [];
     ${extractFunction('showAlerts')}
     let currentViewport = null;
+    const document = { hidden: false };
     async ${extractFunction('refreshAlerts')}
     return { refreshAlerts, areaRenderCount: () => areaRenderCount,
              openPopup: () => { activeAlertAreaOwner = {}; } };
@@ -1229,6 +1279,7 @@ test('a feed outage drops alerts whose hazard has ended', async () => {
     async function fetchAlerts() { return null; }   // feed unreachable
     ${extractFunction('isAlertUnexpired')}
     let currentViewport = null;
+    const document = { hidden: false };
     async ${extractFunction('refreshAlerts')}
     return { refreshAlerts };
   `)(alerts => redrawn.push(alerts), [
@@ -1257,6 +1308,7 @@ test('alert refresh commits its signature only after rendering succeeds', async 
     ${extractFunction('isAlertUnexpired')}
     ${extractFunction('showAlerts')}
     let currentViewport = null;
+    const document = { hidden: false };
     async ${extractFunction('refreshAlerts')}
     return { refreshAlerts, signature: () => lastAlertSignature };
   `)([{ id: 'watch-1' }]);

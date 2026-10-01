@@ -222,7 +222,7 @@ Every search pulls the **active National Weather Service alerts** that contain t
 
 ### Tier 1 — area alert banner
 
-A banner floats at the top-left of the map whenever the searched point or the visible same-state map area has active alerts (and stays hidden when neither does). The map's zoom control sits at the **bottom-left** so the banner never covers it, and the banner caps its own height and scrolls when many alerts are active. The banner lists every included alert, ranked **most-dangerous-first** and colour-coded:
+A banner floats at the top-left of the map whenever the searched point or the visible same-state map area has active alerts (and stays hidden when neither does). The map's zoom control sits at the **bottom-left**, and the banner caps its own height (scrolling when many alerts are active) so it stays clear of the zoom control and the Locate Me button — except on very short screens, where keeping the alert summary visible wins. The banner lists every included alert, ranked **most-dangerous-first** and colour-coded:
 
 | Class | Examples | Colour |
 |---|---|---|
@@ -291,6 +291,8 @@ In a supporting browser (Chrome, Edge, Safari on iOS):
 
 Once installed, the app opens in a standalone window without the browser chrome.
 
+> **Hosting note:** the manifest's `"id": "./"` resolves to the site's origin root (the spec resolves `id` against the origin, not the folder). Host WX.MAP on its own origin — not as one of several apps under, say, `username.github.io/…` — or another installed app on that origin with the same id would be treated as the same app. Changing the id later makes existing installs count as a different app, so it is kept stable.
+
 ### Caching strategy
 
 The service worker uses a hybrid strategy tuned for a single-file app:
@@ -342,7 +344,6 @@ weather-stations/
 │   │   └── Leaflet CSS                 (vendored)
 │   ├── <body>
 │   │   ├── Header                  (logo, search bar with drag-pin / touch tap-pin, status badge)
-│   │   ├── #update-banner          (slides down when a new version is ready)
 │   │   ├── #pin-ghost              (follows cursor during drag)
 │   │   ├── <main>
 │   │   │   ├── #tap-place-banner   (shown while tap/click-to-place is armed)
@@ -352,7 +353,8 @@ weather-stations/
 │   │   │   ├── #popup-panel        (station info / mobile bottom sheet)
 │   │   │   └── #fab-locate         (GPS floating action button)
 │   │   ├── #app-version           (bottom-left version badge)
-│   │   └── #toast                 (error / info notifications)
+│   │   ├── #toast                 (error / info notifications)
+│   │   └── #update-banner          (slides down when a new version is ready)
 │   └── <script>
 │       ├── Leaflet JS              (vendored)
 │       ├── SW registration + update flow + version badge

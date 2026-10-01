@@ -561,9 +561,16 @@ test('the alert banner stays clear of the map controls and the station panel', (
   assert.match(html, /main\.sheet-open #alert-banner \{ max-width: calc\(100% - 16px - 314px - 32px\); \}/);
   // Phones: above the zoom control and Locate Me, full width even with the sheet open.
   assert.match(html, /max-height: max\(4rem, calc\(100% - 8px - 180px - var\(--safe-bottom\)\)\);/);
+  // An open or hovered station inside a warning keeps readable dark text.
+  assert.match(html, /\.station-marker\.alerted:hover,\s*\.station-marker\.alerted\.active \{ color: var\(--bg\); \}/);
+  assert.match(html, /#fab-locate:focus-visible \{ outline: 2px solid var\(--text\);/);
+  // A rebuilt banner keeps keyboard focus; the dead install-prompt hook is gone.
+  assert.match(extractFunction('renderAlertBanner'),
+    /if \(hadFocus\) alertBanner\.querySelector\('\[data-role="toggle"\]'\)\?\.focus\(\);/);
+  assert.doesNotMatch(html, /pwaInstallPrompt/);
   // The phone override must come AFTER the desktop side-by-side rule to win.
   const desktopRule = html.indexOf('main.sheet-open #alert-banner { max-width: calc(');
-  const phoneRule = html.search(/main\.sheet-open #alert-banner \{\s*max-width: none;\s*max-height: max\(4rem, calc\(100% - 8px - var\(--sheet-h, 70vh\) - 8px\)\);/);
+  const phoneRule = html.search(/main\.sheet-open #alert-banner \{\s*max-width: none;\s*max-height: max\(4rem, calc\(100% - 8px - var\(--sheet-h, 70vh\) - 74px\)\);/);
   assert.ok(desktopRule > 0 && phoneRule > desktopRule);
   // Delete on either pin button (touch devices only show the tap-pin) removes the pin.
   assert.match(html, /\[dragPinBtn, tapPinBtn\]\.forEach\(btn => btn\.addEventListener\('keydown'/);
@@ -1222,7 +1229,8 @@ test('address lookup uses key-less Photon and keeps only US matches', async () =
   assert.deepEqual({ ...await addressToCoords('paris tx', near) }, { lat: 33.66, lon: -95.55 });
   assert.match(requested[0], /^https:\/\/photon\.komoot\.io\/api\/\?q=paris%20tx&/);
   // Results are biased toward the map, or common names return no US match at all.
-  assert.match(requested[0], /&lat=39\.5000&lon=-98\.3500/);
+  // …but only coarsely (1 decimal, about 11 km): never the exact position.
+  assert.match(requested[0], /&lat=39\.5&lon=-98\.[34]$/);
 
   features = [{ properties: { countrycode: 'FR' }, geometry: { coordinates: [2.35, 48.85] } }];
   await assert.rejects(addressToCoords('paris', near), /not found/);

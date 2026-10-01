@@ -94,7 +94,7 @@ Geocoded via the **Nominatim / OpenStreetMap** API — no API key required. If N
 
 ### 2. Latitude / Longitude
 
-Enter two comma-separated decimal numbers — latitude first, then longitude:
+Enter two decimal numbers separated by a comma or a space — latitude first, then longitude:
 
 ```
 29.4241, -98.4936

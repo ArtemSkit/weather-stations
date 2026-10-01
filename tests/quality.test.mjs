@@ -2009,10 +2009,34 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   assert.equal(detect('7820'), 'badzip');
   assert.equal(detect('782011'), 'badzip');
   assert.equal(detect('123-45-6789'), 'badzip');
-  assert.equal(detect('29 -98'), 'badzip');
+  // Coordinates typed with a space instead of a comma are coordinates (as an
+  // address, "29.42 -98.49" matched a street in Tacoma, WA).
+  assert.equal(detect('29.42 -98.49'), 'coords');
+  assert.equal(detect('29 -98'), 'coords');
+  assert.equal(detect('29.42-98.49'), 'badzip');
+  const parse = vm.runInNewContext(`(() => { ${extractFunction('parseCoords')} return parseCoords; })()`);
+  assert.deepEqual({ ...parse(' 29.42   -98.49 ') }, { lat: 29.42, lon: -98.49 });
+  assert.deepEqual({ ...parse('29.42 , -98.49') }, { lat: 29.42, lon: -98.49 });
   assert.equal(detect('29.4, -98.5'), 'coords');
   assert.equal(detect('1600 Pennsylvania Ave'), 'address');
   assert.match(extractFunction('doSearch'), /type === 'badzip'\) \{\s*(\/\/.*\s*)?throw new Error\('Not a valid ZIP code/);
+});
+
+test('a station inside a warning says so to screen readers, not just with a red ring', () => {
+  // Run the real flagging with a fake marker: one warning polygon that contains it.
+  const outer = { title: '', setAttribute(k, v) { this[k] = v; } };
+  const badge = { title: 'KSAT — San Antonio', dataset: { label: 'KSAT — San Antonio' },
+                  classList: { on: false, toggle(c, v) { this.on = v; } }, closest: () => outer };
+  const flag = inside => vm.runInNewContext(`(() => { ${extractFunction('flagStationsInAlerts')} return flagStationsInAlerts; })()`, {
+    stationRecords: [{ el: badge, lat: 29.5, lng: -98.5 }],
+    alertPolygons: () => [[]], pointInAlertPolygon: () => inside
+  })([{ properties: { event: 'Flood Warning' } }]);
+  flag(true);
+  assert.equal(badge.title, 'KSAT — San Antonio — inside an active warning area');
+  assert.equal(outer.title, badge.title, 'the focusable Leaflet box is what gets announced');
+  flag(false);
+  assert.equal(outer.title, 'KSAT — San Antonio');
+  assert.match(extractFunction('makeStationMarker'), /iconEl\.dataset\.label = label;/);
 });
 
 test('alerts come before the map for keyboard users and small text keeps its contrast', () => {

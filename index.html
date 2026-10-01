@@ -1883,9 +1883,11 @@ intervalInput.addEventListener('change', () => {
  * Classify free-form user input so the correct geocoding path is chosen.
  *
  * Rules (evaluated in order):
- *  • Two comma-separated numbers → 'coords'  (e.g. "29.42, -98.49")
  *  • Five digits (optionally plus "-NNNN", " NNNN" or "NNNN") → 'zip'
- *  • Any other digits only (a mistyped ZIP)  → 'badzip'
+ *    (first, so "78201 1234" isn't read as two coordinates)
+ *  • Two numbers split by a comma and/or spaces → 'coords' (e.g. "29.42, -98.49"
+ *    or "29.42 -98.49")
+ *  • Any other digits/punctuation only (a mistyped ZIP or coordinates) → 'badzip'
  *  • Anything else                           → 'address'
  *
  * @param   {string} raw  - Raw value from the search input
@@ -1893,11 +1895,11 @@ intervalInput.addEventListener('change', () => {
  */
 function detectInputType(raw) {
   const s = raw.trim();
-  if (/^(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)$/.test(s)) return 'coords';
-  if (/^\d{5}([ -]?\d{4})?$/.test(s))                     return 'zip';
-  // "7820" is a half-typed ZIP, not an address: as an address it matches some
-  // house number hundreds of miles away and loads that place without a warning.
-  if (/^[\d\s-]+$/.test(s))                               return 'badzip';
+  if (/^\d{5}([ -]?\d{4})?$/.test(s))                                 return 'zip';
+  if (/^(-?\d+(\.\d+)?)(\s*,\s*|\s+)(-?\d+(\.\d+)?)$/.test(s))       return 'coords';
+  // "7820" or "29.42-98.49" is a mistyped ZIP or coordinate pair, not an address:
+  // Photon matches such numbers to some street far away and loads it silently.
+  if (/^[\d\s.,+-]+$/.test(s))                                        return 'badzip';
   return 'address';
 }
 
@@ -1909,7 +1911,8 @@ function detectInputType(raw) {
  * @returns {{ lat: number, lon: number }}
  */
 function parseCoords(raw) {
-  const parts = raw.trim().split(',');
+  // Comma and/or spaces between the two numbers (see detectInputType).
+  const parts = raw.trim().split(/[\s,]+/);
   return { lat: parseFloat(parts[0]), lon: parseFloat(parts[1]) };
 }
 
@@ -4147,7 +4150,7 @@ async function doSearch() {
       place = await zipToCoords(raw);
 
     } else if (type === 'badzip') {
-      // Also catches coordinates typed without the comma ("29 -98").
+      // Also catches malformed coordinates ("29.42-98.49").
       throw new Error('Not a valid ZIP code or coordinates — e.g. 78201 or 29.42, -98.49');
 
     } else {

@@ -2026,7 +2026,8 @@ test('dismissing an update cannot schedule an automatic reload', () => {
   assert.doesNotMatch(updateHandler, /setTimeout|auto-applying|display-mode: standalone/);
 });
 
-test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are not addresses', () => {
+// timeout: a backtracking regex would hang the suite instead of failing it.
+test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are not addresses', { timeout: 5000 }, () => {
   const detect = vm.runInNewContext(`(() => { ${extractFunction('normalizeSearchText')} ${extractFunction('detectInputType')} return detectInputType; })()`);
   assert.equal(detect('78201'), 'zip');
   assert.equal(detect('90210-1234'), 'zip');
@@ -2070,6 +2071,8 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   // Half-copied brackets or a ";" separator: rejected, not geocoded to Tacoma.
   assert.equal(detect('(29.42, -98.49'), 'badzip');
   assert.equal(detect('29.42;-98.49'), 'badzip');
+  for (const t of ['29.42/-98.49', '29.42:-98.49', '{29.42, -98.49}']) assert.equal(detect(t), 'badzip', t);
+  for (const a of ['1/2 Main St', '24/7 Market', '4-H Club Rd']) assert.equal(detect(a), 'address', a);
   // Whole-degree coordinates with glued letters; spaced grid addresses stay.
   assert.equal(detect('29N 98W'), 'badzip');
   assert.equal(detect('N29 W98'), 'badzip');
@@ -2211,4 +2214,6 @@ test('a ?station link places the marker at the station record, not the rounded o
   assert.equal(await point(async () => { throw new Error('Network error'); })('KJFK'), null);
   assert.equal(await point(async () => ({ response: { ok: false }, data: null }))('KJFK'), null);
   assert.match(html, /const \[lng, lat\] = sitePoint \|\| data\.geometry\?\.coordinates \|\| \[\];/);
+  // The optional record must not hold the deep link for the default 15 s.
+  assert.match(extractFunction('fetchStationPoint'), /encodeURIComponent\(stationId\)\}`, \{\}, 4000\)/);
 });

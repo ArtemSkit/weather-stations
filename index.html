@@ -2527,7 +2527,13 @@ const cToF = c => c != null ? toFixedClean((c * 9/5) + 32, 0) : null;
 const kmhToMph = k => k != null ? toFixedClean(k * 0.621371, 0) : null;
 
 /** Metres → miles (1 decimal place). */
-const mToMi = m => m != null ? (m / 1609.344).toFixed(1) : null;
+/** Metres → miles the way US stations report them: fractions (1/4, 3/4, …) below
+    3 mi and whole miles above — one decimal would show ¼ SM (402 m) as 0.2 mi. */
+const mToMi = m => {
+  if (m == null) return null;
+  const mi = m / 1609.344;
+  return mi < 3 ? String(Number((Math.round(mi * 16) / 16).toFixed(2))) : String(Math.round(mi));
+};
 
 /** Metres → feet, to the nearest 100 ft (cloud bases are reported in hundreds of
     feet; the API's metres turn OVC026 into 2592 ft unless rounded back). */

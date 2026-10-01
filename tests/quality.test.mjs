@@ -854,6 +854,14 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   assert.match(body(), /Clear\s*</);
   assert.doesNotMatch(body(), /12500/);
 
+  // Visibility as reported: 1/4 SM (402.34 m) and 3/4 SM, 10 SM as whole miles.
+  obs({ visibility: { value: 402.34 } });
+  assert.match(body(), /0\.25 mi/);
+  obs({ visibility: { value: 1207.01 } });
+  assert.match(body(), /0\.75 mi/);
+  obs({ visibility: { value: 16093.44 } });
+  assert.match(body(), />10 mi/);
+
   // Fog hides the sky: VV is a vertical visibility, not a cloud base.
   obs({ cloudLayers: [{ amount: 'VV', base: { value: 60.96 } }] });
   assert.match(body(), /Obscured · vert\. vis\. 200 ft/);

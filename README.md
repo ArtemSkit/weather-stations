@@ -217,11 +217,11 @@ A banner floats at the top-left of the map whenever the searched point or the vi
 | Class | Examples | Colour |
 |---|---|---|
 | **Critical** | Tornado Warning, Flash Flood Warning | 🔴 Red |
-| **Warning** | any other Warning, or Extreme/Severe-rated alert | 🟠 Orange |
+| **Warning** | any other Warning, or an Extreme/Severe-rated alert that is not a watch | 🟠 Orange |
 | **Watch** | Tornado Watch, Flood Watch, Severe T-storm Watch | 🟡 Amber |
 | **Info** | Advisories, special statements | 🟡 Yellow |
 
-The banner opens expanded; click the summary chip to collapse it, or click any alert to reveal its full headline, description, and the NWS safety **instructions**, along with the time it expires.
+The banner opens expanded; click the summary chip to collapse it, or click any alert to reveal its full headline, description, and the NWS safety **instructions**, along with the time the hazard ends (the same end time the map popup shows).
 
 ### Tier 2 — alert areas on the map
 

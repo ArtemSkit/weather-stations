@@ -88,7 +88,7 @@ Enter any US 5-digit ZIP code (optionally with the ZIP+4 extension):
 22201-1234
 ```
 
-Geocoded via the **Nominatim / OpenStreetMap** API — no API key required.
+Geocoded via the **Nominatim / OpenStreetMap** API — no API key required. If Nominatim can't be reached, the ZIP is looked up in Photon's postcode index instead.
 
 ### 2. Latitude / Longitude
 
@@ -436,7 +436,7 @@ These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifes
 | Map + search | ✅ | ✅ | ✅ | ✅ |
 | Draggable pin | ✅ | ✅ | ✅ | ✅ |
 | Locate Me (GPS) | ✅* | ✅* | ✅* | ✅* |
-| Service Worker (PWA) | ✅ | ✅ | ✅ | ✅ (iOS 16.4+) |
+| Service Worker (PWA) | ✅ | ✅ | ✅ | ✅ (iOS 11.3+) |
 | Install UI | ✅ | Android / desktop extension | ✅ | ✅ (Add to Home Screen / Add to Dock) |
 
 \* Requires HTTPS or localhost. Denied in `file://` context on most browsers.

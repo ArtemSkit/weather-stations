@@ -496,7 +496,8 @@
     pointer-events: none;
   }
   .wx-alert-popup .leaflet-popup-content {
-    margin: 14px 16px;
+    /* Right margin clears the enlarged 32px × button (44px on touch, below). */
+    margin: 14px 40px 14px 16px;
     max-height: min(55vh, 360px);
     overflow-y: auto;
     font-family: 'Space Mono', monospace;
@@ -530,6 +531,7 @@
     .wx-alert-popup a.leaflet-popup-close-button {
       width: 44px; height: 44px; line-height: 42px;
     }
+    .wx-alert-popup .leaflet-popup-content { margin-right: 52px; }
   }
 
   /* Header row: station ID + full name on the left, close button on the right */
@@ -691,7 +693,10 @@
     cursor: wait;
   }
   /* Solid, high-contrast keyboard focus ring (a faint glow was under 3:1). */
-  #fab-locate:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+  #fab-locate:focus { outline: 2px solid var(--text); outline-offset: 3px; }
+  /* Browsers that know :focus-visible hide the ring after a mouse click/tap;
+     older ones (Safari < 15.4) keep it, which beats having no ring at all. */
+  #fab-locate:focus:not(:focus-visible) { outline: none; }
 
   /* ════════════════════════════════════════════════════════════════════════════
      APP VERSION BADGE  (bottom-left corner)
@@ -895,6 +900,13 @@
     /* ── Leaflet zoom controls (bottom-left) — lifted clear of the version badge ── */
     .leaflet-control-zoom {
       margin-bottom: calc(88px + var(--safe-bottom)) !important;
+    }
+    /* viewport-fit=cover: keep Leaflet's own controls out of a landscape notch
+       and rounded corners, like every other edge element. */
+    .leaflet-left .leaflet-control { margin-left: calc(10px + var(--safe-left)) !important; }
+    .leaflet-control-attribution {
+      margin-right: var(--safe-right) !important;
+      margin-bottom: var(--safe-bottom) !important;
     }
 
     /* ── FAB — larger, above home indicator ── */
@@ -1539,7 +1551,8 @@ const map = L.map('map', { zoomControl: false }).setView([39.5, -98.35], 4);
 // and Leaflet's attribution).
 L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+// One host, as OSM now recommends (the old a/b/c subdomains only split the cache).
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   // Keep Leaflet's complete BSD notice discoverable in every hosted or local copy.
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · <a href="./LEAFLET-LICENSE.txt" target="_blank" rel="license noopener">Leaflet license</a>',
   maxZoom: 18
@@ -1897,11 +1910,30 @@ async function zipToCoords(zip) {
   const zip5 = zip.slice(0, 5);
   const url = `https://nominatim.openstreetmap.org/search`
             + `?postalcode=${encodeURIComponent(zip5)}&country=US&format=json&limit=1`;
-  const { response: res, data } = await fetchJsonWithTimeout(
-    url, { headers: { 'Accept-Language': 'en' } });
-  if (!res.ok) throw new Error('ZIP geocoding request failed');
+  let res, data;
+  try {
+    ({ response: res, data } = await fetchJsonWithTimeout(
+      url, { headers: { 'Accept-Language': 'en' } }));
+  } catch {
+    // Unreachable or blocked (Nominatim's CDN sometimes serves a cached answer
+    // without its CORS header, which the browser reports as a network failure):
+    // ask Photon's postcode index instead.
+    return zipToCoordsViaPhoton(zip5, zip);
+  }
+  if (!res.ok) return zipToCoordsViaPhoton(zip5, zip);
   if (!data.length) throw new Error(`ZIP code "${zip}" not found`);
   return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+}
+
+/** Backup ZIP lookup through Photon's postcode index (US results only). */
+async function zipToCoordsViaPhoton(zip5, zipAsTyped) {
+  const { response: res, data } = await fetchJsonWithTimeout(
+    `https://photon.komoot.io/api/?q=${encodeURIComponent(zip5)}&osm_tag=place:postcode&limit=5&lang=en`);
+  if (!res.ok) throw new Error('ZIP geocoding request failed');
+  const match = (data?.features || []).find(f => f?.properties?.countrycode === 'US');
+  const [lon, lat] = match?.geometry?.coordinates || [];
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error(`ZIP code "${zipAsTyped}" not found`);
+  return { lat, lon };
 }
 
 /**
@@ -2840,7 +2872,13 @@ popupCloseBtn.addEventListener('keydown', e => {
 });
 // Browsers also focus a button that is clicked, so :focus-visible is what tells a
 // keyboard press apart from a mouse click or tap.
-popupCloseBtn.addEventListener('click', e => closeStationPanel(e.currentTarget.matches(':focus-visible')));
+popupCloseBtn.addEventListener('click', e => {
+  // matches(':focus-visible') throws in Safari before 15.4; there, treat the
+  // press as a mouse/touch one (just close) rather than letting × do nothing.
+  let fromKeyboard = false;
+  try { fromKeyboard = e.currentTarget.matches(':focus-visible'); } catch { /* unsupported */ }
+  closeStationPanel(fromKeyboard);
+});
 // Escape anywhere inside the panel closes it, like any dialog.
 popupPanel.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
@@ -3094,6 +3132,37 @@ function handleAlertPopupEscape(event) {
   }
 }
 
+/**
+ * Before an alert area's popup opens (capture phase, so ahead of Leaflet), widen
+ * its auto-pan padding so the popup also clears the alert banner (top) and an
+ * open station panel (desktop: right; phone sheet: bottom). Leaflet only knows
+ * the map's own edges, and both of those float above its popup layer.
+ */
+function prepareAlertPopupPan(event) {
+  const area = event.target?.closest?.('.wx-alert-area');
+  const popup = area ? alertAreaOwners.get(area)?.getPopup?.() : null;
+  if (!popup) return;
+  const mapBox = document.getElementById('map').getBoundingClientRect();
+  // Never ask for more than half the map, or the popup would have nowhere to go.
+  const clampY = v => Math.max(16, Math.min(v, mapBox.height / 2));
+  const clampX = v => Math.max(16, Math.min(v, mapBox.width / 2));
+  let top = 16, right = 16, bottom = 16;
+  if (alertBanner.classList.contains('visible')) {
+    top = clampY(alertBanner.getBoundingClientRect().bottom - mapBox.top + 8);
+  }
+  if (popupPanel.style.display === 'block') {
+    const panel = popupPanel.getBoundingClientRect();
+    if (getComputedStyle(popupPanel).position === 'fixed') {   // phone bottom sheet
+      bottom = clampY(mapBox.bottom - panel.top + 8);
+    } else {                                                     // desktop side panel
+      right = clampX(mapBox.right - panel.left + 8);
+    }
+  }
+  popup.options.autoPanPaddingTopLeft = [16, top];
+  popup.options.autoPanPaddingBottomRight = [right, bottom];
+}
+
+document.addEventListener('click', prepareAlertPopupPan, { capture: true });
 document.addEventListener('click', handleAlertPopupClickAway, { capture: true });
 document.addEventListener('keydown', handleAlertPopupEscape);
 

@@ -565,7 +565,6 @@ test('the alert banner stays clear of the map controls and the station panel', (
   assert.match(html, /max-height: max\(4rem, calc\(100% - 8px - 180px - var\(--safe-bottom\)\)\);/);
   // An open or hovered station inside a warning keeps readable dark text.
   assert.match(html, /\.station-marker\.alerted:hover,\s*\.station-marker\.alerted\.active \{ color: var\(--bg\); \}/);
-  assert.match(html, /#fab-locate:focus-visible \{ outline: 2px solid var\(--text\);/);
   // A rebuilt banner keeps keyboard focus; the dead install-prompt hook is gone.
   const render = extractFunction('renderAlertBanner');
   assert.match(render, /if \(hadFocus\) alertBanner\.querySelector\('\[data-role="toggle"\]'\)\?\.focus\(\);/);
@@ -583,6 +582,55 @@ test('the alert banner stays clear of the map controls and the station panel', (
   assert.match(html, /main\.sheet-open #fab-locate \{[^}]*z-index: 1150;/);
   // Delete on either pin button (touch devices only show the tap-pin) removes the pin.
   assert.match(html, /\[dragPinBtn, tapPinBtn\]\.forEach\(btn => btn\.addEventListener\('keydown'/);
+});
+
+test('ZIP lookup falls back to Photon when Nominatim cannot be reached', async () => {
+  const requested = [];
+  const zipToCoords = new Function('fetchJsonWithTimeout', `
+    async ${extractFunction('zipToCoordsViaPhoton')}
+    async ${extractFunction('zipToCoords')}
+    return zipToCoords;
+  `)(async url => {
+    requested.push(url);
+    // Nominatim's CDN answering without CORS surfaces as a network error.
+    if (url.includes('nominatim')) throw new TypeError('Failed to fetch');
+    return { response: { ok: true }, data: { features: [
+      { properties: { countrycode: 'MX' }, geometry: { coordinates: [-99, 19] } },
+      { properties: { countrycode: 'US' }, geometry: { coordinates: [-98.5, 29.4] } }
+    ] } };
+  });
+  assert.deepEqual({ ...await zipToCoords('78201-1234') }, { lat: 29.4, lon: -98.5 });
+  assert.match(requested[1], /^https:\/\/photon\.komoot\.io\/api\/\?q=78201&osm_tag=place:postcode/);
+});
+
+test('alert popups pan clear of the banner and panel, and their × never covers text', () => {
+  // Content leaves room for the enlarged close button (32px; 44px on touch).
+  assert.match(html, /\.wx-alert-popup \.leaflet-popup-content \{[^}]*margin: 14px 40px 14px 16px;/);
+  assert.match(html, /\.wx-alert-popup \.leaflet-popup-content \{ margin-right: 52px; \}/);
+
+  // The pan padding is set before Leaflet opens the popup.
+  const options = {};
+  const area = {};
+  const prepare = vm.runInNewContext(`(${extractFunction('prepareAlertPopupPan')})`, {
+    alertAreaOwners: new Map([[area, { getPopup: () => ({ options }) }]]),
+    document: { getElementById: () => ({ getBoundingClientRect: () => ({ top: 100, bottom: 700, left: 0, right: 1000, width: 1000, height: 600 }) }) },
+    alertBanner: { classList: { contains: () => true }, getBoundingClientRect: () => ({ bottom: 260 }) },
+    popupPanel: { style: { display: 'block' }, getBoundingClientRect: () => ({ left: 670, top: 116 }) },
+    getComputedStyle: () => ({ position: 'absolute' }),
+    Math
+  });
+  prepare({ target: { closest: () => area } });
+  assert.deepEqual([...options.autoPanPaddingTopLeft], [16, 168]);      // below the banner (+8)
+  assert.deepEqual([...options.autoPanPaddingBottomRight], [338, 16]);  // left of the panel (+8)
+  assert.match(html, /document\.addEventListener\('click', prepareAlertPopupPan, \{ capture: true \}\);/);
+});
+
+test('older Safari and safe areas: close button, focus ring, map controls, tiles', () => {
+  // matches(':focus-visible') throws before Safari 15.4 — the × must still close.
+  assert.match(html, /try \{ fromKeyboard = e\.currentTarget\.matches\(':focus-visible'\); \} catch/);
+  assert.match(html, /#fab-locate:focus \{ outline: 2px solid var\(--text\);/);
+  assert.match(html, /\.leaflet-left \.leaflet-control \{ margin-left: calc\(10px \+ var\(--safe-left\)\) !important; \}/);
+  assert.match(html, /L\.tileLayer\('https:\/\/tile\.openstreetmap\.org\/\{z\}\/\{x\}\/\{y\}\.png'/);
 });
 
 test('the hidden toast never makes the page taller than the window', () => {

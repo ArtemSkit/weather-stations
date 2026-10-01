@@ -543,6 +543,11 @@ test('round-4 UI fixes: popups, keyboard panel, iOS zoom, cookies, fonts', () =>
   assert.match(html, /document\.addEventListener\('keydown', e => \{\s*if \(e\.key === 'Enter' && e\.repeat && e\.target\.closest\?\.\('button'\)\) e\.preventDefault\(\);\s*\}, true\);/);
   // Border-colour-only focus styles add a transparent outline ON FOCUS for High
   // Contrast (in the base rule it would show on every unfocused control).
+  for (const sel of ['.search-bar input {', '#drag-pin {', '#interval-input {']) {
+    const base = html.slice(html.indexOf(sel), html.indexOf('}', html.indexOf(sel)));
+    assert.match(base, /outline: none;/, sel);
+    assert.doesNotMatch(base, /outline: 2px solid transparent/, `${sel} would ring every unfocused control`);
+  }
   for (const sel of ['.search-bar input:focus', '#drag-pin:focus', '#interval-input:focus']) {
     const rule = html.slice(html.indexOf(sel), html.indexOf('}', html.indexOf(sel)));
     assert.match(rule, /outline: 2px solid transparent;/, sel);

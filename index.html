@@ -247,6 +247,9 @@
      ════════════════════════════════════════════════════════════════════════════ */
   main { flex: 1; position: relative; overflow: hidden; }
   #map  { width: 100%; height: 100%; background: var(--bg); }
+  /* Leaflet's focus ring sits 1px OUTSIDE the map, where main's overflow:hidden
+     clips it — draw it inside so keyboard users can see the map has focus. */
+  #map:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
   /* Dark-mode tile filter — desaturate + hue-rotate to match the UI palette */
   .leaflet-tile-pane { filter: brightness(0.7) saturate(0.6) hue-rotate(190deg); }
@@ -2223,8 +2226,9 @@ function setBoundedCache(cache, key, value, limit) {
  *   1. GET /points/{lat},{lon}  → properties.forecastHourly (grid forecast URL)
  *   2. GET {forecastHourly}     → probabilityOfPrecipitation of the current period
  *
- * Results are cached per station for FORECAST_TTL_MS.  Any failure resolves to null
- * so a missing forecast never blocks the live observation display.
+ * Results are cached per station for up to FORECAST_TTL_MS, never past the end of
+ * the hour they describe. Failures never throw: a passing one keeps a value whose
+ * hour is still running (retried after FORECAST_FAILURE_TTL_MS), otherwise null.
  *
  * @param   {number} lat        - Latitude
  * @param   {number} lon        - Longitude
@@ -4307,7 +4311,9 @@ searchBtn.addEventListener('click', doSearch);
 // a request to search the half-typed text.
 // (Safari ends the composition before this keydown, so check keyCode 229 too.)
 zipInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) doSearch();
+  // !e.repeat: a held-down Enter must not fire a geocoder request per key repeat
+  // (Nominatim allows one request a second).
+  if (e.key === 'Enter' && !e.repeat && !e.isComposing && e.keyCode !== 229) doSearch();
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -4720,8 +4726,8 @@ fabLocate.addEventListener('click', () => {
         setStatus('ok', stationParam);
       }
 
-      // Reuse the standard open flow (loading skeleton → observation + forecast
-      // PoP fetch → render → guarded live-refresh timer) instead of duplicating
+      // Reuse the standard open flow (loading skeleton → observation fetch →
+      // render → background rain-chance lookup → guarded live-refresh timer) instead of duplicating
       // its bookkeeping here; the fetch above was only needed to locate the
       // station before a marker existed to click. Fire-and-forget, exactly like
       // a marker click.

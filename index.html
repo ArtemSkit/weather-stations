@@ -1869,11 +1869,27 @@ const alertStateCache  = new Map();       // "lat,lon" → two-letter state code
 const pointAlertsRequests = new Map();
 const stateAlertsRequests = new Map();
 const alertStateRequests  = new Map();
-const ALERTS_TTL_MS = 2 * 60 * 1000;      // 2 minutes
+const ALERTS_REFRESH_MS = 2 * 60 * 1000;  // how often the refresh loop runs
+// Kept shorter than the refresh interval: an entry's clock starts when its fetch
+// FINISHES, so with equal values every other tick would still hit the cache and
+// alerts would really update only every ~4 minutes.
+const ALERTS_TTL_MS = ALERTS_REFRESH_MS - 30 * 1000;
 const STATE_ALERTS_STALE_MAX_MS = 30 * 60 * 1000;
 const ALERTS_CACHE_LIMIT = 50;
 const STATE_ALERTS_CACHE_LIMIT = 10;
 const ALERT_STATE_CACHE_LIMIT = 100;
+
+/**
+ * Validate one alert Feature at the network boundary, so a malformed item cannot
+ * break sorting, signatures, polygon checks, or rendering later. NWS also sends
+ * "Test"/"Exercise"/"Draft" messages through the live feed; only real ("Actual")
+ * alerts are shown, so nobody sees a TEST MESSAGE presented as a real warning.
+ */
+function isDisplayableAlert(feature) {
+  return !!feature && typeof feature === 'object' &&
+    !!feature.properties && typeof feature.properties === 'object' &&
+    (feature.properties.status ?? 'Actual') === 'Actual';
+}
 
 /** Return the coordinate bounding box for any polygonal GeoJSON geometry. */
 function alertGeometryBounds(geometry) {
@@ -2022,11 +2038,7 @@ async function fetchPointAlerts(lat, lon) {
       const { response: res, data } = await fetchJsonWithTimeout(
         `https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`);
       if (res.ok && Array.isArray(data?.features)) {
-        // Validate entries once at the network boundary so one malformed item
-        // cannot break sorting, signatures, polygon checks, or rendering later.
-        alerts = data.features.filter(feature => feature &&
-          typeof feature === 'object' && feature.properties &&
-          typeof feature.properties === 'object');
+        alerts = data.features.filter(isDisplayableAlert);
       }
     } catch (e) {
       alerts = null;   // network/timeout — signal failure rather than "no alerts".
@@ -2057,7 +2069,12 @@ async function fetchAlertState(lat, lon) {
     try {
       const { response: res, data } = await fetchJsonWithTimeout(
         `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
-      if (!res.ok) return null;
+      if (!res.ok) {
+        // 404 = a point the NWS doesn't cover (offshore, outside the US). That
+        // won't change, so remember it instead of re-asking on every refresh tick.
+        if (res.status === 404) setBoundedCache(alertStateCache, key, null, ALERT_STATE_CACHE_LIMIT);
+        return null;
+      }
       const state = data.properties?.relativeLocation?.properties?.state;
       if (!/^[A-Z]{2}$/.test(state || '')) return null;
       setBoundedCache(alertStateCache, key, state, ALERT_STATE_CACHE_LIMIT);
@@ -2101,11 +2118,7 @@ async function fetchStateAlerts(state) {
         return retryable ? fallbackAlerts : null;
       }
       if (!Array.isArray(data?.features)) return fallbackAlerts;
-      // Keep the completed cache schema-safe; every downstream renderer assumes
-      // each feature has an object-valued properties payload.
-      const alerts = data.features.filter(feature => feature &&
-        typeof feature === 'object' && feature.properties &&
-        typeof feature.properties === 'object');
+      const alerts = data.features.filter(isDisplayableAlert);
       setBoundedCache(stateAlertsCache, state, { alerts, ts: Date.now() }, STATE_ALERTS_CACHE_LIMIT);
       return alerts;
     } catch {
@@ -3272,7 +3285,7 @@ async function loadAlertsForArea(lat, lon, gen) {
 
   // Keep alerts current while this location stays loaded. The cache TTL gates the
   // real network calls, so re-running on this interval is cheap.
-  alertsTimer = setInterval(refreshAlerts, ALERTS_TTL_MS);
+  alertsTimer = setInterval(refreshAlerts, ALERTS_REFRESH_MS);
 }
 
 /** Re-fetch and re-render alerts for the current location (refresh-loop tick). */

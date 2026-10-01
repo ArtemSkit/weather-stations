@@ -1637,8 +1637,12 @@ let areaGeneration = 0;
 /** The newest search generation that has finished (succeeded or failed). */
 let settledSearch = 0;
 
-/** True while the area that owns the map is still fetching its stations. */
-let areaLoading = false;
+/**
+ * While the area that owns the map is still loading: the status and overlay text
+ * that describe that load (restored if a newer search fails meanwhile); else null.
+ * @type {{ status: string, overlay: string }|null}
+ */
+let areaLoading = null;
 
 /* Cached DOM references — gathered once to avoid repeated getElementById calls */
 const zipInput      = document.getElementById('zip-input');
@@ -1708,10 +1712,10 @@ function reportSearchError(message) {
   settledSearch = searchGeneration;   // the newest search has ended
   showToast(message);
   if (areaLoading) {
-    // The area on the map is still fetching its stations: that is what the user
-    // is waiting for, so keep showing it as loading (it finishes on its own).
-    showOverlay('Fetching weather stations…');
-    setStatus('loading', 'FETCHING STATIONS…');
+    // The area on the map is still loading: that is what the user is waiting
+    // for, so keep showing that load (it finishes, or fails, on its own).
+    showOverlay(areaLoading.overlay);
+    setStatus('loading', areaLoading.status);
     return;
   }
   hideOverlay();
@@ -2941,11 +2945,11 @@ async function loadStationsAt(lat, lon, gen) {
   moveMapTo(lat, lon, 10);
 
   let data;
-  areaLoading = true;
+  areaLoading = { status: 'FETCHING STATIONS…', overlay: 'Fetching weather stations…' };
   try {
     data = await fetchStations(lat, lon);
   } catch (err) {
-    if (area === areaGeneration) areaLoading = false;
+    if (area === areaGeneration) areaLoading = null;
     // This area's own failure. Its caller reports it only while its search is
     // the newest; if a newer search has meanwhile failed before reaching the map,
     // this is still the area on screen, so explain why it stayed empty here.
@@ -2955,7 +2959,7 @@ async function loadStationsAt(lat, lon, gen) {
     throw err;
   }
   if (area !== areaGeneration) return false;     // a newer area replaced this one
-  areaLoading = false;
+  areaLoading = null;
   plotStations(data);
 
   // A newer search still running owns the status bar and overlay; leave them.
@@ -3861,7 +3865,10 @@ async function doSearch() {
 searchBtn.addEventListener('click', doSearch);
 // isComposing: Enter that confirms an IME composition (e.g. Japanese input) is not
 // a request to search the half-typed text.
-zipInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) doSearch(); });
+// (Safari ends the composition before this keydown, so check keyCode 229 too.)
+zipInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) doSearch();
+});
 
 /* ─────────────────────────────────────────────────────────────────────────────
    17. DRAGGABLE-PIN FEATURE
@@ -4209,12 +4216,12 @@ fabLocate.addEventListener('click', () => {
       setStatus('loading', 'LOADING STATION…');
       showOverlay(`Fetching station ${stationParam}…`);
 
-      areaLoading = true;
+      areaLoading = { status: 'LOADING STATION…', overlay: `Fetching station ${stationParam}…` };
       let data;
       try {
         data = await fetchObservations(stationParam);
       } finally {
-        if (area === areaGeneration) areaLoading = false;
+        if (area === areaGeneration) areaLoading = null;
       }
       if (area !== areaGeneration) return;        // a user search replaced the map
       const [lng, lat] = data.geometry?.coordinates || [];  // GeoJSON: [lng, lat]
@@ -4250,7 +4257,10 @@ fabLocate.addEventListener('click', () => {
       loadAlertsForArea(lat, lng);
 
     } catch (e) {
-      if (gen !== searchGeneration) return;
+      // Report while this is the newest search — or, like loadStationsAt, while
+      // this station is still what the map shows and the newer search has ended
+      // (otherwise its loading overlay would stay up with nothing left to clear it).
+      if (gen !== searchGeneration && !(area === areaGeneration && mayUpdateSearchUi(gen))) return;
       reportSearchError(e.message || 'Failed to load station');
     }
     return;  // Don't process other params

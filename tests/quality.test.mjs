@@ -881,6 +881,13 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   // Showers read in plain English.
   obs({ textDescription: 'Mist', presentWeather: [{ intensity: 'light', modifier: 'showers', weather: 'rain' }] });
   assert.match(body(), /light rain showers/);
+  // NWS joins two items with "and" (KMKE-like) — still the same thing.
+  obs({ textDescription: 'Light Rain and Fog/Mist',
+        presentWeather: [{ intensity: 'light', weather: 'rain' }, { weather: 'fog_mist' }] });
+  assert.doesNotMatch(body(), /fog mist/);
+  // Showers seen only nearby (VCSH) say so.
+  obs({ textDescription: 'Cloudy', presentWeather: [{ modifier: 'showers', weather: 'rain', inVicinity: true }] });
+  assert.match(body(), /rain showers in vicinity/);
   // A 3-hour-old report gets an age.
   render({ properties: { timestamp: new Date(Date.now() - 3 * 3_600_000).toISOString() } }, 'KTST', 'Test');
   assert.match(elements['update-time'].textContent, /3 h old/);

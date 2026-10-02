@@ -3335,8 +3335,9 @@ function makeStationMarker(id, name, lat, lng) {
  * @param {Object} geoJSON  - FeatureCollection from the NOAA stations endpoint
  * @param {number} lat      - the searched point
  * @param {number} lon
- * @returns {{west:number,south:number,east:number,north:number}} the circle's box
- *          (the map area the alert loader should look at)
+ * @returns {{west:number,south:number,east:number,north:number}|undefined} the
+ *          circle's box (the map area the alert loader should look at), or
+ *          undefined when no station was found (no circle is drawn then)
  */
 function plotStations(geoJSON, lat, lon) {
   clearStations();
@@ -3359,11 +3360,18 @@ function plotStations(geoJSON, lat, lon) {
   }
   const { inside, edgeMi } = pick;
   inside.forEach(({ f, lat: la, lng }) => {
-    const el = makeStationMarker(f.properties.stationIdentifier, f.properties.name, la, lng);
+    // Drawn on the same copy of the world as the circle: in the far-western
+    // Aleutians (east of 180°) NOAA's stations sit just west of the date line, at
+    // -176°…, which would put them a whole world away from a circle at +174°.
+    const onScreenLng = lng + 360 * Math.round((lon - lng) / 360);
+    const el = makeStationMarker(f.properties.stationIdentifier, f.properties.name, la, onScreenLng);
     // Remember each marker so flagStationsInAlerts() (Tier 3) can later test it
-    // against the active warning polygons and toggle its .alerted ring.
+    // against the active warning polygons (NWS's own longitudes) and toggle its
+    // .alerted ring.
     stationRecords.push({ el, lat: la, lng });
   });
+  // An empty list (NOAA found no stations here): no "0 stations" circle.
+  if (!inside.length) return undefined;
   return drawSearchRadius(lat, lon, edgeMi, inside.length);
 }
 
@@ -3451,7 +3459,7 @@ function selectStationsInRadius(lat, lon, features, clearance) {
  */
 function searchEdgeClearance(lat, edgeMi) {
   const size = map.getSize();
-  if (!size.x || !size.y) return 0.1;
+  if (size.x <= SEARCH_FIT_PAD_X || size.y <= SEARCH_FIT_PAD_Y) return 0.1;
   const markerPx = window.matchMedia('(pointer: coarse), (max-width: 640px)').matches ? 17 : 14;
   let radiusPx;
   if (edgeMi) {
@@ -3542,12 +3550,13 @@ function drawSearchRadius(lat, lon, miles, count) {
 /**
  * Fit the circle (and the label and rings outside it) on screen. A map with no
  * size (laid out while hidden) can't be fitted — flyToBounds would divide by
- * zero — so it is simply centred at a typical zoom instead.
+ * zero — and one smaller than the padding (a landscape phone with its keyboard
+ * up) would get a nonsense zoom, so either is simply centred at a typical zoom.
  * @returns {boolean} true when the map is now flying (animating) to the circle
  */
 function fitSearchRadius(bounds, lat, lon) {
   const size = map.getSize();
-  if (!size.x || !size.y) { map.setView([lat, lon], 8); return false; }
+  if (size.x <= SEARCH_FIT_PAD_X || size.y <= SEARCH_FIT_PAD_Y) { map.setView([lat, lon], 8); return false; }
   // Room for the label above the circle (96 px) and a margin elsewhere; these add
   // up to SEARCH_FIT_PAD_X/Y, which searchEdgeClearance assumes.
   const options = { paddingTopLeft: [40, 96], paddingBottomRight: [40, 40], maxZoom: SEARCH_FIT_MAX_ZOOM };

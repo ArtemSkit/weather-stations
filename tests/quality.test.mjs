@@ -1108,7 +1108,7 @@ test('alert times never invent an end and show a future start', () => {
   const bannerCtx = {
     Date, String, Set, Map, alertBanner: banner, document: {}, alertBannerCollapsed: false,
     openAlertGroups: new Set(), openAlertCards: new Set(), alertRecordCache: new Map(),
-    alertRecordWanted: new Set(['b']), alertRecordInFlight: new Map(),
+    alertRecordWanted: new Set(['b']), alertRecordInFlight: new Map(), alertRecordFailedAt: new Map(),
     ALERT_CLASS_RANK: { crit: 0, warn: 1, watch: 2, info: 3 },
     ALERT_SEV_WEIGHT: {}, ALERT_URGENCY_WEIGHT: {}, ALERT_CERTAINTY_WEIGHT: {}
   };
@@ -1152,6 +1152,17 @@ test('alert times never invent an end and show a future start', () => {
   render([{ id: 'b', properties: { event: 'Flood Warning', ends: tomorrow,
     detailsUrl: 'https://api.weather.gov/alerts/urn:oid:x' } }], true);
   assert.doesNotMatch(banner.innerHTML, /Finding the places|alert-places/);
+  // A card rebuilt after its lookup failed (none on its way) says so — not "Loading…".
+  bannerCtx.alertRecordFailedAt.set('b', Date.now());
+  render([{ id: 'b', properties: { event: 'Flood Warning', ends: tomorrow,
+    detailsUrl: 'https://api.weather.gov/alerts/urn:oid:x' } }], true);
+  assert.match(banner.innerHTML, /Couldn&#39;t load the details — close and reopen the card to try again\./);
+  assert.doesNotMatch(banner.innerHTML, /Loading the full NWS text/);
+  // …while one on its way still says "Loading…".
+  bannerCtx.alertRecordWanted.add('b');
+  render([{ id: 'b', properties: { event: 'Flood Warning', ends: tomorrow,
+    detailsUrl: 'https://api.weather.gov/alerts/urn:oid:x' } }], true);
+  assert.match(banner.innerHTML, /Loading the full NWS text…/);
 
   // Where each alert applies is on its header; same-type alerts fold into one
   // group row (count, shared time, their places) that opens to their cards, each

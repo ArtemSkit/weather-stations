@@ -4414,7 +4414,11 @@ function alertCardHtml(f) {
   // A live alert has no text yet: its card fetches the NWS record when opened.
   const lazy     = !detail && p.detailsUrl;
   const bodyAttr = lazy ? ' data-details-url="' + escapeHtml(p.detailsUrl) + '"' : '';
-  const descText = lazy ? 'Loading the full NWS text…' : detail;
+  // (After a failed lookup with none on its way, say so rather than "Loading…".)
+  const descText = !lazy ? detail
+    : alertRecordFailedAt.has(id) && !alertRecordPending(id)
+      ? 'Couldn\'t load the details — close and reopen the card to try again.'
+      : 'Loading the full NWS text…';
   const areaDesc = alertAreaDesc(f);
   const places   = alertPlacesText([areaDesc]);
   const open     = openAlertCards.has(id);
@@ -4678,6 +4682,7 @@ async function loadAlertCardDetails(card) {
     desc.textContent = 'No further details were published for this alert.';
     return;
   }
+  desc.textContent = 'Loading the full NWS text…';   // (in place of an earlier failure's note)
   if (await loadAlertRecord(id, body.dataset.detailsUrl)) {
     const record = alertRecordCache.get(id);
     body.querySelector('.alert-headline')?.remove();

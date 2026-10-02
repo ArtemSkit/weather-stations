@@ -3555,7 +3555,10 @@ function drawSearchRadius(lat, lon, miles, count) {
     startGrow();
   }
 
-  return { west: bounds.getWest(), south: bounds.getSouth(), east: bounds.getEast(), north: bounds.getNorth() };
+  // The alert loader looks at the circle's own box, not the wider fit box above:
+  // that one's corners reach 1.5 radii out, into the dimmed area and margins.
+  const area = L.latLng(lat, lon).toBounds(2 * r);
+  return { west: area.getWest(), south: area.getSouth(), east: area.getEast(), north: area.getNorth() };
 }
 
 /**

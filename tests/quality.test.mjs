@@ -2436,6 +2436,8 @@ test('search radius: nearby stations only, and the circle edge never sits on a m
   assert.match(html, /L\.svg\(\{ pane: 'searchRadius', padding: 0\.5 \}\)/);
   assert.match(html, /const SEARCH_MASK_OUTER = \[\[-85, -1800\], \[85, -1800\], \[85, 1800\], \[-85, 1800\]\];/);
   assert.match(extractFunction('fitSearchRadius'), /map\.fitBounds\(bounds, \{ \.\.\.options, animate: false \}\)/);
+  // Alerts are looked for in the circle's own box (2 radii wide), not the fit box.
+  assert.match(draw, /const area = L\.latLng\(lat, lon\)\.toBounds\(2 \* r\);\s*return \{ west: area\.getWest\(\)/);
 });
 
 test('live alerts: NWS colours, readable popup text, one view request at a time', () => {

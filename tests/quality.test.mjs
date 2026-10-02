@@ -2193,9 +2193,10 @@ test('Locate Me hides instead of covering the header when the sheet leaves no ro
   assert.equal(html.indexOf('#fab-locate { visibility: hidden; }'), html.lastIndexOf('#fab-locate { visibility: hidden; }'));
 });
 
-test('phone layout leaves room: sheet sized to the visible screen, toast above Locate Me, pin mode closes the sheet', () => {
+test('phone layout leaves room: sheet sized to the visible screen, toast above the map controls, pin mode closes the sheet', () => {
   assert.match(html, /max-height: 70vh !important;[^\n]*\s*(?:\/\*[\s\S]*?\*\/\s*)?max-height: 70dvh !important;/);
-  assert.match(html, /#toast \{ bottom: calc\(78px \+ var\(--safe-bottom\)\); max-width: calc\(100vw - 108px - var\(--safe-left\) - var\(--safe-right\)\); \}/);
+  // The toast sits above the LIVE ALERTS row (and so above Locate Me), never on it.
+  assert.match(html, /#toast \{ bottom: calc\(145px \+ var\(--safe-bottom\)\); max-width: calc\(100vw - 108px - var\(--safe-left\) - var\(--safe-right\)\); \}\s*@media \(max-width: 340px\) \{\s*#toast \{ bottom: calc\(159px \+ var\(--safe-bottom\)\); \}/);
   assert.match(extractFunction('setTapMode'),
     /if \(active && popupPanel\.style\.display === 'block' && getComputedStyle\(popupPanel\)\.position === 'fixed'\) \{\s*closeStationPanel\(false\);/);
   // NWS renamed Excessive Heat to Extreme Heat in 2025: the short label follows.

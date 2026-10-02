@@ -1205,9 +1205,14 @@
     /* No room above the sheet (set in initMobile): hide rather than cover the header. */
     main.sheet-open.sheet-crowded #fab-locate { visibility: hidden; }
 
-    /* ── Toast: above the Locate Me button (16px + 54px + 8px gap) and the safe area,
-       and narrow enough (54px clear on each side) to stay off the zoom buttons ── */
-    #toast { bottom: calc(78px + var(--safe-bottom)); max-width: calc(100vw - 108px - var(--safe-left) - var(--safe-right)); }
+    /* ── Toast: above the bottom-left controls — the LIVE ALERTS row tops out ~137px
+       up (~151px under 340px wide, where the controls sit higher) — so it never
+       covers those buttons, and so above Locate Me too; 54px clear of each side
+       (and of a landscape notch). ── */
+    #toast { bottom: calc(145px + var(--safe-bottom)); max-width: calc(100vw - 108px - var(--safe-left) - var(--safe-right)); }
+    @media (max-width: 340px) {
+      #toast { bottom: calc(159px + var(--safe-bottom)); }
+    }
   }
 </style>
 </head>

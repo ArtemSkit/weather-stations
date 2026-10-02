@@ -1195,6 +1195,18 @@ test('alert times never invent an end and show a future start', () => {
   assert.match(load, /setBoundedCache\(alertRecordFailedAt, id, Date\.now\(\), ALERT_RECORD_CACHE_LIMIT\);[\s\S]*?scheduleLiveBannerRefresh\(\);\s*return false;/);
   assert.match(extractFunction('queueAlertRecords'), /Date\.now\(\) - \(alertRecordFailedAt\.get\(id\) \?\? -Infinity\) < ALERT_RECORD_RETRY_MS/);
   assert.match(extractFunction('loadAlertCardDetails'), /updateAlertScrollHint\(\);\s*\/\/ the card's new height/);
+  // "Show this area on the map" then picks the area out once the map has landed
+  // (a newer zoom wins): glow, moving dashed outline, a flash and its name — gone
+  // after a few seconds or at a click on the map, and never taking clicks.
+  const zoom = extractFunction('zoomToAlert');
+  assert.match(zoom, /const seq = \+\+alertFocusSeq;[\s\S]*if \(shown \|\| seq !== alertFocusSeq\) return;[\s\S]*showAlertFocus\(shapes, label, center\);/);
+  assert.match(zoom, /map\.once\('moveend', show\);\s*map\.flyToBounds/);
+  const focus = extractFunction('showAlertFocus');
+  assert.match(focus, /className: 'alert-focus-halo'[\s\S]*className: 'alert-focus-line'[\s\S]*dashArray: '10 8'/);
+  assert.match(focus, /map\.on\('click', clearAlertFocus\);[\s\S]*alertFocusPanes\.forEach\(pane => pane\.classList\.add\('fading'\)\);[\s\S]*setTimeout\(clearAlertFocus, ALERT_FOCUS_FADE_MS\)/);
+  assert.match(focus, /pane: 'alertFocusLabel'/);
+  assert.match(extractFunction('clearAlertFocus'), /alertFocusLayer\.clearLayers\(\);[\s\S]*map\.off\('click', clearAlertFocus\);/);
+  assert.match(html, /\.leaflet-alertFocus-pane,\s*\.leaflet-alertFocusLabel-pane \{ pointer-events: none; transition: opacity 0\.8s ease; \}/);
   // What the user opened stays open when the list is rebuilt.
   bannerCtx.openAlertGroups.add('Extreme Heat Warning');
   bannerCtx.openAlertCards.add('h2');

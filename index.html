@@ -5538,7 +5538,16 @@ function selectForecastTab(tab) {
 
 /** Open the forecast for the area on the map (or load it again: the Retry button). */
 async function openForecast() {
-  if (!forecastPoint) return;
+  if (!forecastPoint) {
+    // A search that failed behind the open forecast took its area away: say so
+    // instead of letting Try again do nothing.
+    if (forecastDialog.open) {
+      forecastSeq++;   // and ignore the answer still on its way for the old area
+      fcDays.innerHTML = fcHours.innerHTML =
+        '<p class="fc-empty">There is no area on the map any more — search for a place first.</p>';
+    }
+    return;
+  }
   const { lat, lon } = forecastPoint;
   const seq = ++forecastSeq;
   forecastPlace.textContent = `Near ${lat.toFixed(3)}, ${lon.toFixed(3)}`;
@@ -5580,6 +5589,14 @@ forecastDialog.addEventListener('click', e => {
 // Esc closes the dialog (the browser does that); it must not also reach the
 // page's own Esc handlers (alert popup, pin mode) hidden behind it.
 forecastDialog.addEventListener('keydown', e => { if (e.key === 'Escape') e.stopPropagation(); });
+// Closing returns focus to FORECAST — unless a failed search hid it meanwhile:
+// then focus goes to the search box (the next thing to do) rather than the page top.
+forecastDialog.addEventListener('close', () => {
+  // (Focus is then left on the page or, in Chrome, on the closed dialog's ✕.)
+  const stranded = !document.activeElement || document.activeElement === document.body ||
+                   forecastDialog.contains(document.activeElement);
+  if (forecastBtn.hidden && stranded) zipInput.focus();
+});
 
 /* ─────────────────────────────────────────────────────────────────────────────
    15. URL QUERY-STRING HELPERS

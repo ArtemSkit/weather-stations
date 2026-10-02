@@ -45,7 +45,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Shareable URLs** | Every successful search updates the address bar — bookmark or share |
 | **Address lookup** | Free, typo-tolerant street-address geocoding via Photon — no API key or sign-up |
 | **PWA** | Installable and offline-capable, with user-controlled updates via Service Worker |
-| **Version badge** | Running app version shown in the bottom-left corner, reported live by the active Service Worker |
+| **Version badge** | Running app version shown in the bottom-left corner, reported live by the active Service Worker; tap it to open this GitHub repository |
 
 ---
 
@@ -352,7 +352,7 @@ WX.MAP is versioned by a single `APP_VERSION` constant that is woven into the se
 
 ### Version badge
 
-A small **`vX.Y.Z`** badge sits in the **bottom-left corner** showing which build is running. The value is reported by the **active service worker** — the page requests it over a `GET_VERSION` message — so it flips to the new number the instant an update takes over, a visible confirmation that the update actually applied. Before any worker controls the page, a fallback constant is shown so the badge is never blank. The badge is click-through and sits just below the (lifted) map zoom control.
+A small **`vX.Y.Z`** badge sits in the **bottom-left corner** showing which build is running. The value is reported by the **active service worker** — the page requests it over a `GET_VERSION` message — so it flips to the new number the instant an update takes over, a visible confirmation that the update actually applied. Before any worker controls the page, a fallback constant is shown so the badge is never blank. The badge sits just below the map zoom control; tapping or clicking it opens this project's GitHub repository in a new tab (so an installed app stays open).
 
 ### Offline support
 
@@ -382,7 +382,7 @@ weather-stations/
 │   │   │   ├── #map-overlay        (loading spinner)
 │   │   │   ├── #popup-panel        (station info / mobile bottom sheet)
 │   │   │   └── #fab-locate         (GPS floating action button)
-│   │   ├── #app-version           (bottom-left version badge)
+│   │   ├── #app-version           (bottom-left version badge, links to GitHub)
 │   │   ├── #toast                 (error / info notifications)
 │   │   └── #update-banner          (slides down when a new version is ready)
 │   └── <script>

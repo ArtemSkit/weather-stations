@@ -2182,6 +2182,19 @@ test('alerts come before the map for keyboard users and small text keeps its con
   assert.doesNotMatch(html, /max-width: calc\(100vw - 84px/);
 });
 
+test('the version badge links to the GitHub repository in a new tab', () => {
+  assert.match(html, /<a id="app-version" href="https:\/\/github\.com\/ArtemSkit\/weather-stations" target="_blank"\s+rel="noopener noreferrer" title="WX\.MAP on GitHub"><\/a>/);
+  // It takes taps now (no click-through), and shows a keyboard focus ring.
+  assert.doesNotMatch(html.match(/#app-version \{[^}]*\}/)[0], /pointer-events: none/);
+  assert.match(html, /#app-version:focus-visible \{ outline: 2px solid var\(--text\); outline-offset: 2px; \}/);
+  // The label names the link for screen readers, with the running version.
+  const label = {};
+  const badge = { setAttribute: (k, v) => { label[k] = v; } };
+  vm.runInNewContext(`(${extractFunction('setVersionBadge')})('1.2.3')`, { document: { getElementById: () => badge } });
+  assert.equal(badge.textContent, 'v1.2.3');
+  assert.equal(label['aria-label'], 'WX.MAP version 1.2.3 — source code on GitHub (opens a new tab)');
+});
+
 test('Locate Me hides instead of covering the header when the sheet leaves no room', () => {
   assert.match(html, /const room = window\.innerHeight - mainEl\.getBoundingClientRect\(\)\.top - sheetH;\s*mainEl\.classList\.toggle\('sheet-crowded', room < 74\);/);
   assert.match(html, /sheetSpaceObserver\.observe\(mainEl\);/);

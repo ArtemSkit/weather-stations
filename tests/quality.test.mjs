@@ -2923,19 +2923,40 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   const r = vm.runInNewContext(`(() => {
     ${extractFunction('forecastEmoji')}
     ${extractFunction('forecastTemp')}
+    ${extractFunction('forecastDegrees')}
+    ${extractFunction('forecastDayPairs')}
     ${extractFunction('forecastLocalTime')}
     ${extractFunction('forecastHourLabel')}
     ${extractFunction('renderForecastDays')}
     ${extractFunction('renderForecastHours')}
     return { renderForecastDays, renderForecastHours, forecastEmoji, forecastTemp };
   })()`, { Date, escapeHtml });
-  const days = r.renderForecastDays([{ name: 'Tonight <b>', isDaytime: false, temperature: 68, temperatureUnit: 'F',
-    shortForecast: 'Chance Showers And Thunderstorms', detailedForecast: 'Low around 68.',
-    probabilityOfPrecipitation: { value: 40 }, windSpeed: '5 mph', windDirection: 'SE' }]);
-  assert.match(days, /Tonight &#60;b&#62;/);
-  assert.match(days, /68°F<small>20°C<\/small>/);
-  assert.match(days, /💧 40% chance of rain · Wind SE 5 mph/);
-  assert.match(days, /⛈️/);
+  // One row per day: the day's high and the night's low (°C beneath), the night's
+  // sky, the higher rain chance; a list starting at night has that night alone.
+  const night = (name, temp, extra = {}) => ({ name, isDaytime: false, temperature: temp, temperatureUnit: 'F',
+    shortForecast: 'Mostly Clear', detailedForecast: name + ' details.', ...extra });
+  const day = (name, temp, extra = {}) => ({ name, isDaytime: true, temperature: temp, temperatureUnit: 'F',
+    shortForecast: 'Sunny', detailedForecast: name + ' details.', windSpeed: '10 mph', windDirection: 'S', ...extra });
+  const days = r.renderForecastDays([
+    night('Tonight <b>', 68, { shortForecast: 'Chance Showers And Thunderstorms',
+      probabilityOfPrecipitation: { value: 40 }, windSpeed: '5 mph', windDirection: 'SE' }),
+    day('Friday', 73, { probabilityOfPrecipitation: { value: 20 } }),
+    night('Friday Night', 63, { probabilityOfPrecipitation: { value: 60 } }),
+    day('Saturday', 90)
+  ]);
+  const rows = days.split('<details').slice(1);
+  assert.equal(rows.length, 3, 'Tonight, Friday (with its night), Saturday');
+  assert.match(rows[0], /Tonight &#60;b&#62;/);
+  assert.match(rows[0], /class="fc-lo"><span aria-hidden="true">↓<\/span><span class="sr-only">Low <\/span>68°<\/span><small>20°C<\/small>/);
+  assert.doesNotMatch(rows[0], /fc-hi/);
+  assert.match(rows[0], /💧 40% chance of rain · Wind SE 5 mph/);
+  assert.match(rows[0], /⛈️/);
+  assert.match(rows[1], /class="fc-hi">[^]*?High <\/span>73°<\/span><span class="fc-lo">[^]*?Low <\/span>63°<\/span><small>23° \/ 17°C<\/small>/);
+  assert.match(rows[1], /<span class="fc-night-sky">Night: Mostly Clear<\/span>/);
+  assert.match(rows[1], /💧 60% chance of rain · Wind S 10 mph/, 'the higher of the day and night chances');
+  assert.match(rows[1], /<p><b>Friday:<\/b> Friday details\.<\/p><p><b>Friday Night:<\/b> Friday Night details\.<\/p>/);
+  assert.match(rows[2], /High <\/span>90°<\/span><small>32°C<\/small>/);
+  assert.doesNotMatch(rows[2], /fc-lo|Night:/);
   const now = Date.parse('2026-10-01T22:30:00-05:00');
   const hour = (start, end) => ({ startTime: start, endTime: end, temperature: 70, temperatureUnit: 'F',
     shortForecast: 'Clear', isDaytime: false, probabilityOfPrecipitation: { value: 0 } });

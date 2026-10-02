@@ -203,6 +203,17 @@ test('links opened in a hidden tab still load (no flyTo on a 0×0 map)', () => {
   assert.match(html, /new ResizeObserver\(\(\) => map\.invalidateSize\(\)\)/);
 });
 
+test('the search pin never blocks clicks on a station next to it', () => {
+  // Only the 📍 takes clicks; its 90×52 marker box (label included) lets them
+  // through to station badges underneath, and pin mode lets the 📍 through too.
+  assert.match(extractFunction('buildPinIcon'), /className: 'dropped-pin-marker', iconSize: \[90, 52\]/);
+  assert.match(html, /\.leaflet-marker-icon\.dropped-pin-marker\.leaflet-interactive \{ pointer-events: none; \}\s*\.dropped-pin-icon \{ pointer-events: auto; \}/);
+  assert.match(html, /#map\.tap-mode \.dropped-pin-icon \{ pointer-events: none; \}/);
+  // Station badges are drawn above the pin: one under the 📍 is still clickable.
+  assert.match(extractFunction('placeDragPin'), /draggable: true,[\s\S]*?zIndexOffset: -1000,/);
+  assert.match(html, /\.dropped-pin-coords \{[^}]*pointer-events: none;/);
+});
+
 test('search pin works by drop, click, tap, and keyboard', () => {
   // The pin is placed on a real `drop` (Escape-cancelled drags never fire it).
   const pinSection = html.slice(html.indexOf("dragPinBtn.addEventListener('dragstart'"),

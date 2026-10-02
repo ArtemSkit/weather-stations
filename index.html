@@ -360,6 +360,15 @@
     pointer-events: none;   /* pass clicks through to the Leaflet marker */
   }
   .dropped-pin-icon { font-size: 26px; line-height: 1; }
+  /* The pin's marker box is 90×52 px, label included, so it would swallow clicks
+     meant for what lies under it (the map, alert areas, nearby stations). Only
+     the 📍 itself takes clicks, drags and double-clicks (they bubble up to
+     Leaflet's marker); the rest of the box lets them through. (Station badges
+     are drawn above the pin anyway: see placeDragPin.) */
+  .leaflet-marker-icon.dropped-pin-marker.leaflet-interactive { pointer-events: none; }
+  .dropped-pin-icon { pointer-events: auto; }
+  /* (Pin mode: like every marker, the 📍 lets the tap through to the map too.) */
+  #map.tap-mode .dropped-pin-icon { pointer-events: none; }
 
   /* ════════════════════════════════════════════════════════════════════════════
      WEATHER STATION INFO POPUP PANEL
@@ -5807,7 +5816,8 @@ function buildPinIcon(lat, lng) {
   // and sits at the bottom of the ~47 px-tall content, so the pin's tip is at
   // (width/2, content-bottom) = (45, 47). Anchoring there makes the tip sit exactly
   // on the marked coordinate instead of ~29 px to its right.
-  return L.divIcon({ html: wrap, className: '', iconSize: [90, 52], iconAnchor: [45, 47] });
+  // (className: the hook for the click-through rule on the marker box.)
+  return L.divIcon({ html: wrap, className: 'dropped-pin-marker', iconSize: [90, 52], iconAnchor: [45, 47] });
 }
 
 /**
@@ -5829,7 +5839,10 @@ function placeDragPin(lat, lng) {
   droppedPinMarker = L.marker([lat, lng], {
     icon: buildPinIcon(lat, lng),
     draggable: true,
-    zIndexOffset: 500,
+    // Under the station badges, not over them: where the two overlap (a pin
+    // dropped on or right next to a station) a click opens the station, and the
+    // pin is still dragged by its uncovered part.
+    zIndexOffset: -1000,
     title: 'Search location pin — drag to move, press Delete to remove'
   }).addTo(map);
 

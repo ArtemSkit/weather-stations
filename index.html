@@ -889,12 +889,20 @@
     box-shadow: 0 0 18px rgba(0,212,255,0.35);
   }
   .search-radius-label b { color: var(--accent); }
+  /* RADIUS switch (next to LIVE ALERTS): shown only while a circle is drawn. Off,
+     the plain map is shown — no rim, glow, dimming or label (the stations stay). */
+  #search-radius-btn { display: none; }
+  #map.has-search-radius #search-radius-btn { display: inline-flex; }
+  #search-radius-btn .ring { width: 9px; height: 9px; border-radius: 50%; border: 2px solid currentColor; flex-shrink: 0; }
+  #search-radius-btn[aria-pressed="false"] { color: var(--text-muted); }
+  #map.radius-off .leaflet-searchRadius-pane,
+  #map.radius-off .search-radius-label { display: none; }
 
   /* ════════════════════════════════════════════════════════════════════════════
      LIVE ALERTS (map control above the zoom buttons: toggle + colour key)
      ════════════════════════════════════════════════════════════════════════════ */
   .live-alerts-ctl { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-  .live-alerts-row { display: flex; gap: 6px; }
+  .live-alerts-row { display: flex; flex-wrap: wrap; gap: 6px; }
   .live-alerts-ctl button {
     display: inline-flex; align-items: center; gap: 7px; min-height: 30px;
     background: var(--surface); color: var(--accent); border: 1px solid var(--border);
@@ -3522,6 +3530,7 @@ function drawSearchRadius(lat, lon, miles, count) {
   }) });
   const circle = { lat, r: 0, rim, rings, mask, label };
   searchRadius = circle;
+  map.getContainer().classList.add('has-search-radius');
 
   const bounds = L.latLng(lat, lon).toBounds(r * SEARCH_FIT_BOX);
   const flying = fitSearchRadius(bounds, lat, lon);
@@ -3612,6 +3621,7 @@ map.on('zoomend', layoutSearchRadius);
 function clearSearchRadius() {
   searchRadius = null;
   searchRadiusLayer.clearLayers();
+  map.getContainer().classList.remove('has-search-radius');
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -5051,7 +5061,9 @@ map.on('moveend', () => {
   liveMoveTimer = setTimeout(() => loadLiveAlerts(), 350);
 });
 
-/* The control: [colour key] above [LIVE ALERTS · n] [KEY], above the zoom buttons. */
+/* The control: [colour key] above [LIVE ALERTS · n] [KEY] [RADIUS], above the zoom
+   buttons. (RADIUS, the search circle's on/off switch, belongs to section 13 but
+   shares this row so the map's corner keeps a single stack of controls.) */
 const LiveAlertsControl = L.Control.extend({
   options: { position: 'bottomleft' },
   onAdd() {
@@ -5064,6 +5076,8 @@ const LiveAlertsControl = L.Control.extend({
           <span class="lamp" aria-hidden="true"></span>LIVE ALERTS <span id="live-alerts-count"></span>
         </button>
         <button type="button" id="live-legend-btn" aria-expanded="false" aria-controls="live-legend" hidden>KEY</button>
+        <button type="button" id="search-radius-btn" aria-pressed="true"
+                title="Show or hide the search circle"><span class="ring" aria-hidden="true"></span>RADIUS</button>
       </div>`;
     // Clicks, double-clicks and scrolling here must not reach the map.
     L.DomEvent.disableClickPropagation(box);
@@ -5084,6 +5098,24 @@ function setLiveLegendOpen(open) {
 }
 liveAlertsBtn.addEventListener('click', () => setLiveAlerts(!liveAlertsOn));
 liveLegendBtn.addEventListener('click', () => setLiveLegendOpen(liveLegend.hidden));
+
+/**
+ * Show or hide the search circle (rim, glow, dimming and label) to see the plain
+ * map. Only hidden, never removed, so it comes back as it was; the choice is
+ * remembered on this device for later searches.
+ */
+const searchRadiusBtn = document.getElementById('search-radius-btn');
+const SEARCH_RADIUS_HIDDEN_KEY = 'wxmap_radius_hidden';
+function setSearchRadiusShown(shown) {
+  map.getContainer().classList.toggle('radius-off', !shown);
+  searchRadiusBtn.setAttribute('aria-pressed', String(shown));
+  try { localStorage.setItem(SEARCH_RADIUS_HIDDEN_KEY, shown ? '0' : '1'); } catch (_) { /* storage blocked */ }
+}
+searchRadiusBtn.addEventListener('click', () =>
+  setSearchRadiusShown(searchRadiusBtn.getAttribute('aria-pressed') !== 'true'));
+try {
+  if (localStorage.getItem(SEARCH_RADIUS_HIDDEN_KEY) === '1') setSearchRadiusShown(false);
+} catch (_) { /* storage blocked: the circle is shown */ }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    15. URL QUERY-STRING HELPERS

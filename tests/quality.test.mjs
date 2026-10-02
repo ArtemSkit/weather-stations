@@ -716,13 +716,15 @@ test('the alert banner stays clear of the map controls and the station panel', (
   assert.doesNotMatch(html, /margin-bottom: calc\(88px/);
   // An open or hovered station inside a warning keeps readable dark text.
   assert.match(html, /\.station-marker\.alerted:hover,\s*\.station-marker\.alerted\.active \{ color: var\(--bg\); \}/);
-  // A rebuilt banner keeps keyboard focus; the dead install-prompt hook is gone.
+  // A rebuilt banner keeps keyboard focus (on the same control, else the summary
+  // chip), its scroll position and what was open; the dead install-prompt hook is gone.
   const render = extractFunction('renderAlertBanner');
-  assert.match(render, /if \(hadFocus\) alertBanner\.querySelector\('\[data-role="toggle"\]'\)\?\.focus\(\);/);
-  assert.ok(render.indexOf('const hadFocus = alertBanner.contains(document.activeElement);') <
-            render.lastIndexOf('alertBanner.innerHTML ='), 'focus must be checked before the rebuild');
+  assert.ok(render.indexOf('const focusKey = alertBannerFocusKey();') <
+            render.lastIndexOf('alertBanner.innerHTML ='), 'focus must be noted before the rebuild');
+  assert.match(render, /alertBanner\.scrollTop = scrollTop;\s*if \(focusKey !== null\) restoreAlertBannerFocus\(focusKey\);/);
+  assert.match(extractFunction('restoreAlertBannerFocus'), /\(match \|\| alertBanner\.querySelector\('\[data-role="toggle"\]'\)\)\?\.focus\(\);/);
   // Focus rings on the banner's buttons are drawn inside (the banner clips).
-  assert.match(html, /\.alert-summary:focus-visible,\s*\.alert-card-head:focus-visible,\s*(\/\*[\s\S]*?\*\/\s*)?\.alert-card-body:focus-visible \{ outline: 2px solid var\(--text\); outline-offset: -3px; \}/);
+  assert.match(html, /\.alert-summary:focus-visible,\s*\.alert-card-head:focus-visible,\s*\.alert-group-head:focus-visible,\s*\.alert-zoom:focus-visible,\s*(\/\*[\s\S]*?\*\/\s*)?\.alert-card-body:focus-visible \{ outline: 2px solid var\(--text\); outline-offset: -3px; \}/);
   assert.doesNotMatch(html, /pwaInstallPrompt/);
   // The phone override must come AFTER the desktop side-by-side rule to win.
   const desktopRule = html.indexOf('main.sheet-open #alert-banner { max-width: calc(');
@@ -1093,9 +1095,11 @@ test('alert times never invent an end and show a future start', () => {
   assert.ok(statement.includes(whenIn(flood.expires)));
 
   // Run the real banner: a warning starting tomorrow with no set end.
-  const banner = { className: '', innerHTML: '', contains: () => false, querySelector: () => null };
+  const banner = { className: '', innerHTML: '', scrollTop: 0, scrollHeight: 0, clientHeight: 0,
+                   contains: () => false, querySelector: () => null, classList: { toggle() {}, contains: () => true } };
   const bannerCtx = {
-    Date, String, alertBanner: banner, document: {}, alertBannerCollapsed: false,
+    Date, String, Set, Map, alertBanner: banner, document: {}, alertBannerCollapsed: false,
+    openAlertGroups: new Set(), openAlertCards: new Set(), alertRecordCache: new Map(),
     ALERT_CLASS_RANK: { crit: 0, warn: 1, watch: 2, info: 3 },
     ALERT_SEV_WEIGHT: {}, ALERT_URGENCY_WEIGHT: {}, ALERT_CERTAINTY_WEIGHT: {}
   };
@@ -1105,6 +1109,14 @@ test('alert times never invent an end and show a future start', () => {
     ${extractFunction('alertClass')}
     ${extractFunction('compareAlertDanger')}
     ${extractFunction('sortAlerts')}
+    ${extractFunction('alertWhenHtml')}
+    ${extractFunction('alertPlacesText')}
+    ${extractFunction('alertId')}
+    ${extractFunction('alertAreaDesc')}
+    ${extractFunction('alertCardHtml')}
+    ${extractFunction('alertGroupHtml')}
+    ${extractFunction('alertBannerFocusKey')}
+    ${extractFunction('updateAlertScrollHint')}
     ${extractFunction('renderAlertBanner')}
     return renderAlertBanner;
   })()`, bannerCtx);
@@ -1124,6 +1136,34 @@ test('alert times never invent an end and show a future start', () => {
   assert.match(banner.innerHTML, /1 alert in view · Flood Warning/);
   assert.match(banner.innerHTML, /<div class="alert-card-body" data-details-url="https:\/\/api\.weather\.gov\/alerts\/urn:oid:x&quot;&gt;&lt;b&gt;">/);
   assert.match(banner.innerHTML, /Loading the full NWS text…/);
+  assert.match(banner.innerHTML, /<span class="alert-places">Finding the places…<\/span>/);
+
+  // Where each alert applies is on its header; same-type alerts fold into one
+  // group row (count, shared time, their places) that opens to their cards, each
+  // with "Show on map"; a type with one alert stays a plain card. The banner ends
+  // with the "more below" bar shown while the list continues.
+  bannerCtx.alertBannerCollapsed = false;
+  const heat = (id, area) => ({ id, properties: { id, event: 'Extreme Heat Warning', severity: 'Severe',
+    ends: tomorrow, areaDesc: area } });
+  render([heat('h1', 'Pima; Pinal'), heat('h2', 'Maricopa'), heat('h3', 'Yuma; La Paz'),
+          { id: 'a1', properties: { id: 'a1', event: 'Heat Advisory', ends: tomorrow, areaDesc: 'Mohave' } }]);
+  const out = banner.innerHTML;
+  assert.match(out, /4 alerts · Extreme Heat Warning/);
+  assert.match(out, /<div class="alert-group alert-\w+" data-group="Extreme Heat Warning">/);
+  assert.match(out, /alert-group-count" aria-label="3 alerts">×3</);
+  assert.match(out, /<span class="alert-places">Pima · Pinal · Maricopa \+2 more<\/span>/);
+  assert.match(out, /data-role="zoom-group">📍 Show all 3 on map/);
+  assert.equal((out.match(/data-role="card"/g) || []).length, 4, 'every alert keeps its own card');
+  assert.match(out, /data-alert-id="a1"[\s\S]*?<span class="alert-places">Mohave<\/span>/);
+  assert.equal((out.match(/data-role="zoom">📍 Show on map/g) || []).length, 4);
+  assert.doesNotMatch(out, /data-group="Heat Advisory"/, 'a single alert is a plain card');
+  assert.match(out, /<div class="alert-more" aria-hidden="true">▾ More alerts below<\/div>$/);
+  // What the user opened stays open when the list is rebuilt.
+  bannerCtx.openAlertGroups.add('Extreme Heat Warning');
+  bannerCtx.openAlertCards.add('h2');
+  render([heat('h1', 'Pima'), heat('h2', 'Maricopa')]);
+  assert.match(banner.innerHTML, /<div class="alert-group alert-\w+ open"/);
+  assert.match(banner.innerHTML, /<div class="alert-card alert-\w+ open" data-alert-id="h2">/);
 });
 
 test('the hidden toast never makes the page taller than the window', () => {
@@ -1184,7 +1224,7 @@ test('alert banner text is phone-readable and NWS hard wraps are unwrapped', () 
   assert.equal(unwrapAlertText('Stay indoors.\n\n&&\n\nMore later.'), 'Stay indoors.\n\nMore later.');
 
   // The banner must unwrap both parts before joining them.
-  assert.match(extractFunction('renderAlertBanner'), /\.map\(unwrapAlertText\)/);
+  assert.match(extractFunction('alertCardHtml'), /\.map\(unwrapAlertText\)/);
 });
 
 test('alert popup selection toggles, switches areas, and closes on click-away or Escape', () => {

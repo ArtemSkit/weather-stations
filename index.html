@@ -4423,7 +4423,7 @@ function alertCardHtml(f) {
         '<span class="alert-event">' + escapeHtml(p.event || 'Weather alert') + '</span>' +
         '<span class="alert-expires">' + alertWhenHtml(p) + '</span>' +
         (places ? '<span class="alert-places">' + escapeHtml(places) + '</span>'
-                : (p.detailsUrl ? '<span class="alert-places">Finding the places…</span>' : '')) +
+                : (alertRecordPending(id) ? '<span class="alert-places">Finding the places…</span>' : '')) +
       '</button>' +
       '<div class="alert-card-body"' + bodyAttr + '>' +
         // First thing in the opened card (above the long NWS text): zoom to this
@@ -4446,7 +4446,7 @@ function alertGroupHtml(event, members) {
   const when  = whens.length === 1 ? whens[0] : '<span class="alert-when">at different times</span>';
   const places = alertPlacesText(members.map(alertAreaDesc));
   const placesHtml = places ? '<span class="alert-places">' + escapeHtml(places) + '</span>'
-    : (members.some(f => f.properties?.detailsUrl) ? '<span class="alert-places">Finding the places…</span>' : '');
+    : (members.some(f => alertRecordPending(alertId(f))) ? '<span class="alert-places">Finding the places…</span>' : '');
   return '<div class="alert-group alert-' + cls + (open ? ' open' : '') + '" data-group="' + escapeHtml(event) + '">' +
       '<button class="alert-group-head" type="button" data-role="group" aria-expanded="' + open + '">' +
         // Name and count stay on one line; screen readers hear "8 alerts", not "times 8".
@@ -4519,7 +4519,10 @@ alertBanner.addEventListener('click', e => {
     updateAlertScrollHint();
     if (liveAlertsOn) {
       renderLiveLabels();          // the banner's new size frees or covers map labels
-      if (expanded) prefetchLiveAlertPlaces();
+      if (expanded) {
+        liveBannerSignature = null;  // redrawn with the lookups now on their way
+        renderLiveBanner();
+      }
     }
   } else if (role === 'group') {
     const group = control.closest('.alert-group');
@@ -4535,27 +4538,27 @@ alertBanner.addEventListener('click', e => {
     if (open) loadAlertCardDetails(card);
     updateAlertScrollHint();
   } else if (role === 'zoom') {
-    zoomToAlerts([control.closest('.alert-card').dataset.alertId]);
+    zoomToAlert(control.closest('.alert-card').dataset.alertId);
   }
 });
 
 /**
- * Fit the map to the areas of the given alerts — the live areas in live mode,
- * else the searched area's own — leaving room for the banner over the map (a
- * column on the left on desktop, a strip across the top on phones).
- * @param {string[]} ids - alert ids
+ * Fit the map to one alert's area (all its pieces) — its live areas in live
+ * mode, else the searched area's own — leaving room for the banner over the map
+ * (a column on the left on desktop, a strip across the top on phones).
+ * @param {string} id - the alert's id
  */
-function zoomToAlerts(ids) {
-  const wanted = new Set(ids.filter(Boolean));
+function zoomToAlert(id) {
   let bounds = null;
   const add = b => {
     if (!b?.isValid?.()) return;
     if (bounds) bounds.extend(b); else bounds = L.latLngBounds(b.getSouthWest(), b.getNorthEast());
   };
+  if (!id) return;
   if (liveAlertsOn) {
-    for (const piece of livePieces) if (wanted.has(piece.props.cap_id)) add(piece.bounds);
+    for (const piece of livePieces) if (piece.props.cap_id === id) add(piece.bounds);
   } else {
-    for (const entry of alertAreaLayers) if (wanted.has(entry.props?.id)) add(entry.layer.getBounds?.());
+    for (const entry of alertAreaLayers) if (entry.props?.id === id) add(entry.layer.getBounds?.());
   }
   if (!bounds) { showToast('This alert\'s area isn\'t drawn on the map'); return; }
   const mapBox = map.getContainer().getBoundingClientRect();
@@ -4586,6 +4589,16 @@ const alertRecordInFlight = new Map();
     (an expired alert's record is gone) instead of asking at every rebuild. */
 const alertRecordFailedAt = new Map();
 const ALERT_RECORD_RETRY_MS = 5 * 60_000;
+
+/**
+ * Whether an alert's record is queued or loading right now — only then do its
+ * header (and its group's) say "Finding the places…". One that failed recently,
+ * or lies beyond the lookup limit, shows no places line rather than a promise
+ * nothing is keeping (opening the card still loads everything).
+ */
+function alertRecordPending(id) {
+  return alertRecordWanted.has(id) || alertRecordInFlight.has(id);
+}
 
 /** Load one alert's NWS record into the cache. @returns {Promise<boolean>} loaded */
 function loadAlertRecord(id, url) {
@@ -5687,8 +5700,8 @@ function renderLiveBanner() {
   if (signature === liveBannerSignature) return;
   liveBannerSignature = signature;
   liveBannerFeatures = features;
+  prefetchLiveAlertPlaces();   // first, so the headers know which places are on the way
   renderAlertBanner(features, true);
-  prefetchLiveAlertPlaces();
 }
 
 /** The live alerts the banner lists now (for loading their places). */

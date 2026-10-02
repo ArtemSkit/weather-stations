@@ -2425,6 +2425,17 @@ test('search radius: nearby stations only, and the circle edge never sits on a m
   });
   assert.equal(fit({}, 30, -98), false);
   assert.deepEqual(fitCalls, ['setView']);
+
+  // The dimming appears once the map has landed (mid-flight Leaflet only scales
+  // the old drawing), reaches past the screen while dragging, and covers every
+  // world copy on screen; reduced motion means no glide either.
+  const draw = extractFunction('drawSearchRadius');
+  assert.match(draw, /started = true;\s*mask\.addTo\(searchRadiusLayer\)\.bringToBack\(\);/);
+  assert.doesNotMatch(draw, /fillOpacity: 0\.32, interactive: false\s*\}\)\.addTo/);
+  assert.match(draw, /setTimeout\(\(\) => \{ if \(!document\.hidden\) startGrow\(\); \}, 2000\);/);
+  assert.match(html, /L\.svg\(\{ pane: 'searchRadius', padding: 0\.5 \}\)/);
+  assert.match(html, /const SEARCH_MASK_OUTER = \[\[-85, -1800\], \[85, -1800\], \[85, 1800\], \[-85, 1800\]\];/);
+  assert.match(extractFunction('fitSearchRadius'), /map\.fitBounds\(bounds, \{ \.\.\.options, animate: false \}\)/);
 });
 
 test('live alerts: NWS colours, readable popup text, one view request at a time', () => {

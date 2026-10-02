@@ -455,6 +455,8 @@
      it — so keyboard focus rings on its full-width buttons are drawn inside. */
   .alert-summary:focus-visible,
   .alert-card-head:focus-visible,
+  .alert-group-head:focus-visible,
+  .alert-zoom:focus-visible,
   /* A long card body scrolls, so newer browsers let Tab focus it (to scroll with
      the arrow keys); the card's overflow:hidden would clip an outside ring. */
   .alert-card-body:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
@@ -491,6 +493,64 @@
     font-family: 'Space Mono', monospace; font-size: 0.85rem; color: var(--text);
     line-height: 1.55; white-space: pre-line;   /* keep the paragraph breaks left by unwrapAlertText() */
   }
+  /* Where an alert applies: the first few places on its header line, all of them
+     at the top of its body. */
+  .alert-places {
+    flex-basis: 100%; font-family: 'Space Mono', monospace; font-size: 0.72rem;
+    color: var(--text); opacity: 0.85; line-height: 1.4;
+  }
+  .alert-areas { margin: 10px 0 0; font-size: 0.8rem; line-height: 1.45; color: var(--text-muted); }
+  .alert-areas b { color: var(--text); }
+  /* "📍 Show on map": fits the map to the alert's (or the group's) areas. */
+  .alert-zoom {
+    margin-top: 10px; padding: 6px 10px; cursor: pointer; align-self: flex-start;
+    background: var(--surface2); color: var(--accent); border: 1px solid var(--border);
+    border-radius: var(--radius); font-family: 'Syne', sans-serif; font-weight: 700;
+    font-size: 0.72rem; letter-spacing: 0.04em;
+  }
+  .alert-zoom:hover { border-color: var(--accent); }
+
+  /* Same-type alerts grouped: one row ("Extreme Heat Warning ×8") opening to their cards. */
+  .alert-group {
+    background: var(--surface);
+    border: 1px solid var(--border); border-left: 4px solid var(--text-muted);
+    border-radius: 6px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  }
+  .alert-group.alert-crit  { border-left-color: var(--red); }
+  .alert-group.alert-warn  { border-left-color: var(--accent2); }
+  .alert-group.alert-watch { border-left-color: #ffae42; }
+  .alert-group.alert-info  { border-left-color: var(--yellow); }
+  .alert-group.alert-crit  > .alert-group-head .alert-event { color: var(--red); }
+  .alert-group.alert-warn  > .alert-group-head .alert-event { color: var(--accent2); }
+  .alert-group.alert-watch > .alert-group-head .alert-event { color: #ffae42; }
+  .alert-group.alert-info  > .alert-group-head .alert-event { color: var(--yellow); }
+  .alert-group-head {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
+    width: 100%; padding: 10px 12px; cursor: pointer; text-align: left;
+    background: transparent; border: none;
+  }
+  .alert-group-head .alert-expires { margin-left: auto; }
+  .alert-group-count {
+    font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.72rem;
+    color: var(--bg); background: var(--text-muted); border-radius: 9px; padding: 1px 7px;
+  }
+  .alert-group-body {
+    display: none; flex-direction: column; gap: 6px;
+    padding: 0 8px 8px; border-top: 1px solid var(--border);
+  }
+  .alert-group.open .alert-group-body { display: flex; }
+  .alert-group-body .alert-card { box-shadow: none; }
+  .alert-group-body > .alert-zoom { margin: 8px 4px 2px; }
+
+  /* "▾ More alerts below": pinned to the banner's bottom edge while its list
+     continues past what fits — so the alerts further down aren't missed. */
+  .alert-more {
+    display: none; position: sticky; bottom: 0; flex-shrink: 0;
+    justify-content: center; padding: 18px 0 6px; margin-top: -8px; cursor: pointer;
+    background: linear-gradient(to bottom, rgba(10,14,23,0), rgba(10,14,23,0.95) 55%);
+    color: var(--accent); font-family: 'Space Mono', monospace; font-size: 0.72rem; letter-spacing: 0.05em;
+  }
+  #alert-banner.has-more .alert-more { display: flex; }
 
   /* ════════════════════════════════════════════════════════════════════════════
      ALERT AREA OVERLAY  (map polygons — see renderAlertAreas())
@@ -4274,70 +4334,290 @@ function renderAlertBanner(features, inView = false) {
       <span class="alert-summary-caret" aria-hidden="true">▾</span>
     </button>`;
 
-  // One card per alert; the body (headline + description + safety instruction) is
-  // collapsed until the card header is clicked, to keep the banner compact.
-  const cards = sorted.map(f => {
-    const p       = f.properties || {};
-    const cls     = alertClass(p);
-    // Show when the hazard ends (see alertEndText). A future start is shown too,
-    // so an upcoming alert doesn't read as already in force.
-    const startsLater = p.onset && Date.parse(p.onset) > Date.now();
-    const expires = [startsLater && `from ${formatWhen(p.onset)}`, alertEndText(p)]
-      .filter(Boolean).map(s => `<span class="alert-when">${escapeHtml(s)}</span>`).join(' ');
-    // Unwrap each part separately so the NWS hard line wraps don't split sentences.
-    const detail  = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
-    // A live alert has no text yet: its card fetches the NWS record when opened.
-    const lazy    = !detail && p.detailsUrl;
-    const bodyAttr = lazy ? ' data-details-url="' + escapeHtml(p.detailsUrl) + '"' : '';
-    const descText = lazy ? 'Loading the full NWS text…' : detail;
-    return `
-      <div class="alert-card alert-${cls}">
-        <button class="alert-card-head" type="button" data-role="card" aria-expanded="false">
-          <span class="alert-event">${escapeHtml(p.event || 'Weather alert')}</span>
-          <span class="alert-expires">${expires}</span>
-        </button>
-        <div class="alert-card-body"${bodyAttr}>
-          ${p.headline ? `<p class="alert-headline">${escapeHtml(p.headline)}</p>` : ''}
-          <p class="alert-desc">${escapeHtml(descText)}</p>
-        </div>
-      </div>`;
-  }).join('');
+  // Alerts of one type ("Extreme Heat Warning" for eight counties) fold into one
+  // group row, so a long run of them can't push the other types out of sight. A
+  // type with a single alert is a plain card. Groups keep the danger order.
+  const groups = new Map();   // event → features, in sorted order
+  for (const f of sorted) {
+    const event = f.properties?.event || 'Weather alert';
+    if (!groups.has(event)) groups.set(event, []);
+    groups.get(event).push(f);
+  }
+  const rows = [...groups].map(([event, members]) =>
+    (members.length === 1 ? alertCardHtml(members[0]) : alertGroupHtml(event, members))).join('');
 
-  // Rebuilding replaces every button; if keyboard focus was inside the banner,
-  // put it back on the summary chip instead of dropping it to the page start.
-  const hadFocus = alertBanner.contains(document.activeElement);
+  // Rebuilding replaces every button: remember what was open, where the list was
+  // scrolled and which control had keyboard focus, and put them back.
+  const scrollTop = alertBanner.scrollTop;
+  const focusKey = alertBannerFocusKey();
 
   // Expanded on arrival so alerts are seen — unless the user has collapsed it.
   alertBanner.className = alertBannerCollapsed ? 'visible' : 'visible expanded';
-  alertBanner.innerHTML = summary + `<div class="alert-list">${cards}</div>`;
-  if (hadFocus) alertBanner.querySelector('[data-role="toggle"]')?.focus();
+  alertBanner.innerHTML = summary + '<div class="alert-list">' + rows + '</div>' +
+    '<div class="alert-more" aria-hidden="true">▾ More alerts below</div>';
+  alertBanner.scrollTop = scrollTop;
+  if (focusKey !== null) restoreAlertBannerFocus(focusKey);
+  updateAlertScrollHint();
 }
 
-/* Click delegation: toggle the whole banner, or expand an individual card. */
+/** "from … until …" for an alert, as HTML (each part stays on one line). */
+function alertWhenHtml(p) {
+  // Show when the hazard ends (see alertEndText). A future start is shown too, so
+  // an upcoming alert doesn't read as already in force.
+  const startsLater = p.onset && Date.parse(p.onset) > Date.now();
+  return [startsLater && `from ${formatWhen(p.onset)}`, alertEndText(p)]
+    .filter(Boolean).map(s => '<span class="alert-when">' + escapeHtml(s) + '</span>').join(' ');
+}
+
+/**
+ * The first few places an alert (or a group) covers, for its header line:
+ * "Pima · Pinal · Maricopa +5 more". NWS lists them in `areaDesc`, "; "-separated.
+ * @param {string[]} areaDescs
+ * @returns {string} plain text ('' when none are known)
+ */
+function alertPlacesText(areaDescs, max = 3) {
+  const places = [...new Set(areaDescs.flatMap(a => String(a || '').split(';'))
+    .map(s => s.trim()).filter(Boolean))];
+  if (!places.length) return '';
+  const more = places.length - max;
+  return places.slice(0, max).join(' · ') + (more > 0 ? ` +${more} more` : '');
+}
+
+/** An alert's id: the NWS id ("urn:oid:…"), which live alerts share as `cap_id`. */
+function alertId(f) {
+  return f.properties?.id || f.id || '';
+}
+
+/** An alert's places (`areaDesc`): from the feed, or from its NWS record once loaded. */
+function alertAreaDesc(f) {
+  return f.properties?.areaDesc || alertRecordCache.get(alertId(f))?.areaDesc || '';
+}
+
+/** One alert's card: header (event, times, places) and the body it opens to. */
+function alertCardHtml(f) {
+  const p   = f.properties || {};
+  const id  = alertId(f);
+  const cls = alertClass(p);
+  const record = alertRecordCache.get(id);
+  // Unwrap each part separately so the NWS hard line wraps don't split sentences.
+  let detail = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
+  let headline = p.headline;
+  if (!detail && record) { detail = record.detail; headline = record.headline; }
+  // A live alert has no text yet: its card fetches the NWS record when opened.
+  const lazy     = !detail && p.detailsUrl;
+  const bodyAttr = lazy ? ' data-details-url="' + escapeHtml(p.detailsUrl) + '"' : '';
+  const descText = lazy ? 'Loading the full NWS text…' : detail;
+  const areaDesc = alertAreaDesc(f);
+  const places   = alertPlacesText([areaDesc]);
+  const open     = openAlertCards.has(id);
+  return '<div class="alert-card alert-' + cls + (open ? ' open' : '') + '" data-alert-id="' + escapeHtml(id) + '">' +
+      '<button class="alert-card-head" type="button" data-role="card" aria-expanded="' + open + '">' +
+        '<span class="alert-event">' + escapeHtml(p.event || 'Weather alert') + '</span>' +
+        '<span class="alert-expires">' + alertWhenHtml(p) + '</span>' +
+        (places ? '<span class="alert-places">' + escapeHtml(places) + '</span>'
+                : (p.detailsUrl ? '<span class="alert-places">Finding the places…</span>' : '')) +
+      '</button>' +
+      '<div class="alert-card-body"' + bodyAttr + '>' +
+        (areaDesc ? '<p class="alert-areas"><b>Areas:</b> ' + escapeHtml(areaDesc) + '</p>' : '') +
+        (headline ? '<p class="alert-headline">' + escapeHtml(headline) + '</p>' : '') +
+        '<p class="alert-desc">' + escapeHtml(descText) + '</p>' +
+        '<button class="alert-zoom" type="button" data-role="zoom">📍 Show on map</button>' +
+      '</div>' +
+    '</div>';
+}
+
+/** A group of same-type alerts: one row with the count and places, opening to their cards. */
+function alertGroupHtml(event, members) {
+  const cls   = alertClass(members[0].properties || {});
+  const open  = openAlertGroups.has(event);
+  // One time for the group when they all share it (the usual case: one product
+  // issued for many zones), otherwise say they differ.
+  const whens = [...new Set(members.map(f => alertWhenHtml(f.properties || {})))];
+  const when  = whens.length === 1 ? whens[0] : '<span class="alert-when">at different times</span>';
+  const places = alertPlacesText(members.map(alertAreaDesc));
+  const placesHtml = places ? '<span class="alert-places">' + escapeHtml(places) + '</span>'
+    : (members.some(f => f.properties?.detailsUrl) ? '<span class="alert-places">Finding the places…</span>' : '');
+  return '<div class="alert-group alert-' + cls + (open ? ' open' : '') + '" data-group="' + escapeHtml(event) + '">' +
+      '<button class="alert-group-head" type="button" data-role="group" aria-expanded="' + open + '">' +
+        '<span class="alert-event">' + escapeHtml(event) + '</span>' +
+        '<span class="alert-group-count" aria-label="' + members.length + ' alerts">×' + members.length + '</span>' +
+        '<span class="alert-expires">' + when + '</span>' +
+        placesHtml +
+      '</button>' +
+      '<div class="alert-group-body">' +
+        '<button class="alert-zoom" type="button" data-role="zoom-group">📍 Show all ' + members.length + ' on map</button>' +
+        members.map(alertCardHtml).join('') +
+      '</div>' +
+    '</div>';
+}
+
+/** Which banner control has keyboard focus, as "role|alert id|group" — or null. */
+function alertBannerFocusKey() {
+  const el = document.activeElement;
+  if (!el || !alertBanner.contains(el)) return null;
+  return [el.dataset?.role || '', el.closest('[data-alert-id]')?.dataset.alertId || '',
+          el.closest('[data-group]')?.dataset.group || ''].join('|');
+}
+
+/** Put focus back on the same control after a rebuild (else on the summary chip). */
+function restoreAlertBannerFocus(key) {
+  const [role, id, group] = key.split('|');
+  const match = [...alertBanner.querySelectorAll('[data-role]')].find(el =>
+    el.dataset.role === role &&
+    (el.closest('[data-alert-id]')?.dataset.alertId || '') === id &&
+    (el.closest('[data-group]')?.dataset.group || '') === group);
+  (match || alertBanner.querySelector('[data-role="toggle"]'))?.focus();
+}
+
+/**
+ * The banner scrolls when its list is longer than the room it has: show the
+ * "▾ More alerts below" bar at its bottom edge while there is more to scroll to.
+ */
+function updateAlertScrollHint() {
+  const more = alertBanner.scrollHeight - alertBanner.clientHeight - alertBanner.scrollTop > 8;
+  alertBanner.classList.toggle('has-more', more && alertBanner.classList.contains('expanded'));
+}
+alertBanner.addEventListener('scroll', updateAlertScrollHint, { passive: true });
+window.addEventListener('resize', updateAlertScrollHint);
+
+/* What the user opened in the banner: kept across rebuilds (refreshes, panning). */
+const openAlertGroups = new Set();   // event names
+const openAlertCards  = new Set();   // alert ids
+
+/* Click delegation: toggle the banner, open a group or a card, show on the map. */
 alertBanner.addEventListener('click', e => {
-  const toggle = e.target.closest('[data-role="toggle"]');
-  if (toggle) {
+  const control = e.target.closest('[data-role]');
+  if (e.target.closest('.alert-more')) {   // the "more below" bar scrolls down a page
+    alertBanner.scrollBy({ top: alertBanner.clientHeight * 0.8, behavior: prefersReducedMotion.matches ? 'auto' : 'smooth' });
+    return;
+  }
+  if (!control) return;
+  const role = control.dataset.role;
+  if (role === 'toggle') {
     const expanded = alertBanner.classList.toggle('expanded');
-    toggle.setAttribute('aria-expanded', String(expanded));
+    control.setAttribute('aria-expanded', String(expanded));
     // Remembered: later renders (refreshes, new searches, reloads) keep this.
     alertBannerCollapsed = !expanded;
     try { localStorage.setItem(ALERT_BANNER_COLLAPSED_KEY, expanded ? '0' : '1'); } catch (_) { /* storage blocked */ }
-    if (liveAlertsOn) renderLiveLabels();   // the banner's new size frees or covers map labels
-    return;
-  }
-  const head = e.target.closest('[data-role="card"]');
-  if (head) {
-    const card = head.closest('.alert-card');
+    updateAlertScrollHint();
+    if (liveAlertsOn) {
+      renderLiveLabels();          // the banner's new size frees or covers map labels
+      if (expanded) prefetchLiveAlertPlaces();
+    }
+  } else if (role === 'group') {
+    const group = control.closest('.alert-group');
+    const open = group.classList.toggle('open');
+    control.setAttribute('aria-expanded', String(open));
+    if (open) openAlertGroups.add(group.dataset.group); else openAlertGroups.delete(group.dataset.group);
+    updateAlertScrollHint();
+  } else if (role === 'card') {
+    const card = control.closest('.alert-card');
     const open = card.classList.toggle('open');
-    head.setAttribute('aria-expanded', String(open));
+    control.setAttribute('aria-expanded', String(open));
+    if (open) openAlertCards.add(card.dataset.alertId); else openAlertCards.delete(card.dataset.alertId);
     if (open) loadAlertCardDetails(card);
+    updateAlertScrollHint();
+  } else if (role === 'zoom') {
+    zoomToAlerts([control.closest('.alert-card').dataset.alertId]);
+  } else if (role === 'zoom-group') {
+    zoomToAlerts([...control.closest('.alert-group').querySelectorAll('.alert-card')].map(c => c.dataset.alertId));
   }
 });
 
 /**
- * A live alert's card (14C) arrives without its text: the first time it opens,
- * fetch the alert's NWS record (only from NOAA's own /alerts/ links) and fill in
- * the headline, description and instructions.
+ * Fit the map to the areas of the given alerts — the live areas in live mode,
+ * else the searched area's own — leaving room for the banner over the map (a
+ * column on the left on desktop, a strip across the top on phones).
+ * @param {string[]} ids - alert ids
+ */
+function zoomToAlerts(ids) {
+  const wanted = new Set(ids.filter(Boolean));
+  let bounds = null;
+  const add = b => {
+    if (!b?.isValid?.()) return;
+    if (bounds) bounds.extend(b); else bounds = L.latLngBounds(b.getSouthWest(), b.getNorthEast());
+  };
+  if (liveAlertsOn) {
+    for (const piece of livePieces) if (wanted.has(piece.props.cap_id)) add(piece.bounds);
+  } else {
+    for (const entry of alertAreaLayers) if (wanted.has(entry.props?.id)) add(entry.layer.getBounds?.());
+  }
+  if (!bounds) { showToast('This alert\'s area isn\'t drawn on the map'); return; }
+  const mapBox = map.getContainer().getBoundingClientRect();
+  const box = alertBanner.getBoundingClientRect();
+  const column = box.width < mapBox.width * 0.6;   // desktop: banner beside the area
+  const topLeft = column
+    ? [Math.min(box.right - mapBox.left + 16, mapBox.width / 2), 16]
+    : [16, Math.min(box.bottom - mapBox.top + 16, mapBox.height / 2)];
+  const options = { paddingTopLeft: topLeft, paddingBottomRight: [16, 16], maxZoom: 11 };
+  if (prefersReducedMotion.matches) map.fitBounds(bounds, { ...options, animate: false });
+  else map.flyToBounds(bounds, { ...options, duration: 1 });
+}
+
+/*
+ * Live alerts (14C) arrive without their text or places: those come from each
+ * alert's NWS record (only NOAA's own /alerts/ links), fetched a few at a time
+ * and kept (records never change; a new message gets a new id).
+ */
+const alertRecordCache = new Map();   // alert id → { headline, detail, areaDesc }
+const ALERT_RECORD_CACHE_LIMIT = 300;
+const ALERT_RECORD_CONCURRENCY = 4;
+const alertRecordQueue = [];
+const alertRecordWanted = new Set();
+let alertRecordActive = 0;
+
+/** Load one alert's NWS record into the cache. @returns {Promise<boolean>} loaded */
+async function loadAlertRecord(id, url) {
+  if (alertRecordCache.has(id)) return true;
+  if (!id || !isTrustedNwsApiUrl(url, '/alerts/')) return false;
+  try {
+    const { response, data } = await fetchJsonWithTimeout(url);
+    const p = data?.properties;
+    if (!response.ok || !p) return false;
+    setBoundedCache(alertRecordCache, id, {
+      headline: p.headline || '',
+      detail: [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n'),
+      areaDesc: p.areaDesc || ''
+    }, ALERT_RECORD_CACHE_LIMIT);
+    scheduleLiveBannerRefresh();   // their places (and text) can now be shown
+    return true;
+  } catch (_) {
+    return false;   // places stay unknown; opening the card tries again
+  }
+}
+
+/** Queue records to load in the background (a few at a time). */
+function queueAlertRecords(items) {
+  for (const { id, url } of items) {
+    if (!id || alertRecordCache.has(id) || alertRecordWanted.has(id)) continue;
+    alertRecordWanted.add(id);
+    alertRecordQueue.push({ id, url });
+  }
+  while (alertRecordActive < ALERT_RECORD_CONCURRENCY && alertRecordQueue.length) {
+    const { id, url } = alertRecordQueue.shift();
+    alertRecordActive++;
+    loadAlertRecord(id, url).finally(() => {
+      alertRecordActive--;
+      alertRecordWanted.delete(id);
+      queueAlertRecords([]);
+    });
+  }
+}
+
+/* Records arriving one by one would rebuild the list for each: batch them. */
+let liveBannerRefreshTimer = 0;
+function scheduleLiveBannerRefresh() {
+  clearTimeout(liveBannerRefreshTimer);
+  liveBannerRefreshTimer = setTimeout(() => {
+    if (!liveAlertsOn) return;
+    liveBannerSignature = null;   // same alerts, more known about them
+    renderLiveBanner();
+  }, 300);
+}
+
+/**
+ * A live alert's card opened before its record arrived: load it now and fill in
+ * the text (the list then rebuilds with its places too).
  * @param {Element} card
  */
 async function loadAlertCardDetails(card) {
@@ -4345,20 +4625,23 @@ async function loadAlertCardDetails(card) {
   if (!body || body.dataset.loaded) return;
   body.dataset.loaded = 'loading';
   const desc = body.querySelector('.alert-desc');
-  const url = body.dataset.detailsUrl;
-  if (!isTrustedNwsApiUrl(url, '/alerts/')) {
+  const id = card.dataset.alertId;
+  if (!isTrustedNwsApiUrl(body.dataset.detailsUrl, '/alerts/')) {
     desc.textContent = 'No further details were published for this alert.';
     return;
   }
-  try {
-    const { response, data } = await fetchJsonWithTimeout(url);
-    const p = data?.properties;
-    if (!response.ok || !p) throw new Error(`HTTP ${response.status}`);
-    const detail = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
-    body.innerHTML = (p.headline ? `<p class="alert-headline">${escapeHtml(p.headline)}</p>` : '') +
-      `<p class="alert-desc">${escapeHtml(detail || 'No further details were published for this alert.')}</p>`;
+  if (await loadAlertRecord(id, body.dataset.detailsUrl)) {
+    const record = alertRecordCache.get(id);
+    body.querySelector('.alert-headline')?.remove();
+    if (record.headline) {
+      const h = document.createElement('p');
+      h.className = 'alert-headline';
+      h.textContent = record.headline;
+      desc.before(h);
+    }
+    desc.textContent = record.detail || 'No further details were published for this alert.';
     body.dataset.loaded = 'done';
-  } catch (_) {
+  } else {
     desc.textContent = 'Couldn\'t load the details — close and reopen the card to try again.';
     delete body.dataset.loaded;   // the next opening tries again
   }
@@ -5366,7 +5649,25 @@ function renderLiveBanner() {
   const signature = alertsSignature(features);
   if (signature === liveBannerSignature) return;
   liveBannerSignature = signature;
+  liveBannerFeatures = features;
   renderAlertBanner(features, true);
+  prefetchLiveAlertPlaces();
+}
+
+/** The live alerts the banner lists now (for loading their places). */
+let liveBannerFeatures = [];
+const LIVE_PLACES_PREFETCH = 60;   // a zoomed-out view can list hundreds
+
+/**
+ * Load the places of the listed live alerts (from their NWS records), the most
+ * serious first — only while the list is open, and at most LIVE_PLACES_PREFETCH.
+ */
+function prefetchLiveAlertPlaces() {
+  if (!liveAlertsOn || alertBannerCollapsed) return;
+  queueAlertRecords(sortAlerts(liveBannerFeatures)
+    .filter(f => !alertAreaDesc(f))
+    .slice(0, LIVE_PLACES_PREFETCH)
+    .map(f => ({ id: alertId(f), url: f.properties.detailsUrl })));
 }
 
 /** Everything that follows the view in live mode: count and key, labels, banner. */

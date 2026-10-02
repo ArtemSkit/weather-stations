@@ -4654,37 +4654,97 @@ function liveField(value) {
   return v || undefined;
 }
 
+/**
+ * The boxes to ask the map service for, for a view [west, east] in map longitudes.
+ * The service only knows longitudes from -180 to 180, but the map view can cross
+ * the date line (Alaska with the western Aleutians and the Bering Sea) or sit on
+ * another copy of the world after a long pan. So the view is split at the date
+ * line into at most two boxes, each with the `shift` (a multiple of 360°) that
+ * places the box itself on the copy of the world on screen (its shapes are
+ * placed by placeGeometry).
+ *
+ * @returns {{west:number, south:number, east:number, north:number, shift:number}[]}
+ */
+function liveQueryBoxes(west, south, east, north) {
+  south = Math.max(-85, south);
+  north = Math.min(85, north);
+  if (east - west >= 360) return [{ west: -180, south, east: 180, north, shift: 0 }];
+  // Bring the view's west edge into -180…180; `base` is the copy of the world it was on.
+  const base = 360 * Math.floor((west + 180) / 360);
+  const w = west - base, e = east - base;
+  if (e <= 180) return [{ west: w, south, east: e, north, shift: base }];
+  return [
+    { west: w, south, east: 180, north, shift: base },
+    { west: -180, south, east: e - 360, north, shift: base + 360 }
+  ];
+}
+
+/**
+ * A copy of a GeoJSON geometry placed on the copy of the world around `nearLon`.
+ * The service gives longitudes in -180…180, so an outline that crosses the date
+ * line jumps from +179 to -179 mid-ring (drawn as a band around the whole world).
+ * Each ring is first made continuous (no jump over 180° between neighbours), then
+ * moved by whole turns of 360° so its middle lies nearest `nearLon`.
+ */
+function placeGeometry(geometry, nearLon) {
+  if (geometry.type === 'GeometryCollection') {
+    return { ...geometry, geometries: geometry.geometries.map(g => placeGeometry(g, nearLon)) };
+  }
+  const isRing = a => Array.isArray(a) && typeof a[0]?.[0] === 'number';
+  const placeRing = ring => {
+    let prev = null;
+    const continuous = ring.map(([lon, ...rest]) => {
+      if (prev !== null) lon += 360 * Math.round((prev - lon) / 360);
+      prev = lon;
+      return [lon, ...rest];
+    });
+    const mid = continuous.reduce((sum, c) => sum + c[0], 0) / continuous.length;
+    const turn = 360 * Math.round((nearLon - mid) / 360);
+    return turn ? continuous.map(([lon, ...rest]) => [lon + turn, ...rest]) : continuous;
+  };
+  const walk = a => (isRing(a) ? placeRing(a) : a.map(walk));
+  return { ...geometry, coordinates: geometry.type === 'Point' ? geometry.coordinates : walk(geometry.coordinates) };
+}
+
 /** Load every alert piece inside the current view (padded a little) and draw them. */
 async function loadLiveAlerts(confirmingEmpty = false) {
   if (!liveAlertsOn) return;
   const seq = ++liveAlertsSeq;
   clearTimeout(liveRetryTimer);
   const b = map.getBounds().pad(0.15);
-  // Clamp to real coordinates: a zoomed-out view can reach past the world's edge.
-  const west = Math.max(-180, b.getWest()), east = Math.min(180, b.getEast());
-  const south = Math.max(-85, b.getSouth()), north = Math.min(85, b.getNorth());
-  const queried = L.latLngBounds([south, west], [north, east]);
-  const params = new URLSearchParams({
-    where: '1=1', geometry: `${west},${south},${east},${north}`, geometryType: 'esriGeometryEnvelope',
+  const boxes = liveQueryBoxes(b.getWest(), b.getSouth(), b.getEast(), b.getNorth());
+  // Each box as it sits on the map (shifted onto the copy of the world on screen).
+  const queried = boxes.map(q => L.latLngBounds([q.south, q.west + q.shift], [q.north, q.east + q.shift]));
+  const tolerance = liveAlertTolerance(map.getZoom()).toFixed(6);
+  const urlFor = q => `${LIVE_ALERTS_URL}?${new URLSearchParams({
+    where: '1=1', geometry: `${q.west},${q.south},${q.east},${q.north}`, geometryType: 'esriGeometryEnvelope',
     inSR: '4326', spatialRel: 'esriSpatialRelIntersects', outSR: '4326', returnGeometry: 'true',
     outFields: 'prod_type,sig,onset,ends,expiration,issuance,url,cap_id',
-    maxAllowableOffset: liveAlertTolerance(map.getZoom()).toFixed(6), f: 'geojson'
-  });
+    maxAllowableOffset: tolerance, f: 'geojson'
+  })}`;
   try {
-    const { response, data } = await fetchJsonWithTimeout(`${LIVE_ALERTS_URL}?${params}`);
+    const answers = await Promise.all(boxes.map(q => fetchJsonWithTimeout(urlFor(q))));
     if (seq !== liveAlertsSeq || !liveAlertsOn) return;    // a newer view, or switched off
-    if (!response.ok || !Array.isArray(data?.features)) throw new Error(`HTTP ${response.status}`);
+    answers.forEach(({ response, data }) => {
+      if (!response.ok || !Array.isArray(data?.features)) throw new Error(`HTTP ${response.status}`);
+    });
+    // Every piece placed on the copy of the world on screen (and made continuous
+    // where it crosses the date line).
+    const nearLon = map.getCenter().lng;
+    const features = answers.flatMap(({ data }) => data.features.map(f =>
+      (f?.geometry ? { ...f, geometry: placeGeometry(f.geometry, nearLon) } : f)));
     // NOAA briefly answers "nothing" while it renumbers its records. An empty
     // answer that would clear areas already drawn here is checked again in 5 s
     // before it is believed.
-    if (!data.features.length && confirmingEmpty !== true &&
-        [...livePieces].some(piece => queried.intersects(piece.bounds))) {
+    if (!features.length && confirmingEmpty !== true &&
+        [...livePieces].some(piece => queried.some(q => q.intersects(piece.bounds)))) {
       liveRetryTimer = setTimeout(() => loadLiveAlerts(true), 5000);
       return;
     }
-    replaceLivePieces(data.features, queried);
+    replaceLivePieces(features, queried);
     // The service stops at 4,000 pieces; say so rather than silently showing part.
-    const truncated = Boolean(data.exceededTransferLimit || data.properties?.exceededTransferLimit);
+    const truncated = answers.some(({ data }) =>
+      Boolean(data.exceededTransferLimit || data.properties?.exceededTransferLimit));
     if (truncated && !liveTruncatedShown) showToast('Too many alert areas to show at this zoom — zoom in to see them all');
     liveTruncatedShown = truncated;
     liveState = 'ok';
@@ -4700,15 +4760,18 @@ async function loadLiveAlerts(confirmingEmpty = false) {
 }
 
 /**
- * Make the drawn pieces match an answer: every piece inside the queried box is
+ * Make the drawn pieces match an answer: every piece inside the queried box(es) is
  * replaced by the answer's pieces (so ended, cancelled and renumbered alerts can
  * never linger or be mistaken for others); pieces elsewhere stay, except any
  * whose alert has ended.
+ * @param {Object[]} features
+ * @param {L.LatLngBounds|L.LatLngBounds[]} queried - the box(es) the answer covers
  */
 function replaceLivePieces(features, queried) {
+  const boxes = Array.isArray(queried) ? queried : [queried];
   const now = Date.now();
   for (const piece of livePieces) {
-    if (queried.intersects(piece.bounds) || liveAlertEnded(piece.props, now)) {
+    if (boxes.some(q => q.intersects(piece.bounds)) || liveAlertEnded(piece.props, now)) {
       liveAlertsLayer.removeLayer(piece.layer);
       livePieces.delete(piece);
     }

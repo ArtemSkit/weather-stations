@@ -2427,7 +2427,7 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
 
   const load = extractFunction('loadLiveAlerts');
   assert.match(load, /if \(seq !== liveAlertsSeq \|\| !liveAlertsOn\) return;/, 'stale views are dropped');
-  assert.match(load, /maxAllowableOffset: liveAlertTolerance\(map\.getZoom\(\)\)\.toFixed\(6\)/, 'outlines simplified to the zoom');
+  assert.match(load, /const tolerance = liveAlertTolerance\(map\.getZoom\(\)\)\.toFixed\(6\);[\s\S]*maxAllowableOffset: tolerance/, 'outlines simplified to the zoom');
   const toggle = extractFunction('setLiveAlerts');
   // The searched area's polygons are hidden with a class (kept intact), and the
   // full-map canvas is removed when off so it can't catch their clicks.
@@ -2483,4 +2483,37 @@ test('live alerts: each answer replaces what was drawn in its box (NOAA renumber
   replace([], box(80, 80, 81, 81));
   assert.ok([...fake.livePieces].some(p => p.props.prod_type === 'Flood Watch'));
   assert.equal(drawn.size, fake.livePieces.size, 'what is drawn matches the pieces kept');
+});
+
+test('live alerts across the date line: the view is split, and shapes land on the copy on screen', () => {
+  const h = vm.runInNewContext(`(() => {
+    ${extractFunction('liveQueryBoxes')}
+    ${extractFunction('placeGeometry')}
+    return { liveQueryBoxes, placeGeometry };
+  })()`);
+  const plain = boxes => JSON.parse(JSON.stringify(boxes));   // sandbox arrays → plain ones
+  // An ordinary view: one box, no shift.
+  assert.deepEqual(plain(h.liveQueryBoxes(-110, 25, -90, 40)), [{ west: -110, south: 25, east: -90, north: 40, shift: 0 }]);
+  // Alaska including the western Aleutians / Bering Sea (view from -195 to -140):
+  // one box from +165 to 180 moved back by 360°, and one from -180 to -140.
+  assert.deepEqual(plain(h.liveQueryBoxes(-195, 50, -140, 72)), [
+    { west: 165, south: 50, east: 180, north: 72, shift: -360 },
+    { west: -180, south: 50, east: -140, north: 72, shift: 0 }
+  ]);
+  // A view panned onto the next copy of the world (+200 … +230): moved onto it.
+  assert.deepEqual(plain(h.liveQueryBoxes(200, 30, 230, 45)), [{ west: -160, south: 30, east: -130, north: 45, shift: 360 }]);
+  // Zoomed far out: the whole world once; latitudes clamped.
+  assert.deepEqual(plain(h.liveQueryBoxes(-400, -95, 300, 95)), [{ west: -180, south: -85, east: 180, north: 85, shift: 0 }]);
+
+  const coords = g => JSON.parse(JSON.stringify(g.coordinates));
+  // A western-Aleutian shape (+172…+179) viewed from Alaska (centre -150) moves next to it.
+  const moved = h.placeGeometry({ type: 'MultiPolygon', coordinates: [[[[172, 52], [179, 52], [179, 55], [172, 52]]]] }, -150);
+  assert.deepEqual(coords(moved), [[[[-188, 52], [-181, 52], [-181, 55], [-188, 52]]]]);
+  // A shape that crosses the date line (+178 → -178) stays one small shape instead
+  // of a band around the world.
+  const crossing = h.placeGeometry({ type: 'Polygon', coordinates: [[[178, 60], [-178, 60], [-178, 62], [178, 62], [178, 60]]] }, -150);
+  assert.deepEqual(coords(crossing), [[[-182, 60], [-178, 60], [-178, 62], [-182, 62], [-182, 60]]]);
+  // An ordinary shape near the centre is left where it is.
+  const plainShape = h.placeGeometry({ type: 'Polygon', coordinates: [[[-98, 30], [-97, 30], [-97, 31], [-98, 30]]] }, -96);
+  assert.deepEqual(coords(plainShape), [[[-98, 30], [-97, 30], [-97, 31], [-98, 30]]]);
 });

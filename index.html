@@ -4028,6 +4028,7 @@ async function loadStationsAt(lat, lon, gen) {
   areaLoading = null;
   const radiusBox = plotStations(data, lat, lon, userZoom);
   setForecastPoint(lat, lon);   // FORECAST now describes this area
+  liveSearchLanded();           // live alerts waiting for the opening search can load
 
   // A newer search still running owns the status bar and overlay; leave them.
   if (mayUpdateSearchUi(gen)) {
@@ -5419,6 +5420,7 @@ const liveHiddenEvents = new Set();  // alert types switched off in the colour k
 let liveAlertsSeq = 0;               // newest view request
 let liveAppliedSeq = 0;              // newest request whose answer is drawn; older answers are dropped
 let liveViewPending = false;         // the map moved and that view's answer isn't in yet
+let liveWaitsForSearch = false;      // opened on a search: the first load waits for its area
 let liveMoveTimer = 0, liveRefreshTimer = 0, liveRetryTimer = 0;
 let liveRefreshMissed = false;
 /** 'loading' until the first answer, then 'ok' or 'error' (never "0 alerts" by mistake). */
@@ -5514,6 +5516,7 @@ function placeGeometry(geometry, nearLon) {
 /** Load every alert piece inside the current view (padded a little) and draw them. */
 async function loadLiveAlerts(confirmingEmpty = false) {
   if (!liveAlertsOn) return;
+  liveWaitsForSearch = false;   // (the opening search's wait, if any, is over)
   const seq = ++liveAlertsSeq;
   clearTimeout(liveRetryTimer);
   const b = map.getBounds().pad(0.15);
@@ -5719,6 +5722,18 @@ function renderLiveLegend() {
   if (hadFocus && !liveLegend.contains(document.activeElement)) liveLegendBtn.focus();
 }
 
+/**
+ * The opening search's area is on the map (its stations drawn; the fit to its
+ * circle may still be flying): load live alerts once it lands — the landing's
+ * "moveend" does, or this timer if the map doesn't move again.
+ */
+function liveSearchLanded() {
+  if (!liveAlertsOn || !liveWaitsForSearch) return;
+  liveWaitsForSearch = false;
+  clearTimeout(liveMoveTimer);
+  liveMoveTimer = setTimeout(() => loadLiveAlerts(), 1600);   // a fit flight takes 1.2 s
+}
+
 /** Hide or show every area of one alert type (a colour-key row). */
 function toggleLiveAlertType(event, button) {
   const hide = !liveHiddenEvents.has(event);
@@ -5870,7 +5885,15 @@ function openLiveAlertPopup(props, latlng, clickEvent) {
 }
 
 /** Turn live alerts on or off. */
-function setLiveAlerts(on) {
+/**
+ * Turn live alerts on or off.
+ * @param {boolean} on
+ * @param {boolean} [waitForSearch] - the app opened on a place to search and is
+ *        about to fly there: load once that search's area is on the map (see
+ *        liveSearchLanded), or after LIVE_DEFERRED_LOAD_MS — not the starting
+ *        view first, which would be a wasted download
+ */
+function setLiveAlerts(on, waitForSearch = false) {
   liveAlertsOn = on;
   // Remembered on this device: a reload (or reopening the app) comes back as left.
   try { localStorage.setItem(LIVE_ALERTS_ON_KEY, on ? '1' : '0'); } catch (_) { /* storage blocked */ }
@@ -5890,7 +5913,9 @@ function setLiveAlerts(on) {
     if (activeAlertAreaOwner) map.closePopup();
     liveState = 'loading';
     liveFailureShown = false;
-    loadLiveAlerts();
+    liveWaitsForSearch = waitForSearch;
+    if (waitForSearch) liveMoveTimer = setTimeout(() => loadLiveAlerts(), LIVE_DEFERRED_LOAD_MS);
+    else loadLiveAlerts();
     liveRefreshTimer = setInterval(refreshLiveAlerts, ALERTS_REFRESH_MS);
   } else {
     liveAlertsSeq++;                 // ignore any answer still on its way
@@ -5925,6 +5950,8 @@ document.addEventListener('visibilitychange', () => {
 // Moving the map loads what came into view — one request per pause, not per frame.
 map.on('moveend', () => {
   if (!liveAlertsOn) return;
+  // The page's own start-up moves aren't the opening search's: wait for it.
+  if (liveWaitsForSearch) return;
   liveViewPending = true;          // what came into view isn't counted until its answer is in
   renderLiveView();                // labels and banner follow what's drawn in view now
   clearTimeout(liveMoveTimer);
@@ -6024,8 +6051,15 @@ try {
    buttons and the collapsed alert list are remembered the same way). Restored
    last, once the whole control is set up. */
 const LIVE_ALERTS_ON_KEY = 'wxmap_live_alerts_on';
+/* Opened on a place to search (a shared link, a ZIP…), the map is about to fly
+   there: the first live load waits for that search's area instead of fetching
+   the whole starting view first — or this long, if the search never gets there. */
+const LIVE_DEFERRED_LOAD_MS = 4000;
 try {
-  if (localStorage.getItem(LIVE_ALERTS_ON_KEY) === '1') setLiveAlerts(true);
+  if (localStorage.getItem(LIVE_ALERTS_ON_KEY) === '1') {
+    const opening = new URLSearchParams(location.search);
+    setLiveAlerts(true, ['station', 'lat', 'zip', 'addr'].some(key => opening.has(key)));
+  }
 } catch (_) { /* storage blocked: live alerts start off */ }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -6812,6 +6846,7 @@ fabLocate.addEventListener('click', () => {
       // register it for Tier-3 alert flagging by hand.
       stationRecords = [{ el: iconEl, lat, lng }];
       setForecastPoint(lat, lng);   // FORECAST describes the station's spot
+      liveSearchLanded();           // live alerts waiting for this opening can load
 
       if (mayUpdateSearchUi(gen)) {
         settledSearch = searchGeneration;

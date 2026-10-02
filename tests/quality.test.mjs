@@ -2724,7 +2724,13 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(toggle, /renderAlertBanner\(shownAlerts\);/);
   // On or off is remembered: a reload brings live alerts back as they were left.
   assert.match(toggle, /liveAlertsOn = on;[\s\S]*?localStorage\.setItem\(LIVE_ALERTS_ON_KEY, on \? '1' : '0'\)/);
-  assert.match(html, /if \(localStorage\.getItem\(LIVE_ALERTS_ON_KEY\) === '1'\) setLiveAlerts\(true\);/);
+  // …waiting for the opening search's area when the app opens on a place to search
+  // (no wasted download of the starting view: start-up moves are ignored), or
+  // LIVE_DEFERRED_LOAD_MS at most.
+  assert.match(html, /if \(localStorage\.getItem\(LIVE_ALERTS_ON_KEY\) === '1'\) \{[\s\S]*?setLiveAlerts\(true, \['station', 'lat', 'zip', 'addr'\]\.some\(key => opening\.has\(key\)\)\);/);
+  assert.match(toggle, /liveWaitsForSearch = waitForSearch;\s*if \(waitForSearch\) liveMoveTimer = setTimeout\(\(\) => loadLiveAlerts\(\), LIVE_DEFERRED_LOAD_MS\);\s*else loadLiveAlerts\(\);/);
+  assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;[^\n]*\n[^\n]*\n\s*if \(liveWaitsForSearch\) return;/);
+  assert.match(extractFunction('loadStationsAt'), /plotStations\(data, lat, lon, userZoom\);[\s\S]*?liveSearchLanded\(\);/);
   // Pin mode: a tap on an alert area places the pin instead of opening a popup.
   const pieces = extractFunction('replaceLivePieces');
   assert.match(pieces, /if \(tapModeActive\) return;[\s\S]*openLiveAlertPopup\(props, e\.latlng, e\.originalEvent\)/);

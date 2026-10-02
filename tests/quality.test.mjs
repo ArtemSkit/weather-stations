@@ -2434,11 +2434,21 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
   // world copy on screen; reduced motion means no glide either.
   const draw = extractFunction('drawSearchRadius');
   assert.match(draw, /started = true;\s*mask\.addTo\(searchRadiusLayer\)\.bringToBack\(\);/);
-  assert.doesNotMatch(draw, /fillOpacity: 0\.32, interactive: false\s*\}\)\.addTo/);
+  assert.doesNotMatch(draw, /fillOpacity: [\d.]+, interactive: false\s*\}\)\.addTo/);
   assert.match(draw, /setTimeout\(\(\) => \{ if \(!document\.hidden\) startGrow\(\); \}, 2000\);/);
   assert.match(html, /L\.svg\(\{ pane: 'searchRadius', padding: 0\.5 \}\)/);
   assert.match(html, /const SEARCH_MASK_OUTER = \[\[-85, -1800\], \[85, -1800\], \[85, 1800\], \[-85, 1800\]\];/);
   assert.match(extractFunction('fitSearchRadius'), /map\.fitBounds\(bounds, \{ \.\.\.options, animate: false \}\)/);
+  // A light dimming; the RADIUS switch hides the whole circle (CSS only, so it
+  // comes back intact), shows only while a circle is drawn, and is remembered.
+  assert.match(draw, /fillColor: '#101826', fillOpacity: 0\.2,/);
+  assert.match(draw, /searchRadius = circle;\s*map\.getContainer\(\)\.classList\.add\('has-search-radius'\);/);
+  assert.match(extractFunction('clearSearchRadius'), /classList\.remove\('has-search-radius'\)/);
+  assert.match(html, /#search-radius-btn \{ display: none; \}\s*#map\.has-search-radius #search-radius-btn \{ display: inline-flex; \}/);
+  assert.match(html, /#map\.radius-off \.leaflet-searchRadius-pane,\s*#map\.radius-off \.search-radius-label \{ display: none; \}/);
+  const toggleRadius = extractFunction('setSearchRadiusShown');
+  assert.match(toggleRadius, /classList\.toggle\('radius-off', !shown\)/);
+  assert.match(toggleRadius, /try \{ localStorage\.setItem\(SEARCH_RADIUS_HIDDEN_KEY, shown \? '0' : '1'\); \} catch/);
   // Alerts are looked for in the circle's own box (2 radii wide), not the fit box.
   assert.match(draw, /const area = L\.latLng\(lat, lon\)\.toBounds\(2 \* r\);\s*return \{ west: area\.getWest\(\)/);
 });

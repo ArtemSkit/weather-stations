@@ -31,7 +31,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Multi-mode search** | ZIP code, lat/lon coordinates, or street address |
 | **Interactive map** | Leaflet.js + OpenStreetMap tiles, dark-mode filtered |
 | **Station markers** | The NOAA stations near the searched point (about 50 mi, or the nearest 8), plotted as clickable badges |
-| **Search circle** | A glowing circle marks the searched area and labels it ("8 stations · within 41 mi") |
+| **Search circle** | A glowing circle marks the searched area and labels it ("8 stations · within 41 mi"); the **RADIUS** button hides it for the plain map |
 | **Live observations** | Auto-refreshing weather data (configurable interval, 10 s – 1 h; paused while the app is in the background) |
 | **Dual temperature** | °F displayed prominently; °C shown alongside it |
 | **Feels Like** | Heat Index or Wind Chill, whichever is applicable |
@@ -188,6 +188,8 @@ NOAA's station list for a location covers its whole forecast area — often 150�
 - the circle's edge is placed where it has room: just clear of the last station shown, by a marker's width **as drawn on your screen**. Stations often come in tight clusters, so to find such a gap the edge may move up to 25% further out or 30% further in (never below the nearest 8); the stations left out aren't drawn, so the edge may sit right next to the first of them. Where stations are too dense for any gap that wide, it takes the widest one available. Every station inside the edge is always shown, so the label's distance is true.
 
 A **glowing circle** marks that area, with a label such as **"8 stations · within 41 mi"**. Nothing is drawn inside the circle; the glow, a slowly turning dotted ring and a gentle dimming of the map are all **outside** it. The map zooms to fit the circle, and the circle grows out from the searched point (instantly when the system asks for reduced motion). A direct `?station=` link shows just that station, without a circle.
+
+The **RADIUS** button next to LIVE ALERTS (shown while a circle is drawn) turns the circle, its glow, the dimming and the label off to see the plain map — the stations stay — and on again. The choice is remembered on that device for later searches.
 
 ---
 

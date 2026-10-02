@@ -2769,12 +2769,16 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   // focus on the search box instead of the hidden button.
   const panels = { days: { innerHTML: 'old' }, hours: { innerHTML: 'old' } };
   const fctx = { forecastPoint: null, forecastSeq: 3, forecastDialog: { open: true },
-                 fcDays: panels.days, fcHours: panels.hours };
+                 fcDays: panels.days, fcHours: panels.hours,
+                 forecastPlace: { textContent: 'Near Weatherford, TX' }, forecastFoot: { textContent: 'updated' } };
   await vm.runInNewContext(`(async ${extractFunction('openForecast')})`, fctx)();
-  assert.match(panels.days.innerHTML, /no area on the map any more — search for a place first/);
+  assert.match(panels.days.innerHTML, /no area on the map anymore — search for a place first/);
+  assert.equal(fctx.forecastPlace.textContent, '', 'no "Near …" for a place that is gone');
+  assert.equal(fctx.forecastFoot.textContent, 'National Weather Service');
   assert.equal(panels.hours.innerHTML, panels.days.innerHTML);
   assert.equal(fctx.forecastSeq, 4);
-  assert.match(html, /forecastDialog\.addEventListener\('close', \(\) => \{[\s\S]*?forecastDialog\.contains\(document\.activeElement\);\s*if \(forecastBtn\.hidden && stranded\) zipInput\.focus\(\);/);
+  // (Touch screens: FIND, not the search box — no keyboard popping up.)
+  assert.match(html, /forecastDialog\.addEventListener\('close', \(\) => \{[\s\S]*?if \(!forecastBtn\.hidden \|\| !stranded\) return;\s*\(window\.matchMedia\('\(pointer: coarse\)'\)\.matches \? searchBtn : zipInput\)\.focus\(\);/);
   // Phones: the home-bar room is inside the sheet, so a tap there doesn't close it.
   assert.match(html, /\.fc-foot \{ padding-bottom: calc\(8px \+ var\(--safe-bottom\)\); \}/);
   assert.doesNotMatch(html.match(/#forecast-dialog \{\s*width: 100vw;[^}]*\}/)[0], /padding-bottom/);

@@ -2597,6 +2597,8 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;\s*liveViewPending = true;[^\n]*\n\s*renderLiveView\(\);/);
   assert.match(extractFunction('renderLiveView'), /renderLiveLegend\(\);\s*renderLiveLabels\(\);\s*renderLiveBanner\(\);/);
   assert.match(extractFunction('renderLiveBanner'), /if \(signature === liveBannerSignature\) return;[\s\S]*renderAlertBanner\(features, true\);/);
+  // (Held while the moved view's answer is on its way: no shrink-and-refill.)
+  assert.match(extractFunction('renderLiveBanner'), /if \(!liveAlertsOn \|\| liveViewPending\) return;/);
   assert.match(extractFunction('renderLiveLabels'), /className: 'alert-area-label live-area-label'/);
   // …while the searched area's alerts keep updating underneath without replacing
   // it, and switching live mode off brings the searched area's banner back.

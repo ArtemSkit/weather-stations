@@ -2927,6 +2927,9 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.equal(label(at(2041, 232)), '1 mi SW of Boerne, TX');
   assert.equal(label(at(16.1, 350, 'wmoUnit:km')), '10 mi N of Boerne, TX');
   assert.equal(label(at(5000)), 'Near Boerne, TX', 'no bearing: no direction to give');
+  // Out-of-range angles still name a direction (wrapped into 0–360).
+  assert.equal(label(at(3376, -30)), '2 mi NNW of Boerne, TX');
+  assert.equal(label(at(3376, 400)), '2 mi NE of Boerne, TX');
   assert.equal(label({ properties: { city: 'Boerne' } }), '');
   assert.equal(label(undefined), '');
   // A /points answer linking anywhere but NOAA's own API is refused.

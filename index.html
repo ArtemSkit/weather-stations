@@ -3095,7 +3095,8 @@ function val(v, unit = '', na = 'N/A') {
  */
 function degToCompass(deg) {
   const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
-  return dirs[Math.round(deg / 22.5) % 16];
+  // Wrapped into 0–360 first: a negative or over-full turn still names a direction.
+  return dirs[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -6190,8 +6191,9 @@ function forecastPlaceLabel(relativeLocation) {
   const near = relativeLocation?.properties;
   if (!near?.city || !near?.state) return '';
   const name = near.city + ', ' + near.state;
-  const metres = near.distance?.value;
-  const miles = Number.isFinite(metres) ? metres * (/km/.test(near.distance.unitCode || '') ? 1000 : 1) / 1609.344 : NaN;
+  const value = near.distance?.value;   // in metres, or kilometres if its unit says so
+  const metres = Number.isFinite(value) ? value * (/km/.test(near.distance.unitCode || '') ? 1000 : 1) : NaN;
+  const miles = metres / 1609.344;
   const bearing = near.bearing?.value;
   if (!(miles >= 1) || !Number.isFinite(bearing)) return 'Near ' + name;
   return Math.round(miles) + ' mi ' + degToCompass(bearing) + ' of ' + name;

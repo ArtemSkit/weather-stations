@@ -665,8 +665,12 @@ test('the alert banner stays clear of the map controls and the station panel', (
   // beside an open panel in narrow windows.
   assert.match(html, /#alert-banner \{[^}]*max-height: max\(4rem, calc\(100% - 16px - 150px\)\);/);
   assert.match(html, /main\.sheet-open #alert-banner \{ max-width: calc\(100% - 16px - 314px - 32px\); \}/);
-  // Phones: above the zoom control and Locate Me, full width even with the sheet open.
-  assert.match(html, /max-height: max\(4rem, calc\(100% - 8px - 220px - var\(--safe-bottom\)\)\);/);
+  // Phones: above the bottom-left controls and Locate Me, full width even with the sheet open.
+  assert.match(html, /max-height: max\(4rem, calc\(100% - 8px - 160px - var\(--safe-bottom\)\)\);/);
+  // …which sit low in the corner (zoom just above the version badge, the LIVE
+  // ALERTS row just above the zoom) instead of halfway up the screen.
+  assert.match(html, /\.leaflet-control-zoom \{ margin-bottom: calc\(38px \+ var\(--safe-bottom\)\) !important; \}\s*\.leaflet-bottom \.live-alerts-ctl \{ margin-bottom: 6px; \}/);
+  assert.doesNotMatch(html, /margin-bottom: calc\(88px/);
   // An open or hovered station inside a warning keeps readable dark text.
   assert.match(html, /\.station-marker\.alerted:hover,\s*\.station-marker\.alerted\.active \{ color: var\(--bg\); \}/);
   // A rebuilt banner keeps keyboard focus; the dead install-prompt hook is gone.

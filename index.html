@@ -5186,6 +5186,9 @@ function setMapToolsOpen(open) {
   mapTools.hidden = !open;
   mapToolsToggle.setAttribute('aria-expanded', String(open));
   mapToolsToggle.title = open ? 'Hide these buttons' : 'Show LIVE ALERTS, KEY and RADIUS';
+  // The red lamp is visual only: say it in words too. (Live alerts can't be
+  // switched while folded — their button is hidden — so this stays true.)
+  mapToolsToggle.setAttribute('aria-label', !open && liveAlertsOn ? 'Map buttons (live alerts on)' : 'Map buttons');
   if (!open) setLiveLegendOpen(false);   // the colour key folds away with them
   try { localStorage.setItem(MAP_TOOLS_FOLDED_KEY, open ? '0' : '1'); } catch (_) { /* storage blocked */ }
 }

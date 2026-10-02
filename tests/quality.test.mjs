@@ -1104,6 +1104,7 @@ test('alert times never invent an end and show a future start', () => {
   const bannerCtx = {
     Date, String, Set, Map, alertBanner: banner, document: {}, alertBannerCollapsed: false,
     openAlertGroups: new Set(), openAlertCards: new Set(), alertRecordCache: new Map(),
+    alertRecordWanted: new Set(['b']), alertRecordInFlight: new Map(),
     ALERT_CLASS_RANK: { crit: 0, warn: 1, watch: 2, info: 3 },
     ALERT_SEV_WEIGHT: {}, ALERT_URGENCY_WEIGHT: {}, ALERT_CERTAINTY_WEIGHT: {}
   };
@@ -1117,6 +1118,7 @@ test('alert times never invent an end and show a future start', () => {
     ${extractFunction('alertPlacesText')}
     ${extractFunction('alertId')}
     ${extractFunction('alertAreaDesc')}
+    ${extractFunction('alertRecordPending')}
     ${extractFunction('alertCardHtml')}
     ${extractFunction('alertGroupHtml')}
     ${extractFunction('alertBannerFocusKey')}
@@ -1141,6 +1143,11 @@ test('alert times never invent an end and show a future start', () => {
   assert.match(banner.innerHTML, /<div class="alert-card-body" data-details-url="https:\/\/api\.weather\.gov\/alerts\/urn:oid:x&quot;&gt;&lt;b&gt;">/);
   assert.match(banner.innerHTML, /Loading the full NWS text…/);
   assert.match(banner.innerHTML, /<span class="alert-places">Finding the places…<\/span>/);
+  // Only while its lookup is queued or running: otherwise no places line at all.
+  bannerCtx.alertRecordWanted.clear();
+  render([{ id: 'b', properties: { event: 'Flood Warning', ends: tomorrow,
+    detailsUrl: 'https://api.weather.gov/alerts/urn:oid:x' } }], true);
+  assert.doesNotMatch(banner.innerHTML, /Finding the places|alert-places/);
 
   // Where each alert applies is on its header; same-type alerts fold into one
   // group row (count, shared time, their places) that opens to their cards, each

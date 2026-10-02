@@ -2713,6 +2713,9 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   // it, and switching live mode off brings the searched area's banner back.
   assert.match(extractFunction('showAlerts'), /if \(!liveAlertsOn\) renderAlertBanner\(alerts\);/);
   assert.match(toggle, /renderAlertBanner\(shownAlerts\);/);
+  // On or off is remembered: a reload brings live alerts back as they were left.
+  assert.match(toggle, /liveAlertsOn = on;[\s\S]*?localStorage\.setItem\(LIVE_ALERTS_ON_KEY, on \? '1' : '0'\)/);
+  assert.match(html, /if \(localStorage\.getItem\(LIVE_ALERTS_ON_KEY\) === '1'\) setLiveAlerts\(true\);/);
   // Pin mode: a tap on an alert area places the pin instead of opening a popup.
   const pieces = extractFunction('replaceLivePieces');
   assert.match(pieces, /if \(tapModeActive\) return;[\s\S]*openLiveAlertPopup\(props, e\.latlng, e\.originalEvent\)/);

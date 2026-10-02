@@ -5866,6 +5866,8 @@ function openLiveAlertPopup(props, latlng, clickEvent) {
 /** Turn live alerts on or off. */
 function setLiveAlerts(on) {
   liveAlertsOn = on;
+  // Remembered on this device: a reload (or reopening the app) comes back as left.
+  try { localStorage.setItem(LIVE_ALERTS_ON_KEY, on ? '1' : '0'); } catch (_) { /* storage blocked */ }
   liveAlertsBtn.setAttribute('aria-pressed', String(on));
   liveLegendBtn.hidden = !on;
   clearInterval(liveRefreshTimer);
@@ -6011,6 +6013,14 @@ mapToolsToggle.addEventListener('click', () => setMapToolsOpen(mapTools.hidden))
 try {
   if (localStorage.getItem(MAP_TOOLS_FOLDED_KEY) === '1') setMapToolsOpen(false);
 } catch (_) { /* storage blocked: the buttons are shown */ }
+
+/* Live alerts come back on after a reload if they were on (RADIUS, the folded
+   buttons and the collapsed alert list are remembered the same way). Restored
+   last, once the whole control is set up. */
+const LIVE_ALERTS_ON_KEY = 'wxmap_live_alerts_on';
+try {
+  if (localStorage.getItem(LIVE_ALERTS_ON_KEY) === '1') setLiveAlerts(true);
+} catch (_) { /* storage blocked: live alerts start off */ }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    14D. FORECAST  (the NWS forecast for the area on the map)

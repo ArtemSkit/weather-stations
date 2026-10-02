@@ -110,7 +110,7 @@ test('a failed newer search keeps the area that is loading or shown', async () =
     let stationMarkers = [];
     const popupPanel = { style: {} };
     const overlayText = {};
-    const map = { getContainer: () => ({ classList: { add() {}, remove() {} } }) };
+    const map = { getContainer: () => ({ classList: { add() {}, remove() {} } }), getZoom: () => 4 };
     function clearAlerts() {}
     function clearStations() { stationMarkers = []; }
     function moveMapTo() {}
@@ -185,7 +185,7 @@ test('hidden tabs pause alert polling and hard-reloaded tabs still get updates',
 test('links opened in a hidden tab still load (no flyTo on a 0×0 map)', () => {
   const calls = [];
   const fakeMap = size => ({
-    getSize: () => size,
+    getSize: () => size, getZoom: () => 6,
     setView: () => calls.push('setView'),
     flyTo: () => calls.push('flyTo')
   });
@@ -195,7 +195,8 @@ test('links opened in a hidden tab still load (no flyTo on a 0×0 map)', () => {
   makeMove({ x: 0, y: 0 })(1, 2, 10);       // laid out while hidden: flyTo would throw NaN
   makeMove({ x: 800, y: 600 })(1, 2, 10);   // normal: animate
   makeMove({ x: 800, y: 600 }, true)(1, 2, 10);
-  assert.deepEqual(calls, ['setView', 'flyTo', 'setView']);
+  makeMove({ x: 800, y: 600 })(1, 2, 6);    // same zoom: just move, no flight dipping out
+  assert.deepEqual(calls, ['setView', 'flyTo', 'setView', 'setView']);
   // …and the map re-measures itself once it is actually shown.
   assert.match(html, /new ResizeObserver\(\(\) => map\.invalidateSize\(\)\)/);
 });
@@ -2464,6 +2465,21 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
   assert.equal(fit({}, 30, -98), false);
   assert.deepEqual(fitCalls, ['setView']);
 
+  // Never zoom OUT to fit: a user already closer in keeps their zoom (the map
+  // just centres on the point); one further out still zooms in to the circle.
+  const views = [];
+  const fitAt = (userZoom, fitZoom) => vm.runInNewContext(`(${extractFunction('fitSearchRadius')})`, {
+    SEARCH_FIT_PAD_X: 80, SEARCH_FIT_PAD_Y: 136, SEARCH_FIT_TOP: 96, SEARCH_FIT_EDGE: 40, SEARCH_FIT_MAX_ZOOM: 11,
+    prefersReducedMotion: { matches: false }, L: { point: (x, y) => ({ x, y }) },
+    map: { getSize: () => ({ x: 1200, y: 800 }), getBoundsZoom: () => fitZoom,
+           setView: (c, z) => views.push(['setView', z]), flyToBounds: () => views.push(['fly']) }
+  })({}, 30, -98, userZoom);
+  assert.equal(fitAt(14, 9), false);
+  assert.equal(fitAt(4, 9), true);
+  assert.deepEqual(views, [['setView', 14], ['fly']]);
+  const loadAt = extractFunction('loadStationsAt');
+  assert.match(loadAt, /const userZoom = map\.getZoom\(\);\s*moveMapTo\(lat, lon, Math\.max\(8, userZoom\)\);[\s\S]*plotStations\(data, lat, lon, userZoom\)/);
+
   // The dimming appears once the map has landed (mid-flight Leaflet only scales
   // the old drawing), reaches past the screen while dragging, and covers every
   // world copy on screen; reduced motion means no glide either.
@@ -2485,7 +2501,6 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
   assert.match(html, /@media \(max-width: 389px\) \{\s*#search-radius-btn \.radius-text \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden;/);
   assert.match(html, /<span class="ring" aria-hidden="true"><\/span><span class="radius-text">RADIUS<\/span>/);
   // The switch stays put while a new search loads, and goes when the search fails.
-  const loadAt = extractFunction('loadStationsAt');
   assert.match(loadAt, /clearStations\(\);[\s\S]*?classList\.add\('has-search-radius'\);\s*setStatus\('loading'/);
   assert.match(loadAt, /if \(area === areaGeneration\) \{\s*areaLoading = null;\s*map\.getContainer\(\)\.classList\.remove\('has-search-radius'\);/);
   const toggleRadius = extractFunction('setSearchRadiusShown');

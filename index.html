@@ -1784,6 +1784,9 @@ const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)
 function moveMapTo(lat, lon, zoom) {
   const size = map.getSize();
   if (prefersReducedMotion.matches || !size.x || !size.y) map.setView([lat, lon], zoom);
+  // Same zoom: just move there (a glide when close, a jump when far) — a flight
+  // would dip out and back in on the way.
+  else if (zoom === map.getZoom()) map.setView([lat, lon], zoom);
   else map.flyTo([lat, lon], zoom, { duration: 1.2 });
 }
 
@@ -3388,11 +3391,12 @@ function makeStationMarker(id, name, lat, lng) {
  * @param {Object} geoJSON  - FeatureCollection from the NOAA stations endpoint
  * @param {number} lat      - the searched point
  * @param {number} lon
+ * @param {number} [minZoom] - the zoom the user had: the circle never zooms out past it
  * @returns {{west:number,south:number,east:number,north:number}|undefined} the
  *          circle's box (the map area the alert loader should look at), or
  *          undefined when no station was found (no circle is drawn then)
  */
-function plotStations(geoJSON, lat, lon) {
+function plotStations(geoJSON, lat, lon, minZoom) {
   clearStations();
   // Skip any malformed entry (no id or no usable location): Leaflet throws on a
   // non-numeric position, which would abort plotting every station after it.
@@ -3425,7 +3429,7 @@ function plotStations(geoJSON, lat, lon) {
   });
   // An empty list (NOAA found no stations here): no "0 stations" circle.
   if (!inside.length) return undefined;
-  return drawSearchRadius(lat, lon, edgeMi, inside.length);
+  return drawSearchRadius(lat, lon, edgeMi, inside.length, minZoom);
 }
 
 /* ── Search radius ──────────────────────────────────────────────────────────── */
@@ -3547,9 +3551,10 @@ let searchRadius = null;
  * a soft glow and a slowly turning dotted ring just OUTSIDE it, and the map
  * outside the circle dimmed. Grows out from the point unless motion is reduced.
  * (plotStations has already cleared the previous circle, via clearStations.)
+ * @param {number} [minZoom] - never zoom out past this (see fitSearchRadius)
  * @returns {{west:number,south:number,east:number,north:number}} the circle's box
  */
-function drawSearchRadius(lat, lon, miles, count) {
+function drawSearchRadius(lat, lon, miles, count, minZoom) {
   const r = miles * METRES_PER_MILE;
   const ring = opts => L.circle([lat, lon], {
     renderer: searchRadiusRenderer, radius: 0, fill: false, interactive: false, color: '#00d4ff', ...opts
@@ -3578,7 +3583,7 @@ function drawSearchRadius(lat, lon, miles, count) {
   map.getContainer().classList.add('has-search-radius');
 
   const bounds = L.latLng(lat, lon).toBounds(r * SEARCH_FIT_BOX);
-  const flying = fitSearchRadius(bounds, lat, lon);
+  const flying = fitSearchRadius(bounds, lat, lon, minZoom);
 
   // Grow out from the point — at once when motion is reduced, or when the page is
   // in a background tab (no animation frames run there). While the map is still
@@ -3622,11 +3627,21 @@ function drawSearchRadius(lat, lon, miles, count) {
  * size (laid out while hidden) can't be fitted — flyToBounds would divide by
  * zero — and one smaller than the padding (a landscape phone with its keyboard
  * up) would get a nonsense zoom, so either is simply centred at a typical zoom.
+ * The fit never zooms OUT past `minZoom`, the zoom the user had: when they are
+ * already closer in (Locate Me while zoomed in on a street), the map keeps that
+ * zoom and just centres on the point, even if the circle then runs off screen.
+ * @param {number} [minZoom=0]
  * @returns {boolean} true when the map is now flying (animating) to the circle
  */
-function fitSearchRadius(bounds, lat, lon) {
+function fitSearchRadius(bounds, lat, lon, minZoom = 0) {
   const size = map.getSize();
-  if (size.x <= SEARCH_FIT_PAD_X || size.y <= SEARCH_FIT_PAD_Y) { map.setView([lat, lon], 8); return false; }
+  if (size.x <= SEARCH_FIT_PAD_X || size.y <= SEARCH_FIT_PAD_Y) {
+    map.setView([lat, lon], Math.max(8, minZoom));
+    return false;
+  }
+  const fitZoom = Math.min(SEARCH_FIT_MAX_ZOOM,
+    map.getBoundsZoom(bounds, false, L.point(SEARCH_FIT_PAD_X, SEARCH_FIT_PAD_Y)));
+  if (minZoom >= fitZoom) { map.setView([lat, lon], minZoom); return false; }
   // Room for the label above the circle and a margin elsewhere.
   const options = { paddingTopLeft: [SEARCH_FIT_EDGE, SEARCH_FIT_TOP],
                     paddingBottomRight: [SEARCH_FIT_EDGE, SEARCH_FIT_EDGE], maxZoom: SEARCH_FIT_MAX_ZOOM };
@@ -3715,8 +3730,11 @@ async function loadStationsAt(lat, lon, gen) {
   setStatus('loading', 'FETCHING STATIONS…');
   overlayText.textContent = 'Fetching weather stations…';
   // Zoom 8 is about the size of a typical search circle; once the stations are
-  // in, the map fits the actual circle (plotStations → drawSearchRadius).
-  moveMapTo(lat, lon, 8);
+  // in, the map fits the actual circle (plotStations → drawSearchRadius). Neither
+  // zooms OUT: a closer zoom the user already chose is kept, and the map only
+  // moves there (Locate Me while zoomed in on a street stays zoomed in).
+  const userZoom = map.getZoom();
+  moveMapTo(lat, lon, Math.max(8, userZoom));
 
   let data;
   areaLoading = { status: 'FETCHING STATIONS…', overlay: 'Fetching weather stations…' };
@@ -3737,7 +3755,7 @@ async function loadStationsAt(lat, lon, gen) {
   }
   if (area !== areaGeneration) return false;     // a newer area replaced this one
   areaLoading = null;
-  const radiusBox = plotStations(data, lat, lon);
+  const radiusBox = plotStations(data, lat, lon, userZoom);
 
   // A newer search still running owns the status bar and overlay; leave them.
   if (mayUpdateSearchUi(gen)) {

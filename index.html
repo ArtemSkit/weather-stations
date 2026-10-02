@@ -5724,14 +5724,34 @@ function renderLiveLegend() {
 
 /**
  * The opening search's area is on the map (its stations drawn; the fit to its
- * circle may still be flying): load live alerts once it lands — the landing's
- * "moveend" does, or this timer if the map doesn't move again.
+ * circle may still be flying): load live alerts once it lands. Shortly, when
+ * the map isn't moving; during a flight its landing's "moveend" does it.
  */
 function liveSearchLanded() {
   if (!liveAlertsOn || !liveWaitsForSearch) return;
   liveWaitsForSearch = false;
   clearTimeout(liveMoveTimer);
-  liveMoveTimer = setTimeout(() => loadLiveAlerts(), 1600);   // a fit flight takes 1.2 s
+  liveMoveTimer = setTimeout(() => { if (!mapMoving) loadLiveAlerts(); }, 350);
+}
+
+/* Whether the map is moving right now (a flight, a glide or a drag in progress). */
+let mapMoving = false;
+map.on('movestart', () => { mapMoving = true; });
+map.on('moveend', () => { mapMoving = false; });
+
+/**
+ * The opening search's fallback: load live alerts for whatever is on screen —
+ * unless that search is still finding the place (a slow ZIP or address lookup):
+ * then keep waiting for it, up to LIVE_DEFERRED_MAX_MS in all.
+ * @param {number} since - when the wait began
+ */
+function liveDeferredLoad(since) {
+  const searchBusy = settledSearch !== searchGeneration;   // (the newest search hasn't ended)
+  if (liveWaitsForSearch && searchBusy && Date.now() - since < LIVE_DEFERRED_MAX_MS) {
+    liveMoveTimer = setTimeout(() => liveDeferredLoad(since), 1000);
+    return;
+  }
+  loadLiveAlerts();
 }
 
 /** Hide or show every area of one alert type (a colour-key row). */
@@ -5914,7 +5934,10 @@ function setLiveAlerts(on, waitForSearch = false) {
     liveState = 'loading';
     liveFailureShown = false;
     liveWaitsForSearch = waitForSearch;
-    if (waitForSearch) liveMoveTimer = setTimeout(() => loadLiveAlerts(), LIVE_DEFERRED_LOAD_MS);
+    if (waitForSearch) {
+      const since = Date.now();
+      liveMoveTimer = setTimeout(() => liveDeferredLoad(since), LIVE_DEFERRED_LOAD_MS);
+    }
     else loadLiveAlerts();
     liveRefreshTimer = setInterval(refreshLiveAlerts, ALERTS_REFRESH_MS);
   } else {
@@ -6053,8 +6076,10 @@ try {
 const LIVE_ALERTS_ON_KEY = 'wxmap_live_alerts_on';
 /* Opened on a place to search (a shared link, a ZIP…), the map is about to fly
    there: the first live load waits for that search's area instead of fetching
-   the whole starting view first — or this long, if the search never gets there. */
+   the whole starting view first — or this long, if the search never gets there
+   (longer while it is still looking the place up: see liveDeferredLoad). */
 const LIVE_DEFERRED_LOAD_MS = 4000;
+const LIVE_DEFERRED_MAX_MS = 20_000;   // …or this, while it is still finding the place
 try {
   if (localStorage.getItem(LIVE_ALERTS_ON_KEY) === '1') {
     const opening = new URLSearchParams(location.search);

@@ -2428,7 +2428,17 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.equal(colours.liveAlertTextColor('Flash Flood Warning'), 'rgb(197, 128, 128)');
 
   const load = extractFunction('loadLiveAlerts');
-  assert.match(load, /if \(seq !== liveAlertsSeq \|\| !liveAlertsOn\) return;/, 'stale views are dropped');
+  // An answer is dropped once a newer one is drawn (or live alerts are off); an
+  // older view's answer that arrives first is still drawn. Only the newest
+  // request's failure is reported, and retries wait while the page is hidden.
+  assert.match(load, /if \(seq <= liveAppliedSeq \|\| !liveAlertsOn\) return;/, 'answers older than the drawn one are dropped');
+  assert.match(load, /liveAppliedSeq = seq;\s*if \(newest\) liveViewPending = false;/);
+  assert.match(load, /catch \(error\) \{\s*if \(seq !== liveAlertsSeq \|\| !liveAlertsOn\) return;/, 'only the newest failure counts');
+  assert.match(load, /liveRetryTimer = setTimeout\(refreshLiveAlerts, 30_000\);/);
+  assert.match(extractFunction('setLiveAlerts'), /liveAlertsSeq\+\+;[^\n]*\n\s*liveAppliedSeq = liveAlertsSeq;/, 'switching off drops answers on their way');
+  // Never a misleading count while the view's own answer is on its way.
+  assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;\s*liveViewPending = true;/);
+  assert.match(extractFunction('renderLiveLegend'), /liveViewPending \? '· …' : `· \$\{total\}`/);
   assert.match(load, /const tolerance = liveAlertTolerance\(map\.getZoom\(\)\)\.toFixed\(6\);[\s\S]*maxAllowableOffset: tolerance/, 'outlines simplified to the zoom');
   const toggle = extractFunction('setLiveAlerts');
   // The searched area's polygons are hidden with a class (kept intact), and the

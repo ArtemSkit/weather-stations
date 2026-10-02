@@ -504,6 +504,7 @@
   /* "📍 Show on map": fits the map to the alert's (or the group's) areas. */
   .alert-zoom {
     margin-top: 10px; padding: 6px 10px; cursor: pointer; align-self: flex-start;
+    display: inline-flex; align-items: center; gap: 6px;
     background: var(--surface2); color: var(--accent); border: 1px solid var(--border);
     border-radius: var(--radius); font-family: 'Syne', sans-serif; font-weight: 700;
     font-size: 0.72rem; letter-spacing: 0.04em;
@@ -530,6 +531,8 @@
     background: transparent; border: none;
   }
   .alert-group-head .alert-expires { margin-left: auto; }
+  /* The name and its count wrap as one piece: the badge never drops to its own line. */
+  .alert-group-title { display: inline-flex; align-items: baseline; gap: 8px; }
   .alert-group-count {
     font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.72rem;
     color: var(--bg); background: var(--text-muted); border-radius: 9px; padding: 1px 7px;
@@ -540,7 +543,12 @@
   }
   .alert-group.open .alert-group-body { display: flex; }
   .alert-group-body .alert-card { box-shadow: none; }
-  .alert-group-body > .alert-zoom { margin: 8px 4px 2px; }
+  .alert-group-body > .alert-card:first-child { margin-top: 8px; }
+  /* Read by screen readers only ("8 alerts" beside the visual "×8"). */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  }
 
   /* "▾ More alerts below": pinned to the banner's bottom edge while its list
      continues past what fits — so the alerts further down aren't missed. */
@@ -4418,10 +4426,12 @@ function alertCardHtml(f) {
                 : (p.detailsUrl ? '<span class="alert-places">Finding the places…</span>' : '')) +
       '</button>' +
       '<div class="alert-card-body"' + bodyAttr + '>' +
+        // First thing in the opened card (above the long NWS text): zoom to this
+        // alert's own area — this county or zone, not its whole group.
+        '<button class="alert-zoom" type="button" data-role="zoom">📍 Show this area on the map</button>' +
         (areaDesc ? '<p class="alert-areas"><b>Areas:</b> ' + escapeHtml(areaDesc) + '</p>' : '') +
         (headline ? '<p class="alert-headline">' + escapeHtml(headline) + '</p>' : '') +
         '<p class="alert-desc">' + escapeHtml(descText) + '</p>' +
-        '<button class="alert-zoom" type="button" data-role="zoom">📍 Show on map</button>' +
       '</div>' +
     '</div>';
 }
@@ -4439,15 +4449,14 @@ function alertGroupHtml(event, members) {
     : (members.some(f => f.properties?.detailsUrl) ? '<span class="alert-places">Finding the places…</span>' : '');
   return '<div class="alert-group alert-' + cls + (open ? ' open' : '') + '" data-group="' + escapeHtml(event) + '">' +
       '<button class="alert-group-head" type="button" data-role="group" aria-expanded="' + open + '">' +
-        '<span class="alert-event">' + escapeHtml(event) + '</span>' +
-        '<span class="alert-group-count" aria-label="' + members.length + ' alerts">×' + members.length + '</span>' +
+        // Name and count stay on one line; screen readers hear "8 alerts", not "times 8".
+        '<span class="alert-group-title"><span class="alert-event">' + escapeHtml(event) + '</span>' +
+        '<span class="alert-group-count"><span aria-hidden="true">×' + members.length + '</span>' +
+        '<span class="sr-only">' + members.length + ' alerts</span></span></span>' +
         '<span class="alert-expires">' + when + '</span>' +
         placesHtml +
       '</button>' +
-      '<div class="alert-group-body">' +
-        '<button class="alert-zoom" type="button" data-role="zoom-group">📍 Show all ' + members.length + ' on map</button>' +
-        members.map(alertCardHtml).join('') +
-      '</div>' +
+      '<div class="alert-group-body">' + members.map(alertCardHtml).join('') + '</div>' +
     '</div>';
 }
 
@@ -4483,6 +4492,14 @@ window.addEventListener('resize', updateAlertScrollHint);
 /* What the user opened in the banner: kept across rebuilds (refreshes, panning). */
 const openAlertGroups = new Set();   // event names
 const openAlertCards  = new Set();   // alert ids
+const OPEN_ALERT_CARDS_LIMIT = 50;
+
+/** Remember an opened card; the oldest is forgotten past OPEN_ALERT_CARDS_LIMIT. */
+function rememberOpenAlertCard(id) {
+  openAlertCards.delete(id);   // (re)insert as the newest
+  openAlertCards.add(id);
+  while (openAlertCards.size > OPEN_ALERT_CARDS_LIMIT) openAlertCards.delete(openAlertCards.values().next().value);
+}
 
 /* Click delegation: toggle the banner, open a group or a card, show on the map. */
 alertBanner.addEventListener('click', e => {
@@ -4514,13 +4531,11 @@ alertBanner.addEventListener('click', e => {
     const card = control.closest('.alert-card');
     const open = card.classList.toggle('open');
     control.setAttribute('aria-expanded', String(open));
-    if (open) openAlertCards.add(card.dataset.alertId); else openAlertCards.delete(card.dataset.alertId);
+    if (open) rememberOpenAlertCard(card.dataset.alertId); else openAlertCards.delete(card.dataset.alertId);
     if (open) loadAlertCardDetails(card);
     updateAlertScrollHint();
   } else if (role === 'zoom') {
     zoomToAlerts([control.closest('.alert-card').dataset.alertId]);
-  } else if (role === 'zoom-group') {
-    zoomToAlerts([...control.closest('.alert-group').querySelectorAll('.alert-card')].map(c => c.dataset.alertId));
   }
 });
 
@@ -4565,31 +4580,48 @@ const ALERT_RECORD_CONCURRENCY = 4;
 const alertRecordQueue = [];
 const alertRecordWanted = new Set();
 let alertRecordActive = 0;
+/** id → the request on its way: a card opened meanwhile shares it, no second fetch. */
+const alertRecordInFlight = new Map();
+/** id → when it last failed: the background loader leaves it alone for a while
+    (an expired alert's record is gone) instead of asking at every rebuild. */
+const alertRecordFailedAt = new Map();
+const ALERT_RECORD_RETRY_MS = 5 * 60_000;
 
 /** Load one alert's NWS record into the cache. @returns {Promise<boolean>} loaded */
-async function loadAlertRecord(id, url) {
-  if (alertRecordCache.has(id)) return true;
-  if (!id || !isTrustedNwsApiUrl(url, '/alerts/')) return false;
-  try {
-    const { response, data } = await fetchJsonWithTimeout(url);
-    const p = data?.properties;
-    if (!response.ok || !p) return false;
-    setBoundedCache(alertRecordCache, id, {
-      headline: p.headline || '',
-      detail: [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n'),
-      areaDesc: p.areaDesc || ''
-    }, ALERT_RECORD_CACHE_LIMIT);
-    scheduleLiveBannerRefresh();   // their places (and text) can now be shown
-    return true;
-  } catch (_) {
-    return false;   // places stay unknown; opening the card tries again
-  }
+function loadAlertRecord(id, url) {
+  if (alertRecordCache.has(id)) return Promise.resolve(true);
+  if (!id || !isTrustedNwsApiUrl(url, '/alerts/')) return Promise.resolve(false);
+  if (alertRecordInFlight.has(id)) return alertRecordInFlight.get(id);
+  const request = (async () => {
+    try {
+      const { response, data } = await fetchJsonWithTimeout(url);
+      const p = data?.properties;
+      if (!response.ok || !p) throw new Error(`HTTP ${response.status}`);
+      setBoundedCache(alertRecordCache, id, {
+        headline: p.headline || '',
+        detail: [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n'),
+        areaDesc: p.areaDesc || ''
+      }, ALERT_RECORD_CACHE_LIMIT);
+      alertRecordFailedAt.delete(id);
+      scheduleLiveBannerRefresh();   // their places (and text) can now be shown
+      return true;
+    } catch (_) {
+      // Places stay unknown; opening the card tries again at once.
+      setBoundedCache(alertRecordFailedAt, id, Date.now(), ALERT_RECORD_CACHE_LIMIT);
+      return false;
+    } finally {
+      alertRecordInFlight.delete(id);
+    }
+  })();
+  alertRecordInFlight.set(id, request);
+  return request;
 }
 
 /** Queue records to load in the background (a few at a time). */
 function queueAlertRecords(items) {
   for (const { id, url } of items) {
     if (!id || alertRecordCache.has(id) || alertRecordWanted.has(id)) continue;
+    if (Date.now() - (alertRecordFailedAt.get(id) ?? -Infinity) < ALERT_RECORD_RETRY_MS) continue;
     alertRecordWanted.add(id);
     alertRecordQueue.push({ id, url });
   }
@@ -4645,6 +4677,7 @@ async function loadAlertCardDetails(card) {
     desc.textContent = 'Couldn\'t load the details — close and reopen the card to try again.';
     delete body.dataset.loaded;   // the next opening tries again
   }
+  updateAlertScrollHint();   // the card's new height may change what's below
 }
 
 /**
@@ -5058,6 +5091,10 @@ function drawAlertArea(f, seq) {
 /** Clear the banner, map areas, station flags, and refresh loop (e.g. when a new search starts). */
 function clearAlerts() {
   if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
+  if (!liveAlertsOn) {   // a new area's list starts with everything closed
+    openAlertGroups.clear();
+    openAlertCards.clear();
+  }
   // (In live mode the banner shows the alerts in view, which a new search doesn't change.)
   if (!liveAlertsOn) {
     alertBanner.className = '';

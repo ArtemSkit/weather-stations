@@ -1142,7 +1142,8 @@ test('alert times never invent an end and show a future start', () => {
 
   // Where each alert applies is on its header; same-type alerts fold into one
   // group row (count, shared time, their places) that opens to their cards, each
-  // with "Show on map"; a type with one alert stays a plain card. The banner ends
+  // opening first to "Show this area on the map" for that one alert (no
+  // group-wide zoom); a type with one alert stays a plain card. The banner ends
   // with the "more below" bar shown while the list continues.
   bannerCtx.alertBannerCollapsed = false;
   const heat = (id, area) => ({ id, properties: { id, event: 'Extreme Heat Warning', severity: 'Severe',
@@ -1152,14 +1153,20 @@ test('alert times never invent an end and show a future start', () => {
   const out = banner.innerHTML;
   assert.match(out, /4 alerts · Extreme Heat Warning/);
   assert.match(out, /<div class="alert-group alert-\w+" data-group="Extreme Heat Warning">/);
-  assert.match(out, /alert-group-count" aria-label="3 alerts">×3</);
+  assert.match(out, /<span class="alert-group-count"><span aria-hidden="true">×3<\/span><span class="sr-only">3 alerts<\/span><\/span>/);
   assert.match(out, /<span class="alert-places">Pima · Pinal · Maricopa \+2 more<\/span>/);
-  assert.match(out, /data-role="zoom-group">📍 Show all 3 on map/);
+  assert.doesNotMatch(out, /zoom-group|Show all/);
   assert.equal((out.match(/data-role="card"/g) || []).length, 4, 'every alert keeps its own card');
   assert.match(out, /data-alert-id="a1"[\s\S]*?<span class="alert-places">Mohave<\/span>/);
-  assert.equal((out.match(/data-role="zoom">📍 Show on map/g) || []).length, 4);
+  assert.equal((out.match(/<div class="alert-card-body"><button class="alert-zoom" type="button" data-role="zoom">📍 Show this area on the map<\/button>/g) || []).length, 4);
   assert.doesNotMatch(out, /data-group="Heat Advisory"/, 'a single alert is a plain card');
   assert.match(out, /<div class="alert-more" aria-hidden="true">▾ More alerts below<\/div>$/);
+  // Background record loads: one request per alert at a time (an opened card
+  // shares it), and a failed one rests for 5 minutes before the loader retries.
+  const load = extractFunction('loadAlertRecord');
+  assert.match(load, /if \(alertRecordInFlight\.has\(id\)\) return alertRecordInFlight\.get\(id\);/);
+  assert.match(extractFunction('queueAlertRecords'), /Date\.now\(\) - \(alertRecordFailedAt\.get\(id\) \?\? -Infinity\) < ALERT_RECORD_RETRY_MS/);
+  assert.match(extractFunction('loadAlertCardDetails'), /updateAlertScrollHint\(\);\s*\/\/ the card's new height/);
   // What the user opened stays open when the list is rebuilt.
   bannerCtx.openAlertGroups.add('Extreme Heat Warning');
   bannerCtx.openAlertCards.add('h2');

@@ -2448,6 +2448,9 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
   assert.match(extractFunction('clearSearchRadius'), /classList\.remove\('has-search-radius'\)/);
   assert.match(html, /#search-radius-btn \{ display: none; \}\s*#map\.has-search-radius #search-radius-btn \{ display: inline-flex; \}/);
   assert.match(html, /#map\.radius-off \.leaflet-searchRadius-pane,\s*#map\.radius-off \.search-radius-label \{ display: none; \}/);
+  // Narrow phones: just the ring, so the row never wraps into the banner's space.
+  assert.match(html, /@media \(max-width: 359px\) \{\s*#search-radius-btn \.radius-text \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden;/);
+  assert.match(html, /<span class="ring" aria-hidden="true"><\/span><span class="radius-text">RADIUS<\/span>/);
   const toggleRadius = extractFunction('setSearchRadiusShown');
   assert.match(toggleRadius, /classList\.toggle\('radius-off', !shown\)/);
   assert.match(toggleRadius, /try \{ localStorage\.setItem\(SEARCH_RADIUS_HIDDEN_KEY, shown \? '0' : '1'\); \} catch/);

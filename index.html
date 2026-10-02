@@ -692,6 +692,91 @@
   #interval-input:focus { border-color: var(--accent); outline: 2px solid transparent; }   /* see .search-bar input:focus */
 
   /* ════════════════════════════════════════════════════════════════════════════
+     FORECAST  (header button + dialog with the NWS 7-day and hourly forecast)
+     ════════════════════════════════════════════════════════════════════════════ */
+  /* Shown once an area is loaded; sits just before the status text on the right. */
+  #forecast-btn {
+    margin-left: auto; flex-shrink: 0;
+    background: transparent; color: var(--accent); border: 1px solid var(--accent);
+    border-radius: var(--radius); padding: 6px 12px; cursor: pointer;
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.68rem; letter-spacing: 0.1em;
+  }
+  #forecast-btn:hover { background: rgba(0,212,255,0.1); }
+  #forecast-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  #forecast-btn:not([hidden]) ~ .status-bar { margin-left: 0; }
+
+  #forecast-dialog {
+    margin: auto;   /* centred: the page's global margin reset would pin it top-left */
+    padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+    background: var(--surface); color: var(--text);
+    width: min(560px, calc(100vw - 32px)); max-width: none; max-height: min(82vh, 760px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+  }
+  #forecast-dialog::backdrop { background: rgba(5,7,12,0.6); }
+  /* The sheet fills the dialog, so a click on the dialog itself is a backdrop click. */
+  .fc-sheet { display: flex; flex-direction: column; max-height: inherit; }
+  .fc-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding: 14px 14px 10px 16px; border-bottom: 1px solid var(--border);
+  }
+  .fc-head h2 { margin: 0; font-family: 'Syne', sans-serif; font-size: 1rem; font-weight: 800; letter-spacing: 0.04em; }
+  .fc-place { margin-top: 2px; font-size: 0.72rem; color: var(--text-muted); }
+  .fc-close {
+    width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%; cursor: pointer;
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border); font-size: 0.9rem;
+  }
+  .fc-close:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .fc-tabs { display: flex; gap: 4px; padding: 8px 14px 0; border-bottom: 1px solid var(--border); }
+  .fc-tabs [role="tab"] {
+    background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer;
+    padding: 8px 12px; color: var(--text-muted);
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.7rem; letter-spacing: 0.1em;
+  }
+  .fc-tabs [role="tab"][aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .fc-tabs [role="tab"]:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+  .fc-body { overflow-y: auto; flex: 1; min-height: 0; overscroll-behavior: contain; }
+  .fc-body [role="tabpanel"]:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+  .fc-empty { padding: 18px 16px; margin: 0; font-size: 0.75rem; color: var(--text-muted); }
+  .fc-retry {
+    margin-left: 6px; padding: 4px 10px; cursor: pointer; border-radius: var(--radius);
+    background: var(--surface2); color: var(--accent); border: 1px solid var(--border); font: inherit;
+  }
+  /* 7-day: one row per day or night; tap a row for the full wording. */
+  .fc-day + .fc-day { border-top: 1px solid var(--border); }
+  .fc-day.fc-night { background: rgba(255,255,255,0.025); }
+  .fc-day summary {
+    display: grid; grid-template-columns: 32px 1fr auto;
+    grid-template-areas: "icon name temp" "icon short short" "icon meta meta";
+    gap: 2px 10px; padding: 10px 16px; cursor: pointer; list-style: none;
+  }
+  .fc-day summary::-webkit-details-marker { display: none; }
+  .fc-day summary:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+  .fc-icon { grid-area: icon; align-self: center; font-size: 1.4rem; line-height: 1; text-align: center; }
+  .fc-name { grid-area: name; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.8rem; }
+  .fc-temp { grid-area: temp; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.9rem; color: var(--accent); white-space: nowrap; }
+  .fc-temp small { margin-left: 4px; font-size: 0.65rem; font-weight: 400; color: var(--text-muted); }
+  .fc-short { grid-area: short; font-size: 0.74rem; }
+  .fc-meta { grid-area: meta; font-size: 0.66rem; color: var(--text-muted); }
+  .fc-day p { margin: 0; padding: 0 16px 12px 58px; font-size: 0.74rem; line-height: 1.55; color: var(--text-muted); }
+  /* Hourly: a day heading that stays in view, then one line per hour. */
+  .fc-hours { list-style: none; margin: 0; padding: 0; }
+  .fc-hour-day {
+    position: sticky; top: 0; z-index: 1; padding: 6px 16px; background: var(--surface2);
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.7rem; letter-spacing: 0.06em;
+  }
+  .fc-hour {
+    display: grid; grid-template-columns: 50px 24px 82px 44px 1fr; align-items: center; gap: 6px;
+    padding: 7px 16px; font-size: 0.72rem; border-top: 1px solid var(--border);
+  }
+  .fc-hour > * { grid-area: auto; }   /* plain columns, not the 7-day row's named areas */
+  .fc-hour .fc-icon { font-size: 1.05rem; }
+  .fc-hour-time { font-family: 'Space Mono', monospace; color: var(--text-muted); }
+  .fc-hour .fc-temp { font-size: 0.8rem; }
+  .fc-hour-pop { color: var(--text-muted); }
+  .fc-hour-short { color: var(--text-muted); }
+  .fc-foot { padding: 8px 16px; border-top: 1px solid var(--border); font-size: 0.62rem; color: var(--text-muted); }
+
+  /* ════════════════════════════════════════════════════════════════════════════
      FLOATING ACTION BUTTON — "Locate Me"
      Positioned bottom-right, above the map attribution bar.
      ════════════════════════════════════════════════════════════════════════════ */
@@ -1031,6 +1116,17 @@
     .status-bar {
       font-size: 0.65rem;
     }
+    /* …and shares that row with FORECAST: it takes the space left and a long
+       status ("FETCHING STATIONS…") is cut short with "…" rather than wrapping. */
+    .status-bar { flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+    /* Narrower type than the wide Syne, so "20 STATIONS" still fits beside it. */
+    #forecast-btn { padding: 5px 8px; font-family: 'Space Mono', monospace; font-size: 0.66rem; letter-spacing: 0.04em; }
+    /* The forecast opens as a sheet from the bottom of the screen. */
+    #forecast-dialog {
+      width: 100vw; max-height: 86vh; max-height: 86dvh;
+      margin: auto 0 0; border-radius: 14px 14px 0 0; border-bottom: none;
+      padding-bottom: var(--safe-bottom);
+    }
 
     /* Search bar stretches to full width on the second row */
     .search-bar {
@@ -1294,6 +1390,9 @@
     <button id="search-btn">FIND</button>
   </div>
 
+  <!-- The NWS forecast for the area on the map (14D); shown once an area is loaded. -->
+  <button type="button" id="forecast-btn" hidden title="Forecast for the searched area (National Weather Service)">FORECAST</button>
+
   <div class="status-bar" id="status-bar" role="status" aria-live="polite">
     <span class="dot"></span><span id="status-text">READY</span>
   </div>
@@ -1406,6 +1505,32 @@
 
 <!-- Toast notification (error / info messages) -->
 <div id="toast" role="alert" aria-live="assertive"></div>
+
+<!--
+  Forecast for the searched area (section 14D): the National Weather Service's
+  7-day forecast (a day and a night period each) and its hourly forecast. A modal
+  dialog: Esc, the ✕ or a click outside closes it, and focus returns to FORECAST.
+-->
+<dialog id="forecast-dialog" aria-labelledby="forecast-title">
+  <div class="fc-sheet">
+    <div class="fc-head">
+      <div>
+        <h2 id="forecast-title">FORECAST</h2>
+        <div class="fc-place" id="forecast-place"></div>
+      </div>
+      <button type="button" class="fc-close" id="forecast-close" aria-label="Close the forecast">✕</button>
+    </div>
+    <div class="fc-tabs" role="tablist" aria-label="Forecast view">
+      <button type="button" role="tab" id="fc-tab-days" aria-selected="true" aria-controls="fc-days">7 DAYS</button>
+      <button type="button" role="tab" id="fc-tab-hours" aria-selected="false" aria-controls="fc-hours" tabindex="-1">HOURLY</button>
+    </div>
+    <div class="fc-body">
+      <div id="fc-days" role="tabpanel" aria-labelledby="fc-tab-days" tabindex="0"></div>
+      <div id="fc-hours" role="tabpanel" aria-labelledby="fc-tab-hours" tabindex="0" hidden></div>
+    </div>
+    <div class="fc-foot" id="forecast-foot">National Weather Service</div>
+  </div>
+</dialog>
 
 <!-- Update available banner (slides down from top) -->
 <div id="update-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:10001;
@@ -1737,6 +1862,7 @@ window.addEventListener('load', () => {
  * 14.  Post-geocode pipeline (loadStationsAt)
  * 14B. Dangerous-weather alerts for the searched area
  * 14C. Live alerts (every alert area in the map view)
+ * 14D. Forecast (the NWS 7-day and hourly forecast for the searched area)
  * 15.  URL query-string helpers
  * 16.  Main search dispatcher (doSearch)
  * 17.  Draggable-pin feature
@@ -3756,6 +3882,7 @@ async function loadStationsAt(lat, lon, gen) {
   if (area !== areaGeneration) return false;     // a newer area replaced this one
   areaLoading = null;
   const radiusBox = plotStations(data, lat, lon, userZoom);
+  setForecastPoint(lat, lon);   // FORECAST now describes this area
 
   // A newer search still running owns the status bar and overlay; leave them.
   if (mayUpdateSearchUi(gen)) {
@@ -5219,6 +5346,222 @@ try {
 } catch (_) { /* storage blocked: the buttons are shown */ }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   14D. FORECAST  (the NWS forecast for the area on the map)
+   ─────────────────────────────────────────────────────────────────────────────
+   The National Weather Service publishes, for every point it covers, a 7-day
+   forecast (14 day and night periods in words) and an hourly forecast (~6.5
+   days). Both are free and key-less: /points/{lat},{lon} names the forecast grid
+   cell, whose two forecast URLs are then fetched. FORECAST in the header opens
+   them for the searched point (or a ?station link's station).
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** How long a loaded forecast is reused: NWS refreshes its grids about hourly. */
+const FORECAST_VIEW_TTL_MS = 10 * 60_000;
+const FORECAST_VIEW_CACHE_LIMIT = 20;
+/** "lat,lon" → { at, place, days, hours, updated } */
+const forecastViewCache = new Map();
+/** The point FORECAST describes: the area on the map, or null before any search. */
+let forecastPoint = null;
+/** Newest forecast request; an older answer (the dialog reopened elsewhere) is dropped. */
+let forecastSeq = 0;
+
+const forecastBtn    = document.getElementById('forecast-btn');
+const forecastDialog = document.getElementById('forecast-dialog');
+const forecastPlace  = document.getElementById('forecast-place');
+const forecastFoot   = document.getElementById('forecast-foot');
+const fcTabDays      = document.getElementById('fc-tab-days');
+const fcTabHours     = document.getElementById('fc-tab-hours');
+const fcDays         = document.getElementById('fc-days');
+const fcHours        = document.getElementById('fc-hours');
+
+/** Point FORECAST at the area now on the map (and show the button). */
+function setForecastPoint(lat, lon) {
+  forecastPoint = { lat, lon };
+  forecastBtn.hidden = false;
+}
+
+/**
+ * Load the 7-day and hourly forecasts for a point (cached for a few minutes).
+ * Only follows NOAA's own /gridpoints/ links from the /points answer.
+ * @returns {Promise<{at:number, place:string, days:Object[], hours:Object[], updated:string}>}
+ * @throws {Error} with a short, readable reason
+ */
+async function fetchAreaForecast(lat, lon) {
+  const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+  const hit = forecastViewCache.get(key);
+  if (hit && Date.now() - hit.at < FORECAST_VIEW_TTL_MS) return hit;
+
+  const { response: ptRes, data: point } = await fetchJsonWithTimeout(`https://api.weather.gov/points/${key}`);
+  if (ptRes.status === 404) throw new Error('the NWS has no forecast here — coverage is US only');
+  if (!ptRes.ok) throw new Error(`the NWS answered HTTP ${ptRes.status}`);
+  const props = point?.properties || {};
+  const urls = [props.forecast, props.forecastHourly];
+  if (!urls.every(url => isTrustedNwsApiUrl(url, '/gridpoints/'))) {
+    throw new Error('the NWS has no forecast for this spot');
+  }
+  const answers = await Promise.all(urls.map(url => fetchJsonWithTimeout(url)));
+  for (const { response } of answers) {
+    // NWS grids now and then answer 500 for a minute or two: worth a retry.
+    if (!response.ok) throw new Error(`the NWS forecast answered HTTP ${response.status}`);
+  }
+  const [days, hours] = answers.map(({ data }) =>
+    (Array.isArray(data?.properties?.periods) ? data.properties.periods : []));
+  const near = props.relativeLocation?.properties;
+  const result = {
+    at: Date.now(), days, hours,
+    place: near?.city && near?.state ? `${near.city}, ${near.state}` : '',
+    updated: answers[0].data?.properties?.updateTime || ''
+  };
+  setBoundedCache(forecastViewCache, key, result, FORECAST_VIEW_CACHE_LIMIT);
+  return result;
+}
+
+/** A weather symbol for an NWS short forecast ("Chance Showers And Thunderstorms"). */
+function forecastEmoji(text, isDaytime) {
+  const t = String(text || '').toLowerCase();
+  if (/thunder|t-storm/.test(t)) return '⛈️';
+  if (/snow|flurr|sleet|blizzard|ice|freezing/.test(t)) return '🌨️';
+  if (/rain|shower|drizzle/.test(t)) return '🌧️';
+  if (/fog|haze|smoke|dust/.test(t)) return '🌫️';
+  if (/partly|mostly sunny|mostly clear/.test(t)) return isDaytime ? '⛅' : '☁️';
+  if (/cloud|overcast/.test(t)) return '☁️';
+  if (/wind|breezy|blustery/.test(t)) return '💨';
+  if (/sunny|clear|fair|hot/.test(t)) return isDaytime ? '☀️' : '🌙';
+  return isDaytime ? '🌤️' : '🌙';
+}
+
+/** A period's temperature as HTML: °F, with °C beside it in small type. */
+function forecastTemp(period) {
+  const t = period?.temperature;
+  if (!Number.isFinite(t)) return '—';
+  const f = period.temperatureUnit === 'C' ? t * 9 / 5 + 32 : t;
+  return `${Math.round(f)}°F<small>${Math.round((f - 32) * 5 / 9)}°C</small>`;
+}
+
+/**
+ * The forecast place's own wall-clock date and hour, read from the timestamp
+ * ("2026-10-01T21:00:00-05:00"): the times belong to the searched place, which
+ * may be in another time zone than the device.
+ * @returns {{dayKey:string, day:string, hour:number}|null}
+ */
+function forecastLocalTime(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})/.exec(iso || '');
+  if (!m) return null;
+  const date = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return {
+    dayKey: `${m[1]}-${m[2]}-${m[3]}`,
+    day: date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' }),
+    hour: +m[4]
+  };
+}
+
+/** "3 PM" for hour 15. */
+function forecastHourLabel(hour) {
+  return `${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'}`;
+}
+
+/** The 7-day periods as rows; each opens to the forecaster's full wording. */
+function renderForecastDays(periods) {
+  if (!periods.length) return '<p class="fc-empty">The NWS sent no forecast periods.</p>';
+  return periods.map(period => {
+    const pop = period.probabilityOfPrecipitation?.value;
+    const wind = [period.windDirection, period.windSpeed].filter(Boolean).join(' ');
+    const meta = [pop ? `💧 ${Math.round(pop)}% chance of rain` : '', wind ? `Wind ${wind}` : '']
+      .filter(Boolean).map(escapeHtml).join(' · ');
+    const metaHtml = meta ? '<span class="fc-meta">' + meta + '</span>' : '';
+    return `<details class="fc-day${period.isDaytime ? '' : ' fc-night'}"><summary>
+      <span class="fc-icon" aria-hidden="true">${forecastEmoji(period.shortForecast, period.isDaytime)}</span>
+      <span class="fc-name">${escapeHtml(period.name || '')}</span>
+      <span class="fc-temp">${forecastTemp(period)}</span>
+      <span class="fc-short">${escapeHtml(period.shortForecast || '')}</span>
+      ${metaHtml}
+    </summary><p>${escapeHtml(period.detailedForecast || '')}</p></details>`;
+  }).join('');
+}
+
+/** The next 48 hours (hours already over are skipped), under a heading per day. */
+function renderForecastHours(periods, now = Date.now()) {
+  const upcoming = periods.filter(period => Date.parse(period?.endTime) > now).slice(0, 48);
+  if (!upcoming.length) return '<p class="fc-empty">The NWS sent no hourly forecast.</p>';
+  let lastDay = '';
+  const rows = upcoming.map(period => {
+    const when = forecastLocalTime(period.startTime);
+    let heading = '';
+    if (when && when.dayKey !== lastDay) {
+      heading = `<li class="fc-hour-day">${escapeHtml(when.day)}</li>`;
+      lastDay = when.dayKey;
+    }
+    const pop = period.probabilityOfPrecipitation?.value;
+    const wind = [period.windDirection, period.windSpeed].filter(Boolean).join(' ');
+    const popText = pop != null ? '💧' + Math.round(pop) + '%' : '';
+    return `${heading}<li class="fc-hour">
+      <span class="fc-hour-time">${when ? forecastHourLabel(when.hour) : ''}</span>
+      <span class="fc-icon" aria-hidden="true">${forecastEmoji(period.shortForecast, period.isDaytime)}</span>
+      <span class="fc-temp">${forecastTemp(period)}</span>
+      <span class="fc-hour-pop">${popText}</span>
+      <span class="fc-hour-short">${escapeHtml([period.shortForecast, wind].filter(Boolean).join(' · '))}</span>
+    </li>`;
+  });
+  return `<ul class="fc-hours">${rows.join('')}</ul>`;
+}
+
+/** Show the 7-day ('days') or hourly ('hours') view. */
+function selectForecastTab(tab) {
+  const days = tab === 'days';
+  fcTabDays.setAttribute('aria-selected', String(days));
+  fcTabHours.setAttribute('aria-selected', String(!days));
+  fcTabDays.tabIndex = days ? 0 : -1;
+  fcTabHours.tabIndex = days ? -1 : 0;
+  fcDays.hidden = !days;
+  fcHours.hidden = days;
+}
+
+/** Open the forecast for the area on the map (or load it again: the Retry button). */
+async function openForecast() {
+  if (!forecastPoint) return;
+  const { lat, lon } = forecastPoint;
+  const seq = ++forecastSeq;
+  forecastPlace.textContent = `Near ${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+  forecastFoot.textContent = 'National Weather Service';
+  fcDays.innerHTML = fcHours.innerHTML = '<p class="fc-empty">Loading the forecast…</p>';
+  if (!forecastDialog.open) forecastDialog.showModal();
+  try {
+    const forecast = await fetchAreaForecast(lat, lon);
+    if (seq !== forecastSeq || !forecastDialog.open) return;   // closed, or opened again
+    if (forecast.place) forecastPlace.textContent = `Near ${forecast.place}`;
+    fcDays.innerHTML = renderForecastDays(forecast.days);
+    fcHours.innerHTML = renderForecastHours(forecast.hours);
+    forecastFoot.textContent = 'National Weather Service' +
+      (forecast.updated ? ` · updated ${formatWhen(forecast.updated)}` : '');
+  } catch (error) {
+    if (seq !== forecastSeq || !forecastDialog.open) return;
+    fcDays.innerHTML = fcHours.innerHTML =
+      `<p class="fc-empty">Couldn't load the forecast: ${escapeHtml(error.message || 'no answer')}.` +
+      ' <button type="button" class="fc-retry">Try again</button></p>';
+  }
+}
+
+forecastBtn.addEventListener('click', openForecast);
+document.getElementById('forecast-close').addEventListener('click', () => forecastDialog.close());
+fcTabDays.addEventListener('click', () => selectForecastTab('days'));
+fcTabHours.addEventListener('click', () => selectForecastTab('hours'));
+// Tabs: the arrow keys move between them (the usual tab-list keys).
+document.querySelector('.fc-tabs').addEventListener('keydown', e => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const toHours = fcTabDays.getAttribute('aria-selected') === 'true';
+  selectForecastTab(toHours ? 'hours' : 'days');
+  (toHours ? fcTabHours : fcTabDays).focus();
+  e.preventDefault();
+});
+forecastDialog.addEventListener('click', e => {
+  if (e.target === forecastDialog) forecastDialog.close();    // the backdrop (outside the sheet)
+  else if (e.target.closest('.fc-retry')) openForecast();
+});
+// Esc closes the dialog (the browser does that); it must not also reach the
+// page's own Esc handlers (alert popup, pin mode) hidden behind it.
+forecastDialog.addEventListener('keydown', e => { if (e.key === 'Escape') e.stopPropagation(); });
+
+/* ─────────────────────────────────────────────────────────────────────────────
    15. URL QUERY-STRING HELPERS
    ─────────────────────────────────────────────────────────────────────────────
    The app encodes the current search into the URL query string so results can
@@ -5742,6 +6085,7 @@ fabLocate.addEventListener('click', () => {
       // This path builds its single marker directly (not via plotStations), so
       // register it for Tier-3 alert flagging by hand.
       stationRecords = [{ el: iconEl, lat, lng }];
+      setForecastPoint(lat, lng);   // FORECAST describes the station's spot
 
       if (mayUpdateSearchUi(gen)) {
         settledSearch = searchGeneration;

@@ -2730,7 +2730,30 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   // (no wasted download of the starting view: start-up moves are ignored), or
   // LIVE_DEFERRED_LOAD_MS at most.
   assert.match(html, /if \(localStorage\.getItem\(LIVE_ALERTS_ON_KEY\) === '1'\) \{[\s\S]*?setLiveAlerts\(true, \['station', 'lat', 'zip', 'addr'\]\.some\(key => opening\.has\(key\)\)\);/);
-  assert.match(toggle, /liveWaitsForSearch = waitForSearch;\s*if \(waitForSearch\) liveMoveTimer = setTimeout\(\(\) => loadLiveAlerts\(\), LIVE_DEFERRED_LOAD_MS\);\s*else loadLiveAlerts\(\);/);
+  assert.match(toggle, /liveWaitsForSearch = waitForSearch;\s*if \(waitForSearch\) \{[\s\S]*?setTimeout\(\(\) => liveDeferredLoad\(since\), LIVE_DEFERRED_LOAD_MS\);\s*\}\s*else loadLiveAlerts\(\);/);
+  // The fallback keeps waiting while the opening search is still finding the
+  // place (a slow lookup), up to a limit; once the area is drawn the load comes
+  // soon (or at the landing of the fit's flight).
+  const deferred = vm.runInNewContext(`(() => {
+    let loads = 0, timers = [], now = 0;
+    const LIVE_DEFERRED_MAX_MS = 20000;
+    let liveWaitsForSearch = true, settledSearch = 0, searchGeneration = 1, liveMoveTimer = 0;
+    const Date = { now: () => now };
+    const setTimeout = fn => { timers.push(fn); return timers.length; };
+    function loadLiveAlerts() { loads++; }
+    ${extractFunction('liveDeferredLoad')}
+    return {
+      run: () => liveDeferredLoad(0), tick: ms => { now += ms; const fn = timers.shift(); fn && fn(); },
+      settle: () => { settledSearch = searchGeneration; }, get loads() { return loads; }, get pending() { return timers.length; }
+    };
+  })()`);
+  deferred.run();
+  assert.equal(deferred.loads, 0, 'still looking the place up: keep waiting');
+  assert.equal(deferred.pending, 1);
+  deferred.settle();           // the lookup ended (the search failed or landed elsewhere)
+  deferred.tick(1000);
+  assert.equal(deferred.loads, 1);
+  assert.match(extractFunction('liveSearchLanded'), /setTimeout\(\(\) => \{ if \(!mapMoving\) loadLiveAlerts\(\); \}, 350\);/);
   assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;[^\n]*\n[^\n]*\n\s*if \(liveWaitsForSearch\) return;/);
   assert.match(extractFunction('loadStationsAt'), /plotStations\(data, lat, lon, userZoom\);[\s\S]*?liveSearchLanded\(\);/);
   // Pin mode: a tap on an alert area places the pin instead of opening a popup.

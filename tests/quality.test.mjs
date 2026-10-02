@@ -2476,7 +2476,7 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
   assert.match(html, /#search-radius-btn \{ display: none; \}\s*#map\.has-search-radius #search-radius-btn \{ display: inline-flex; \}/);
   assert.match(html, /#map\.radius-off \.leaflet-searchRadius-pane,\s*#map\.radius-off \.search-radius-label \{ display: none; \}/);
   // Narrow phones: just the ring, so the row never wraps into the banner's space.
-  assert.match(html, /@media \(max-width: 359px\) \{\s*#search-radius-btn \.radius-text \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden;/);
+  assert.match(html, /@media \(max-width: 389px\) \{\s*#search-radius-btn \.radius-text \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden;/);
   assert.match(html, /<span class="ring" aria-hidden="true"><\/span><span class="radius-text">RADIUS<\/span>/);
   // The switch stays put while a new search loads, and goes when the search fails.
   const loadAt = extractFunction('loadStationsAt');
@@ -2609,6 +2609,30 @@ test('live alerts: each answer replaces what was drawn in its box (NOAA renumber
   replace([], [box(430, 0, 440, 5)], 435);
   assert.ok(![...fake.livePieces].some(p => p.props.prod_type === 'Flood Watch'));
   assert.equal(drawn.size, fake.livePieces.size);
+});
+
+test('the map buttons fold away behind one small button, and the choice is remembered', () => {
+  // ‹ comes first; the buttons it folds are grouped after it.
+  assert.match(html, /<button type="button" id="map-tools-toggle" aria-expanded="true" aria-controls="map-tools"[\s\S]*?<\/button>\s*<div id="map-tools">\s*<button type="button" id="live-alerts-btn"[\s\S]*?id="live-legend-btn"[\s\S]*?id="search-radius-btn"[\s\S]*?<\/div>\s*<\/div>`;/);
+  assert.match(html, /#map-tools\[hidden\] \{ display: none; \}/);
+  assert.match(html, /#map\.live-alerts-on #map-tools-toggle\[aria-expanded="false"\] \.lamp \{ display: block; \}/);
+  // Run the real toggle: folding hides the group and the colour key, and is stored.
+  const stored = {}, calls = [];
+  const ctx = {
+    mapTools: { hidden: false }, mapToolsToggle: { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } },
+    MAP_TOOLS_FOLDED_KEY: 'wxmap_tools_folded', setLiveLegendOpen: open => calls.push(open),
+    localStorage: { setItem: (k, v) => { stored[k] = v; } }
+  };
+  const setOpen = vm.runInNewContext(`(${extractFunction('setMapToolsOpen')})`, ctx);
+  setOpen(false);
+  assert.equal(ctx.mapTools.hidden, true);
+  assert.equal(ctx.mapToolsToggle.attrs['aria-expanded'], 'false');
+  assert.deepEqual(calls, [false]);
+  assert.equal(stored.wxmap_tools_folded, '1');
+  setOpen(true);
+  assert.equal(ctx.mapTools.hidden, false);
+  assert.equal(stored.wxmap_tools_folded, '0');
+  assert.match(html, /if \(localStorage\.getItem\(MAP_TOOLS_FOLDED_KEY\) === '1'\) setMapToolsOpen\(false\);/);
 });
 
 test('live alerts: a whole-world view replaces every piece, and date-line zones are drawn once', () => {

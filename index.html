@@ -901,10 +901,11 @@
   #search-radius-btn[aria-pressed="false"] { color: var(--text-muted); }
   #map.radius-off .leaflet-searchRadius-pane,
   #map.radius-off .search-radius-label { display: none; }
-  /* Under 360px wide, LIVE ALERTS · 123, KEY and RADIUS don't fit on one row, and
-     a second row would push the controls into the alert banner's space: RADIUS
-     then shows just its ring (the word stays for screen readers, and in the title). */
-  @media (max-width: 359px) {
+  /* Under 390px wide, the fold button, LIVE ALERTS · 123, KEY and RADIUS don't fit
+     on one row, and a second row would push the controls into the alert banner's
+     space: RADIUS then shows just its ring (the word stays for screen readers, and
+     in the title). */
+  @media (max-width: 389px) {
     #search-radius-btn .radius-text {
       position: absolute; width: 1px; height: 1px; overflow: hidden;
       clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
@@ -916,6 +917,15 @@
      ════════════════════════════════════════════════════════════════════════════ */
   .live-alerts-ctl { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
   .live-alerts-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* The buttons the ‹ fold button tucks away (and brings back). */
+  #map-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+  #map-tools[hidden] { display: none; }
+  .live-alerts-ctl #map-tools-toggle { padding: 5px 9px; }
+  #map-tools-toggle svg { flex-shrink: 0; transition: transform 0.2s ease; }
+  #map-tools-toggle[aria-expanded="false"] svg { transform: rotate(180deg); }   /* › when folded */
+  /* Folded with live alerts on: a red lamp on the fold button says they still run. */
+  #map-tools-toggle .lamp { display: none; width: 8px; height: 8px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
+  #map.live-alerts-on #map-tools-toggle[aria-expanded="false"] .lamp { display: block; }
   .live-alerts-ctl button {
     display: inline-flex; align-items: center; gap: 7px; min-height: 30px;
     background: var(--surface); color: var(--accent); border: 1px solid var(--border);
@@ -5098,8 +5108,8 @@ map.on('moveend', () => {
   liveMoveTimer = setTimeout(() => loadLiveAlerts(), 350);
 });
 
-/* The control: [colour key] above [LIVE ALERTS · n] [KEY] [RADIUS], above the zoom
-   buttons. (RADIUS, the search circle's on/off switch, belongs to section 13 but
+/* The control: [colour key] above [‹] [LIVE ALERTS · n] [KEY] [RADIUS], above the
+   zoom buttons; ‹ folds the rest away. (RADIUS, the search circle's on/off switch, belongs to section 13 but
    shares this row so the map's corner keeps a single stack of controls.) */
 const LiveAlertsControl = L.Control.extend({
   options: { position: 'bottomleft' },
@@ -5108,13 +5118,21 @@ const LiveAlertsControl = L.Control.extend({
     box.innerHTML = `
       <ul id="live-legend" hidden aria-label="Alert types in view"></ul>
       <div class="live-alerts-row">
-        <button type="button" id="live-alerts-btn" aria-pressed="false"
-                title="Show every watch, warning and advisory in the map view">
-          <span class="lamp" aria-hidden="true"></span>LIVE ALERTS <span id="live-alerts-count"></span>
+        <button type="button" id="map-tools-toggle" aria-expanded="true" aria-controls="map-tools"
+                aria-label="Map buttons" title="Hide these buttons">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M6.5 1.5 3 5l3.5 3.5"
+            fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="lamp" aria-hidden="true"></span>
         </button>
-        <button type="button" id="live-legend-btn" aria-expanded="false" aria-controls="live-legend" hidden>KEY</button>
-        <button type="button" id="search-radius-btn" aria-pressed="true"
-                title="Show or hide the search circle"><span class="ring" aria-hidden="true"></span><span class="radius-text">RADIUS</span></button>
+        <div id="map-tools">
+          <button type="button" id="live-alerts-btn" aria-pressed="false"
+                  title="Show every watch, warning and advisory in the map view">
+            <span class="lamp" aria-hidden="true"></span>LIVE ALERTS <span id="live-alerts-count"></span>
+          </button>
+          <button type="button" id="live-legend-btn" aria-expanded="false" aria-controls="live-legend" hidden>KEY</button>
+          <button type="button" id="search-radius-btn" aria-pressed="true"
+                  title="Show or hide the search circle"><span class="ring" aria-hidden="true"></span><span class="radius-text">RADIUS</span></button>
+        </div>
       </div>`;
     // Clicks, double-clicks and scrolling here must not reach the map.
     L.DomEvent.disableClickPropagation(box);
@@ -5153,6 +5171,27 @@ searchRadiusBtn.addEventListener('click', () =>
 try {
   if (localStorage.getItem(SEARCH_RADIUS_HIDDEN_KEY) === '1') setSearchRadiusShown(false);
 } catch (_) { /* storage blocked: the circle is shown */ }
+
+/**
+ * Fold the map buttons (LIVE ALERTS, KEY, RADIUS) away behind the small ‹ button,
+ * or bring them back, to keep them off the map. Live alerts and the search
+ * circle keep working while folded (a red lamp on the button shows live alerts
+ * are on); the choice is remembered on this device.
+ */
+const mapToolsToggle = document.getElementById('map-tools-toggle');
+const mapTools = document.getElementById('map-tools');
+const MAP_TOOLS_FOLDED_KEY = 'wxmap_tools_folded';
+function setMapToolsOpen(open) {
+  mapTools.hidden = !open;
+  mapToolsToggle.setAttribute('aria-expanded', String(open));
+  mapToolsToggle.title = open ? 'Hide these buttons' : 'Show LIVE ALERTS, KEY and RADIUS';
+  if (!open) setLiveLegendOpen(false);   // the colour key folds away with them
+  try { localStorage.setItem(MAP_TOOLS_FOLDED_KEY, open ? '0' : '1'); } catch (_) { /* storage blocked */ }
+}
+mapToolsToggle.addEventListener('click', () => setMapToolsOpen(mapTools.hidden));
+try {
+  if (localStorage.getItem(MAP_TOOLS_FOLDED_KEY) === '1') setMapToolsOpen(false);
+} catch (_) { /* storage blocked: the buttons are shown */ }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    15. URL QUERY-STRING HELPERS

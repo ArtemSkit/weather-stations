@@ -1040,9 +1040,15 @@
     /* !important: the button's inline border style would otherwise always win. */
     #tap-pin-btn.active { border-color: var(--accent2) !important; }
 
-    /* ── Leaflet zoom controls (bottom-left) — lifted clear of the version badge ── */
-    .leaflet-control-zoom {
-      margin-bottom: calc(88px + var(--safe-bottom)) !important;
+    /* ── Bottom-left corner: the zoom buttons sit just above the version badge and
+       the LIVE ALERTS · KEY · RADIUS row just above them — low in the corner, not
+       halfway up the screen. (The row can't go below the zoom buttons: it is as
+       wide as the screen allows and would run into the Locate Me button.) ── */
+    .leaflet-control-zoom { margin-bottom: calc(38px + var(--safe-bottom)) !important; }
+    .leaflet-bottom .live-alerts-ctl { margin-bottom: 6px; }
+    /* Below ~340 px the version badge is lifted above the map credits: so are they. */
+    @media (max-width: 340px) {
+      .leaflet-control-zoom { margin-bottom: calc(52px + var(--safe-bottom)) !important; }
     }
     /* viewport-fit=cover: keep Leaflet's own controls out of a landscape notch
        and rounded corners, like every other edge element. */
@@ -1150,17 +1156,17 @@
       top: 8px; width: auto; max-width: none;
       /* Clear a landscape phone's notch / rounded corners (viewport-fit=cover). */
       left: calc(8px + var(--safe-left)); right: calc(8px + var(--safe-right));
-      /* Full width here, so stay above the lifted zoom control and the LIVE ALERTS
-         button above it (left, ~195px above the bottom) and the Locate Me button
-         (right, ~70px). The 4rem floor keeps
-         the summary chip visible on short landscape phones. */
-      max-height: max(4rem, calc(100% - 8px - 220px - var(--safe-bottom)));
+      /* Full width here, so stay above the bottom-left controls (the zoom buttons
+         and the LIVE ALERTS row above them, ~140px up) and the Locate Me button
+         (right, ~70px). The 4rem floor keeps the summary chip visible on short
+         landscape phones. */
+      max-height: max(4rem, calc(100% - 8px - 160px - var(--safe-bottom)));
     }
     /* Pin mode on phones: same idea as the desktop rule above, with phone spacing
        (these selectors match the desktop ones in specificity and come later). */
     main:has(#tap-place-banner.active) #alert-banner {
       top: calc(var(--tap-banner-h, 74px) + 8px);
-      max-height: max(4rem, calc(100% - var(--tap-banner-h, 74px) - 8px - 220px - var(--safe-bottom)));
+      max-height: max(4rem, calc(100% - var(--tap-banner-h, 74px) - 8px - 160px - var(--safe-bottom)));
     }
     main.sheet-open:has(#tap-place-banner.active) #alert-banner {
       max-height: max(4rem, calc(100% - var(--tap-banner-h, 74px) - 8px - var(--sheet-h, 70vh) - 74px));

@@ -2622,7 +2622,7 @@ test('the map buttons fold away behind one small button, and the choice is remem
   const stored = {}, calls = [];
   const ctx = {
     mapTools: { hidden: false }, mapToolsToggle: { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } },
-    MAP_TOOLS_FOLDED_KEY: 'wxmap_tools_folded', setLiveLegendOpen: open => calls.push(open),
+    MAP_TOOLS_FOLDED_KEY: 'wxmap_tools_folded', setLiveLegendOpen: open => calls.push(open), liveAlertsOn: true,
     localStorage: { setItem: (k, v) => { stored[k] = v; } }
   };
   const setOpen = vm.runInNewContext(`(${extractFunction('setMapToolsOpen')})`, ctx);
@@ -2631,9 +2631,16 @@ test('the map buttons fold away behind one small button, and the choice is remem
   assert.equal(ctx.mapToolsToggle.attrs['aria-expanded'], 'false');
   assert.deepEqual(calls, [false]);
   assert.equal(stored.wxmap_tools_folded, '1');
+  // Folded with live alerts on: screen readers hear it, not just a red dot.
+  assert.equal(ctx.mapToolsToggle.attrs['aria-label'], 'Map buttons (live alerts on)');
   setOpen(true);
   assert.equal(ctx.mapTools.hidden, false);
+  assert.equal(ctx.mapToolsToggle.attrs['aria-label'], 'Map buttons');
   assert.equal(stored.wxmap_tools_folded, '0');
+  // Folded with live alerts off: no "(live alerts on)".
+  ctx.liveAlertsOn = false;
+  setOpen(false);
+  assert.equal(ctx.mapToolsToggle.attrs['aria-label'], 'Map buttons');
   assert.match(html, /if \(localStorage\.getItem\(MAP_TOOLS_FOLDED_KEY\) === '1'\) setMapToolsOpen\(false\);/);
 });
 

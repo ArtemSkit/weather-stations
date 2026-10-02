@@ -5317,7 +5317,9 @@ function renderLiveLabels() {
 let liveBannerSignature = null;
 
 function renderLiveBanner() {
-  if (!liveAlertsOn) return;
+  // While the view's own answer is on its way, keep the list as it is rather than
+  // dropping what hasn't loaded yet and adding it back a moment later.
+  if (!liveAlertsOn || liveViewPending) return;
   const features = [...liveAlertsDrawnInView()].map(([id, { props }]) => ({
     id: typeof id === 'string' ? id : '',
     properties: { event: props.prod_type, onset: props.onset, ends: props.ends,

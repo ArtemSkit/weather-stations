@@ -808,7 +808,7 @@ test('round-9 fixes: narrow header, drag vs click, pin-mode banner, colours, Loc
     pressStartedInMap: pressInMap,
     map: { dragging: { moved: () => true }, closePopup: () => { closed++; } },
     openAlertPopupElement: () => ({ contains: () => false }),
-    alertAreaOwners: new Map(), activeAlertAreaOwner: {}
+    alertAreaOwners: new Map(), activeAlertAreaOwner: {}, livePopup: null
   });
   const click = detail => ({ detail, target: { closest: () => null }, stopPropagation() {} });
   handler(true)(click(1));    // the click that ends a pan of the map: ignored
@@ -1117,10 +1117,10 @@ test('alert popup selection toggles, switches areas, and closes on click-away or
     [siblingAreaElement, activeAlertAreaOwner],
     [differentAreaElement, differentAlertAreaOwner]
   ]);
-  const clickAway = new Function('openAlertPopupElement', 'map', 'alertAreaOwners', 'activeAlertAreaOwner', `
+  const clickAway = new Function('openAlertPopupElement', 'map', 'alertAreaOwners', 'activeAlertAreaOwner', 'livePopup', `
     ${extractFunction('handleAlertPopupClickAway')}
     return handleAlertPopupClickAway;
-  `)(openAlertPopupElement, mapStub, alertAreaOwners, activeAlertAreaOwner);
+  `)(openAlertPopupElement, mapStub, alertAreaOwners, activeAlertAreaOwner, null);
 
   const makeEvent = ({ insidePopup = false, alertArea = null } = {}) => ({
     target: {
@@ -2451,7 +2451,23 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(toggle, /map\.removeLayer\(liveAlertsRenderer\)/);
   assert.match(html, /#map\.live-alerts-on \.wx-alert-area,\s*#map\.live-alerts-on \.alert-area-label \{ display: none; \}/);
   // Pin mode: a tap on an alert area places the pin instead of opening a popup.
-  assert.match(extractFunction('replaceLivePieces'), /if \(!tapModeActive\) openLiveAlertPopup/);
+  const pieces = extractFunction('replaceLivePieces');
+  assert.match(pieces, /if \(tapModeActive\) return;[\s\S]*openLiveAlertPopup\(props, e\.latlng, e\.originalEvent\)/);
+
+  // A click on the open live popup's own alert closes it and leaves it closed (a
+  // toggle): the click-away handler remembers that click, and the area's click
+  // handler, which runs next with the same DOM event, then skips reopening it.
+  assert.match(pieces, /if \(liveClosingClick\?\.event === e\.originalEvent && liveClosingClick\.capId === props\.cap_id\) return;/);
+  const ctx = {
+    pressStartedInMap: false, alertAreaOwners: new Map(), activeAlertAreaOwner: null,
+    map: { closePopup() {} }, openAlertPopupElement: () => ({ contains: () => false }),
+    livePopup: { isOpen: () => true }, livePopupCapId: 'cap-1', liveClosingClick: null
+  };
+  const clickAway = vm.runInNewContext(`(${extractFunction('handleAlertPopupClickAway')})`, ctx);
+  const click = { detail: 1, target: { closest: () => null }, stopPropagation() {} };
+  clickAway(click);
+  assert.equal(ctx.liveClosingClick.event, click);
+  assert.equal(ctx.liveClosingClick.capId, 'cap-1');
 });
 
 test('live alerts: each answer replaces what was drawn in its box (NOAA renumbers records)', () => {

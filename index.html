@@ -3750,6 +3750,10 @@ function handleAlertPopupClickAway(event) {
     return; // Leaflet closes the previous popup and opens this area's at the click.
   }
 
+  // A click on the live-alert canvas (14C) that closes its popup: remember it, so
+  // if it landed on that same alert its own click handler, which runs next, leaves
+  // the popup closed (a toggle, like the areas above) instead of reopening it.
+  if (livePopup?.isOpen()) liveClosingClick = { event, capId: livePopupCapId };
   map.closePopup();
   if (clickedAlertArea) event.stopPropagation();
 }
@@ -4636,6 +4640,8 @@ let liveState = 'off';
 let liveFailureShown = false;        // one toast per run of failures, not one per pan
 let liveTruncatedShown = false;      // …and one per stretch of over-full answers
 let livePopup = null;                // the live-alert popup, while one is open
+let livePopupCapId = null;           // …and the alert it shows
+let liveClosingClick = null;         // the click that last closed it (see handleAlertPopupClickAway)
 
 /** Simplification allowed for a zoom level, in degrees: about one screen pixel. */
 function liveAlertTolerance(zoom) {
@@ -4836,7 +4842,10 @@ function replaceLivePieces(features, queried, nearLon) {
     if (!bounds.isValid()) return;
     layer.on('click', e => {
       // Pin mode: the tap places the pin (the map's own click handler), no popup.
-      if (!tapModeActive) openLiveAlertPopup(props, e.latlng, e.originalEvent);
+      if (tapModeActive) return;
+      // This very click just closed this alert's own popup: leave it closed.
+      if (liveClosingClick?.event === e.originalEvent && liveClosingClick.capId === props.cap_id) return;
+      openLiveAlertPopup(props, e.latlng, e.originalEvent);
     });
     layer.on('mouseover', () => highlightLiveAlert(props.cap_id, true));
     layer.on('mouseout',  () => highlightLiveAlert(props.cap_id, false));
@@ -4883,7 +4892,8 @@ function liveAlertsInView() {
  * A keyboard user on a row keeps focus on the same alert type.
  */
 function renderLiveLegend() {
-  const focusedEvent = liveLegend.contains(document.activeElement) ? document.activeElement.dataset.event : null;
+  const hadFocus = liveLegend.contains(document.activeElement);
+  const focusedEvent = hadFocus ? document.activeElement.dataset.event : null;
   const rows = [...liveAlertsInView().entries()].sort((a, b) =>
     (LIVE_SIG_RANK[b[1].sig] ?? 0) - (LIVE_SIG_RANK[a[1].sig] ?? 0) || b[1].ids.size - a[1].ids.size);
   const total = rows.reduce((n, [, v]) => n + v.ids.size, 0);
@@ -4902,13 +4912,10 @@ function renderLiveLegend() {
     li.textContent = text;
     liveLegend.appendChild(li);
   };
-  if (liveState === 'loading') { note('Loading alerts…'); return; }
-  if (liveState === 'error') note('Couldn\'t load live alerts — retrying…');
-  if (!rows.length) {
-    if (liveState === 'ok') note(liveViewPending ? 'Loading alerts…' : 'No active alerts in this view.');
-    return;
-  }
-  rows.forEach(([event, { ids }]) => {
+  if (liveState === 'loading') note('Loading alerts…');
+  else if (liveState === 'error') note('Couldn\'t load live alerts — retrying…');
+  else if (!rows.length) note(liveViewPending ? 'Loading alerts…' : 'No active alerts in this view.');
+  if (liveState !== 'loading') rows.forEach(([event, { ids }]) => {
     const li = document.createElement('li');
     const button = document.createElement('button');
     button.type = 'button';
@@ -4921,6 +4928,9 @@ function renderLiveLegend() {
     liveLegend.appendChild(li);
     if (event === focusedEvent) button.focus();
   });
+  // The focused row's alert type left the view: keep keyboard focus close by, on
+  // the KEY button, rather than letting it fall back to the top of the page.
+  if (hadFocus && !liveLegend.contains(document.activeElement)) liveLegendBtn.focus();
 }
 
 /** Hide or show every area of one alert type (a colour-key row). */
@@ -4945,10 +4955,10 @@ function openLiveAlertPopup(props, latlng, clickEvent) {
   const basic = { event: props.prod_type, onset: props.onset || props.issuance, ends: props.ends,
                   expires: props.expiration };
   const options = { className: 'wx-alert-popup', autoPan: true };
-  const point = clickEvent?.clientX != null ? clickEvent : map.latLngToContainerPoint(latlng);
-  fitAlertPopup(options, point.clientX ?? point.x, point.clientY ?? point.y);
+  fitAlertPopup(options, clickEvent.clientX, clickEvent.clientY);
   const popup = L.popup(options).setLatLng(latlng).setContent(alertAreaPopupHtml(basic, color));
   livePopup = popup;
+  livePopupCapId = props.cap_id;
   popup.on('remove', () => { if (livePopup === popup) livePopup = null; });
   popup.openOn(map);
 

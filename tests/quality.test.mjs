@@ -110,6 +110,7 @@ test('a failed newer search keeps the area that is loading or shown', async () =
     let stationMarkers = [];
     const popupPanel = { style: {} };
     const overlayText = {};
+    const map = { getContainer: () => ({ classList: { add() {}, remove() {} } }) };
     function clearAlerts() {}
     function clearStations() { stationMarkers = []; }
     function moveMapTo() {}
@@ -2451,6 +2452,10 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
   // Narrow phones: just the ring, so the row never wraps into the banner's space.
   assert.match(html, /@media \(max-width: 359px\) \{\s*#search-radius-btn \.radius-text \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden;/);
   assert.match(html, /<span class="ring" aria-hidden="true"><\/span><span class="radius-text">RADIUS<\/span>/);
+  // The switch stays put while a new search loads, and goes when the search fails.
+  const loadAt = extractFunction('loadStationsAt');
+  assert.match(loadAt, /clearStations\(\);[\s\S]*?classList\.add\('has-search-radius'\);\s*setStatus\('loading'/);
+  assert.match(loadAt, /if \(area === areaGeneration\) \{\s*areaLoading = null;\s*map\.getContainer\(\)\.classList\.remove\('has-search-radius'\);/);
   const toggleRadius = extractFunction('setSearchRadiusShown');
   assert.match(toggleRadius, /classList\.toggle\('radius-off', !shown\)/);
   assert.match(toggleRadius, /try \{ localStorage\.setItem\(SEARCH_RADIUS_HIDDEN_KEY, shown \? '0' : '1'\); \} catch/);

@@ -3671,6 +3671,10 @@ async function loadStationsAt(lat, lon, gen) {
   // must not linger (or stay clickable and open a stale panel) during the fetch,
   // nor be left behind next to the new location if the station fetch fails.
   clearStations();
+  // The circle is redrawn once the stations are in: keep its RADIUS switch in
+  // place meanwhile rather than letting it blink out. plotStations settles it
+  // (shown with the new circle, hidden if no station is found); so does a failure.
+  map.getContainer().classList.add('has-search-radius');
 
   setStatus('loading', 'FETCHING STATIONS…');
   overlayText.textContent = 'Fetching weather stations…';
@@ -3683,7 +3687,10 @@ async function loadStationsAt(lat, lon, gen) {
   try {
     data = await fetchStations(lat, lon);
   } catch (err) {
-    if (area === areaGeneration) areaLoading = null;
+    if (area === areaGeneration) {
+      areaLoading = null;
+      map.getContainer().classList.remove('has-search-radius');   // no circle is coming
+    }
     // This area's own failure. Its caller reports it only while its search is
     // the newest; if a newer search has meanwhile failed before reaching the map,
     // this is still the area on screen, so explain why it stayed empty here.

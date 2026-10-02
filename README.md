@@ -12,15 +12,16 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 4. [Draggable Pin](#draggable-pin)
 5. [Locate Me Button](#locate-me-button)
 6. [Search Circle](#search-circle)
-7. [Weather Station Popup](#weather-station-popup)
-8. [Dangerous-Weather Alerts](#dangerous-weather-alerts)
-9. [URL Query Parameters](#url-query-parameters)
-10. [Progressive Web App (PWA)](#progressive-web-app-pwa)
-11. [Architecture](#architecture)
-12. [Data Sources & APIs](#data-sources--apis)
-13. [Offline Support](#offline-support)
-14. [Quality Checks](#quality-checks)
-15. [Browser Compatibility](#browser-compatibility)
+7. [Forecast](#forecast)
+8. [Weather Station Popup](#weather-station-popup)
+9. [Dangerous-Weather Alerts](#dangerous-weather-alerts)
+10. [URL Query Parameters](#url-query-parameters)
+11. [Progressive Web App (PWA)](#progressive-web-app-pwa)
+12. [Architecture](#architecture)
+13. [Data Sources & APIs](#data-sources--apis)
+14. [Offline Support](#offline-support)
+15. [Quality Checks](#quality-checks)
+16. [Browser Compatibility](#browser-compatibility)
 
 ---
 
@@ -39,6 +40,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Dangerous-weather alerts** | Active NWS watches/warnings/advisories for the area in a severity-ranked banner; each alert's footprint drawn on the map; a pulsing red ring on stations inside a warning polygon |
 | **Alert map areas** | Every alert's area drawn as a uniquely-coloured polygon with an event label and a click/tap popup (severity + in-effect time window) |
 | **Live alerts** | One button shows every watch, warning and advisory in the map view, in the NWS map colours, and keeps adding new ones as you pan or zoom |
+| **Forecast** | The **FORECAST** button shows the National Weather Service 7-day and hourly forecast for the searched area |
 | **Sky conditions** | Cloud layer amount and base altitude |
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
@@ -190,6 +192,17 @@ NOAA's station list for a location covers its whole forecast area — often 150�
 A **glowing circle** marks that area, with a label such as **"8 stations · within 41 mi"**. Nothing is drawn inside the circle; the glow, a slowly turning dotted ring and a gentle dimming of the map are all **outside** it. The map zooms in to fit the circle — but never zooms **out** for it: if you are already zoomed in closer (say, Locate Me while looking at a few streets), the map keeps your zoom and just moves to the spot. The circle grows out from the searched point (instantly when the system asks for reduced motion). A direct `?station=` link shows just that station, without a circle.
 
 The **RADIUS** button next to LIVE ALERTS (shown while a circle is drawn) turns the circle, its glow, the dimming and the label off to see the plain map — the stations stay — and on again. The choice is remembered on that device for later searches.
+
+---
+
+## Forecast
+
+Once an area is loaded, a **FORECAST** button appears in the header. It opens the National Weather Service forecast for the searched point (or, for a `?station=` link, the station's spot):
+
+- **7 DAYS** — the forecaster's day and night periods ("Tonight", "Friday", "Friday Night", …) with the temperature in °F and °C, the sky and chance of rain in words, the chance of rain and the wind. Tap a period for the full wording ("A slight chance of showers and thunderstorms between 10pm and 1am…").
+- **HOURLY** — the next 48 hours, grouped by day: temperature, chance of rain, sky and wind. Times are the searched place's own clock, even when it is in another time zone than your device.
+
+It comes straight from the NWS (free, no key): `/points/{lat},{lon}` names the forecast grid cell, and its two forecast links (only ever NOAA's own) are fetched. A forecast is reused for 10 minutes; when the NWS forecast service hiccups (it sometimes answers an error for a minute or two), a **Try again** button reloads it. On phones it opens as a sheet from the bottom of the screen; Esc, the ✕ or a tap outside closes it.
 
 ---
 
@@ -427,7 +440,7 @@ weather-stations/
 
 | Service | Purpose | Key required |
 |---|---|---|
-| [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, hourly forecast (precip chance), active alerts, alert-area zone geometry | No |
+| [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, 7-day and hourly forecasts (and the current hour's chance of rain), active alerts, alert-area zone geometry | No |
 | [NOAA watch/warning/advisory map service](https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer) | Live alerts: every alert area inside the map view, one request per view | No |
 | [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates | No |
 | [Photon (komoot)](https://photon.komoot.io/) | Street address → coordinates (+ ZIP fallback) | No |

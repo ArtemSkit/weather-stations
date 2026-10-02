@@ -120,6 +120,7 @@ test('a failed newer search keeps the area that is loading or shown', async () =
     function hideOverlay() { log.push('overlay hidden'); }
     function showToast(m) { log.push('toast:' + m); }
     function loadAlertsForArea() { log.push('alerts'); }
+    function setForecastPoint() { log.push('forecast point'); }
     ${extractFunction('stationCountLabel')}
     ${extractFunction('mayUpdateSearchUi')}
     ${extractFunction('reportSearchError')}
@@ -2667,6 +2668,86 @@ test('the map buttons fold away behind one small button, and the choice is remem
   setOpen(false);
   assert.equal(ctx.mapToolsToggle.attrs['aria-label'], 'Map buttons');
   assert.match(html, /if \(localStorage\.getItem\(MAP_TOOLS_FOLDED_KEY\) === '1'\) setMapToolsOpen\(false\);/);
+});
+
+test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA links only', async () => {
+  // Markup: a header button (hidden until an area loads) and a modal dialog with two tabs.
+  assert.match(html, /<button type="button" id="forecast-btn" hidden/);
+  assert.match(html, /<dialog id="forecast-dialog" aria-labelledby="forecast-title">/);
+  assert.match(html, /role="tab" id="fc-tab-days" aria-selected="true" aria-controls="fc-days"/);
+  // Every loaded area (and a ?station link) points FORECAST at itself.
+  assert.match(extractFunction('loadStationsAt'), /plotStations\(data, lat, lon, userZoom\);\s*setForecastPoint\(lat, lon\);/);
+  assert.match(html, /stationRecords = \[\{ el: iconEl, lat, lng \}\];\s*setForecastPoint\(lat, lng\);/);
+
+  // The loader follows only NOAA's own /gridpoints/ links and reads both forecasts.
+  const requested = [];
+  const answers = {
+    'https://api.weather.gov/points/32.7600,-97.8000': { properties: {
+      forecast: 'https://api.weather.gov/gridpoints/FWD/52,104/forecast',
+      forecastHourly: 'https://api.weather.gov/gridpoints/FWD/52,104/forecast/hourly',
+      relativeLocation: { properties: { city: 'Weatherford', state: 'TX' } } } },
+    'https://api.weather.gov/gridpoints/FWD/52,104/forecast': { properties: { updateTime: 'u', periods: [{ name: 'Tonight' }] } },
+    'https://api.weather.gov/gridpoints/FWD/52,104/forecast/hourly': { properties: { periods: [{ number: 1 }, { number: 2 }] } }
+  };
+  const load = vm.runInNewContext(`(() => {
+    const FORECAST_VIEW_TTL_MS = 600000, FORECAST_VIEW_CACHE_LIMIT = 20;
+    const forecastViewCache = new Map();
+    ${extractFunction('isTrustedNwsApiUrl')}
+    ${extractFunction('setBoundedCache')}
+    async ${extractFunction('fetchAreaForecast')}
+    return fetchAreaForecast;
+  })()`, { URL, Date, fetchJsonWithTimeout: async url => {
+    requested.push(url);
+    return { response: { ok: url in answers, status: url in answers ? 200 : 500 }, data: answers[url] };
+  } });
+  const forecast = await load(32.76, -97.8);
+  assert.equal(forecast.place, 'Weatherford, TX');
+  assert.equal(forecast.days.length, 1);
+  assert.equal(forecast.hours.length, 2);
+  await load(32.76, -97.8);
+  assert.equal(requested.length, 3, 'a second open within minutes reuses the answer');
+  // A /points answer linking anywhere but NOAA's own API is refused.
+  answers['https://api.weather.gov/points/40.0000,-100.0000'] = { properties: {
+    forecast: 'https://evil.example/forecast', forecastHourly: 'https://api.weather.gov/gridpoints/X/1,1/forecast/hourly' } };
+  await assert.rejects(load(40, -100), /no forecast for this spot/);
+  assert.ok(!requested.includes('https://evil.example/forecast'));
+
+  // Rendering: text is escaped, hours already over are skipped, each day gets a heading
+  // in the PLACE's own clock (the timestamp's), and °C sits beside °F.
+  // (escapeHtml's own quote regex trips extractFunction; this does the same job.)
+  const escapeHtml = v => String(v ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+  const r = vm.runInNewContext(`(() => {
+    ${extractFunction('forecastEmoji')}
+    ${extractFunction('forecastTemp')}
+    ${extractFunction('forecastLocalTime')}
+    ${extractFunction('forecastHourLabel')}
+    ${extractFunction('renderForecastDays')}
+    ${extractFunction('renderForecastHours')}
+    return { renderForecastDays, renderForecastHours, forecastEmoji, forecastTemp };
+  })()`, { Date, escapeHtml });
+  const days = r.renderForecastDays([{ name: 'Tonight <b>', isDaytime: false, temperature: 68, temperatureUnit: 'F',
+    shortForecast: 'Chance Showers And Thunderstorms', detailedForecast: 'Low around 68.',
+    probabilityOfPrecipitation: { value: 40 }, windSpeed: '5 mph', windDirection: 'SE' }]);
+  assert.match(days, /Tonight &#60;b&#62;/);
+  assert.match(days, /68°F<small>20°C<\/small>/);
+  assert.match(days, /💧 40% chance of rain · Wind SE 5 mph/);
+  assert.match(days, /⛈️/);
+  const now = Date.parse('2026-10-01T22:30:00-05:00');
+  const hour = (start, end) => ({ startTime: start, endTime: end, temperature: 70, temperatureUnit: 'F',
+    shortForecast: 'Clear', isDaytime: false, probabilityOfPrecipitation: { value: 0 } });
+  const hours = r.renderForecastHours([
+    hour('2026-10-01T21:00:00-05:00', '2026-10-01T22:00:00-05:00'),   // over: skipped
+    hour('2026-10-01T22:00:00-05:00', '2026-10-01T23:00:00-05:00'),
+    hour('2026-10-01T23:00:00-05:00', '2026-10-02T00:00:00-05:00'),
+    hour('2026-10-02T00:00:00-05:00', '2026-10-02T01:00:00-05:00')
+  ], now);
+  assert.equal((hours.match(/class="fc-hour"/g) || []).length, 3);
+  assert.deepEqual([...hours.matchAll(/fc-hour-day">([^<]+)</g)].map(m => m[1]), ['Thursday, Oct 1', 'Friday, Oct 2']);
+  assert.match(hours, /fc-hour-time">10 PM</);
+  assert.match(hours, /fc-hour-time">12 AM</);
+  assert.equal(r.forecastEmoji('Mostly Sunny', true), '⛅');
+  assert.equal(r.forecastEmoji('Clear', false), '🌙');
+  assert.equal(r.forecastTemp({ temperature: null }), '—');
 });
 
 test('live alerts: a whole-world view replaces every piece, and date-line zones are drawn once', () => {

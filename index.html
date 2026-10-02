@@ -656,14 +656,14 @@
 
   /* ── Popup footer: observation timestamp (left) + live refresh indicator (right) ── */
   .popup-footer {
-    padding: 8px 14px; border-top: 1px solid var(--border);
+    padding: 10px 14px; border-top: 1px solid var(--border);
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
   }
-  .update-time { font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; }
+  .update-time { font-size: 0.68rem; color: var(--text-muted); letter-spacing: 0.04em; }
   /* The refresh control keeps its size; a long timestamp ("… · 2 h old") wraps instead. */
-  .update-indicator { display: flex; align-items: center; gap: 5px; flex-shrink: 0; white-space: nowrap; }
+  .update-indicator { display: flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap; }
   .update-dot {
-    width: 5px; height: 5px; border-radius: 50%;
+    width: 7px; height: 7px; border-radius: 50%;
     background: var(--green); flex-shrink: 0;
   }
   .update-dot.stale      { background: var(--red); }   /* the last refresh failed */
@@ -671,15 +671,15 @@
 
   /* Editable refresh interval — inline number input */
   .interval-wrap {
-    display: flex; align-items: center; gap: 3px;
-    font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em;
+    display: flex; align-items: center; gap: 5px;
+    font-size: 0.7rem; color: var(--text-muted); letter-spacing: 0.04em;
   }
   #interval-input {
-    width: 36px;
+    width: 52px; height: 24px;
     background: var(--bg); border: 1px solid var(--border);
-    border-radius: 2px; color: var(--accent);
-    font-family: 'Space Mono', monospace; font-size: 0.58rem;
-    text-align: center; padding: 1px 3px; outline: none;
+    border-radius: 3px; color: var(--accent);
+    font-family: 'Space Mono', monospace; font-size: 0.75rem;
+    text-align: center; padding: 1px 4px; outline: none;
     transition: border-color 0.15s;
     appearance: textfield;  /* hide number spinner arrows */
     -moz-appearance: textfield;

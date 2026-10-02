@@ -587,6 +587,9 @@ test('round-4 UI fixes: popups, keyboard panel, iOS zoom, cookies, fonts', () =>
 
   assert.match(html, /\.weather-item-value \.na \{/);                 // the N/A span is a child
   assert.match(html, /#interval-input \{[^}]*font-size: 16px !important;/);   // no iOS zoom
+  // Desktop: the refresh controls are big enough to read and hit.
+  assert.match(html, /\.interval-wrap \{[^}]*font-size: 0\.7rem;/);
+  assert.match(html, /#interval-input \{\s*width: 52px; height: 24px;[^}]*font-size: 0\.75rem;/);
   assert.match(html, /try \{\s*if \(document\.cookie\.includes\('wxmap_geocodio_key='\)\)/);
   assert.match(html, /rel="stylesheet" media="print" onload="this\.media='all'"/);
   assert.match(html, /<link rel="preconnect" href="https:\/\/fonts\.gstatic\.com" crossorigin>/);

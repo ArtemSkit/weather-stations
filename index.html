@@ -6167,14 +6167,34 @@ async function fetchAreaForecast(lat, lon) {
   }
   const [days, hours] = answers.map(({ data }) =>
     (Array.isArray(data?.properties?.periods) ? data.properties.periods : []));
-  const near = props.relativeLocation?.properties;
   const result = {
     at: Date.now(), days, hours,
-    place: near?.city && near?.state ? `${near.city}, ${near.state}` : '',
+    place: forecastPlaceLabel(props.relativeLocation),
     updated: answers[0].data?.properties?.updateTime || ''
   };
   setBoundedCache(forecastViewCache, key, result, FORECAST_VIEW_CACHE_LIMIT);
   return result;
+}
+
+/**
+ * Where the forecast is, from the NWS's nearest named place: "8 mi NW of
+ * Bulverde, TX" — or "Near San Antonio, TX" when the spot is within a mile of it
+ * or inside it. The NWS measures the distance to the place's edge (its limits),
+ * not its centre — a spot inside a city gets 0 m — and its bearing points from
+ * the place to the spot (a spot northeast of Boerne gets 36°), the way the NWS's
+ * own pages say "8 Miles NW Bulverde TX".
+ * @param {Object} relativeLocation - the /points answer's `relativeLocation`
+ * @returns {string} '' when the NWS names no place
+ */
+function forecastPlaceLabel(relativeLocation) {
+  const near = relativeLocation?.properties;
+  if (!near?.city || !near?.state) return '';
+  const name = near.city + ', ' + near.state;
+  const metres = near.distance?.value;
+  const miles = Number.isFinite(metres) ? metres * (/km/.test(near.distance.unitCode || '') ? 1000 : 1) / 1609.344 : NaN;
+  const bearing = near.bearing?.value;
+  if (!(miles >= 1) || !Number.isFinite(bearing)) return 'Near ' + name;
+  return Math.round(miles) + ' mi ' + degToCompass(bearing) + ' of ' + name;
 }
 
 /** A weather symbol for an NWS short forecast ("Chance Showers And Thunderstorms"). */
@@ -6352,7 +6372,7 @@ async function openForecast() {
   try {
     const forecast = await fetchAreaForecast(lat, lon);
     if (seq !== forecastSeq || !forecastDialog.open) return;   // closed, or opened again
-    if (forecast.place) forecastPlace.textContent = `Near ${forecast.place}`;
+    if (forecast.place) forecastPlace.textContent = forecast.place;
     fcDays.innerHTML = renderForecastDays(forecast.days);
     fcHours.innerHTML = renderForecastHours(forecast.hours);
     forecastFoot.textContent = 'National Weather Service' +

@@ -197,7 +197,7 @@ The **RADIUS** button next to LIVE ALERTS (shown while a circle is drawn) turns 
 
 ## Forecast
 
-Once an area is loaded, a **FORECAST** button appears in the header. It opens the National Weather Service forecast for the searched point (or, for a `?station=` link, the station's spot):
+Once an area is loaded, a **FORECAST** button appears in the header. It opens the National Weather Service forecast for the searched point (or, for a `?station=` link, the station's spot) — not a station's: the NWS forecasts on a grid of ~2.5 km squares, and this is the square that point falls in. Its header says where that is the NWS way, from the nearest named place: "8 mi NW of Bulverde, TX" (measured to the place's edge), or "Near San Antonio, TX" within a mile of it or inside it:
 
 - **7 DAYS** — one row per day with the day's **high and the night's low** (↑ 73° ↓ 63°, with °C beneath), the day's sky and the night's ("Night: Mostly Clear"), the higher of the two chances of rain and the wind. A forecast that starts at night ("Tonight") shows that night's low on its own first. Tap a day for the forecaster's full wording for the day and the night ("A slight chance of showers and thunderstorms between 10pm and 1am…").
 - **HOURLY** — the next 48 hours, grouped by day: temperature, chance of rain, sky and wind. Times are the searched place's own clock, even when it is in another time zone than your device.

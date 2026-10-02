@@ -2891,7 +2891,8 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     'https://api.weather.gov/points/32.7600,-97.8000': { properties: {
       forecast: 'https://api.weather.gov/gridpoints/FWD/52,104/forecast',
       forecastHourly: 'https://api.weather.gov/gridpoints/FWD/52,104/forecast/hourly',
-      relativeLocation: { properties: { city: 'Weatherford', state: 'TX' } } } },
+      relativeLocation: { properties: { city: 'Weatherford', state: 'TX',
+        distance: { unitCode: 'wmoUnit:m', value: 13500 }, bearing: { unitCode: 'wmoUnit:degree_(angle)', value: 36 } } } } },
     'https://api.weather.gov/gridpoints/FWD/52,104/forecast': { properties: { updateTime: 'u', periods: [{ name: 'Tonight' }] } },
     'https://api.weather.gov/gridpoints/FWD/52,104/forecast/hourly': { properties: { periods: [{ number: 1 }, { number: 2 }] } }
   };
@@ -2900,6 +2901,8 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     const forecastViewCache = new Map();
     ${extractFunction('isTrustedNwsApiUrl')}
     ${extractFunction('setBoundedCache')}
+    ${extractFunction('degToCompass')}
+    ${extractFunction('forecastPlaceLabel')}
     async ${extractFunction('fetchAreaForecast')}
     return fetchAreaForecast;
   })()`, { URL, Date, fetchJsonWithTimeout: async url => {
@@ -2907,11 +2910,23 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     return { response: { ok: url in answers, status: url in answers ? 200 : 500 }, data: answers[url] };
   } });
   const forecast = await load(32.76, -97.8);
-  assert.equal(forecast.place, 'Weatherford, TX');
+  // Where it is: distance and direction from the NWS's nearest named place.
+  assert.equal(forecast.place, '8 mi NE of Weatherford, TX');
   assert.equal(forecast.days.length, 1);
   assert.equal(forecast.hours.length, 2);
   await load(32.76, -97.8);
   assert.equal(requested.length, 3, 'a second open within minutes reuses the answer');
+  const label = vm.runInNewContext(`(() => { ${extractFunction('degToCompass')} ${extractFunction('forecastPlaceLabel')} return forecastPlaceLabel; })()`);
+  const at = (value, bearing, unitCode = 'wmoUnit:m') => ({ properties: { city: 'Boerne', state: 'TX',
+    distance: { unitCode, value }, bearing: { value: bearing } } });
+  assert.equal(label(at(0, 0)), 'Near Boerne, TX', 'inside the place (the NWS gives 0 m)');
+  assert.equal(label(at(1200, 90)), 'Near Boerne, TX', 'under a mile');
+  assert.equal(label(at(3376, 36)), '2 mi NE of Boerne, TX');
+  assert.equal(label(at(2041, 232)), '1 mi SW of Boerne, TX');
+  assert.equal(label(at(16.1, 350, 'wmoUnit:km')), '10 mi N of Boerne, TX');
+  assert.equal(label(at(5000)), 'Near Boerne, TX', 'no bearing: no direction to give');
+  assert.equal(label({ properties: { city: 'Boerne' } }), '');
+  assert.equal(label(undefined), '');
   // A /points answer linking anywhere but NOAA's own API is refused.
   answers['https://api.weather.gov/points/40.0000,-100.0000'] = { properties: {
     forecast: 'https://evil.example/forecast', forecastHourly: 'https://api.weather.gov/gridpoints/X/1,1/forecast/hourly' } };

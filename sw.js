@@ -30,7 +30,7 @@
  * the bottom-left version badge, so the badge always reflects the version actually
  * running. Keep APP_VERSION in sync with APP_VERSION_FALLBACK in index.html.
  */
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const CACHE_NAME = `wxmap-weather-stations-v${APP_VERSION}`;
 // The legacy alternatives are retained only so this release can clean up caches
 // created before the more ownership-specific name was introduced: early releases

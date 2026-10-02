@@ -873,6 +873,11 @@
      removed), so nothing is drawn twice and they return intact afterwards. */
   #map.live-alerts-on .wx-alert-area,
   #map.live-alerts-on .alert-area-label { display: none; }
+  /* Live alerts off: their canvas, which covers the whole map, is hidden so it
+     can't catch clicks meant for the searched area's polygons below it. Hidden,
+     never removed: Leaflet's canvas, once removed and added back, keeps a stale
+     redraw request and draws nothing new until the map is moved. */
+  #map:not(.live-alerts-on) .leaflet-liveAlerts-pane { display: none; }
 
   /* ════════════════════════════════════════════════════════════════════════════
      SEARCH RADIUS (the circle around the stations a search found)
@@ -5080,9 +5085,7 @@ function setLiveAlerts(on) {
     livePieces.clear();
     liveState = 'off';
     setLiveLegendOpen(false);
-    // The canvas covers the whole map: take it away, or it would keep catching
-    // clicks meant for the searched area's polygons below it.
-    if (map.hasLayer(liveAlertsRenderer)) map.removeLayer(liveAlertsRenderer);
+    // (The now-empty canvas stays on the map, hidden by CSS while off.)
   }
   renderLiveLegend();
 }

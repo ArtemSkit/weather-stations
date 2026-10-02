@@ -2525,10 +2525,13 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(load, /const tolerance = liveAlertTolerance\(map\.getZoom\(\)\)\.toFixed\(6\);[\s\S]*maxAllowableOffset: tolerance/, 'outlines simplified to the zoom');
   const toggle = extractFunction('setLiveAlerts');
   // The searched area's polygons are hidden with a class (kept intact), and the
-  // full-map canvas is removed when off so it can't catch their clicks.
+  // full-map canvas is hidden when off so it can't catch their clicks. It is never
+  // removed: Leaflet's canvas, added back after removal, draws nothing new until
+  // the map moves (live alerts switched back on looked empty).
   assert.match(toggle, /classList\.toggle\('live-alerts-on', on\)/);
   assert.doesNotMatch(toggle, /removeLayer\(alertAreaGroup\)/);
-  assert.match(toggle, /map\.removeLayer\(liveAlertsRenderer\)/);
+  assert.doesNotMatch(toggle, /removeLayer\(liveAlertsRenderer\)/);
+  assert.match(html, /#map:not\(\.live-alerts-on\) \.leaflet-liveAlerts-pane \{ display: none; \}/);
   assert.match(html, /#map\.live-alerts-on \.wx-alert-area,\s*#map\.live-alerts-on \.alert-area-label \{ display: none; \}/);
   // Pin mode: a tap on an alert area places the pin instead of opening a popup.
   const pieces = extractFunction('replaceLivePieces');

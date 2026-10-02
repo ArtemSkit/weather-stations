@@ -3384,8 +3384,12 @@ const SEARCH_INWARD     = 0.7;   // …or 30% further in (never below the neares
 // the label above it and the edges (total px), and the closest zoom.
 const SEARCH_FIT_BOX = 2.15, SEARCH_FIT_PAD_X = 80, SEARCH_FIT_PAD_Y = 136, SEARCH_FIT_MAX_ZOOM = 11;
 const METRES_PER_MILE   = 1609.344;
-/** A box covering every world copy — the dimmed area the circle is cut out of. */
-const SEARCH_MASK_OUTER = [[-85, -540], [85, -540], [85, 540], [-85, 540]];
+/**
+ * A box covering every world copy on screen — the dimmed area the circle is cut
+ * out of. Zoomed right out a wide screen shows ~2,700° of longitude, so it spans
+ * 3,600° (Leaflet clips it to the screen, so the size costs nothing).
+ */
+const SEARCH_MASK_OUTER = [[-85, -1800], [85, -1800], [85, 1800], [-85, 1800]];
 
 /** Great-circle distance between two points, in miles. */
 function milesBetween(lat1, lon1, lat2, lon2) {
@@ -3475,8 +3479,10 @@ function searchEdgeClearance(lat, edgeMi) {
 
 // Above the alert areas (overlay pane, 400) so the dimming covers them evenly,
 // below the station markers (600). Its own SVG renderer lives in this pane.
+// Leaflet only redraws it when a move ends, so it covers half a screen past each
+// edge (not the default 10%): the dimming doesn't stop short while dragging.
 map.createPane('searchRadius').style.zIndex = 410;
-const searchRadiusRenderer = L.svg({ pane: 'searchRadius' });
+const searchRadiusRenderer = L.svg({ pane: 'searchRadius', padding: 0.5 });
 const searchRadiusLayer = L.layerGroup().addTo(map);
 /** The circle on screen: { lat, lon, r (metres), rim, rings[], mask, label } or null. */
 let searchRadius = null;
@@ -3493,10 +3499,12 @@ function drawSearchRadius(lat, lon, miles, count) {
   const ring = opts => L.circle([lat, lon], {
     renderer: searchRadiusRenderer, radius: 0, fill: false, interactive: false, color: '#00d4ff', ...opts
   }).addTo(searchRadiusLayer);
-  // Dimmed map outside: a world-sized shape with the circle cut out of it.
+  // Dimmed map outside: a world-sized shape with the circle cut out of it. Added
+  // once the map has landed (see startGrow): mid-flight Leaflet only scales the
+  // old drawing, so it would visibly shrink towards the centre.
   const mask = L.polygon([SEARCH_MASK_OUTER], {
     renderer: searchRadiusRenderer, stroke: false, fillColor: '#05070c', fillOpacity: 0.32, interactive: false
-  }).addTo(searchRadiusLayer);
+  });
   // Rings `px` screen pixels beyond the rim: three fading glows, then the dotted ring.
   const rings = [
     { px: 4,  layer: ring({ weight: 6,  opacity: 0.30 }) },
@@ -3526,6 +3534,7 @@ function drawSearchRadius(lat, lon, miles, count) {
   const startGrow = () => {
     if (started || searchRadius !== circle) return;
     started = true;
+    mask.addTo(searchRadiusLayer).bringToBack();   // under the rings and rim
     const start = performance.now(), duration = still ? 0 : 900;
     (function grow(now) {
       if (searchRadius !== circle) return;     // a newer search replaced it
@@ -3539,7 +3548,9 @@ function drawSearchRadius(lat, lon, miles, count) {
   };
   if (flying && !still) {
     map.once('moveend', startGrow);
-    setTimeout(startGrow, 2000);
+    // (Not while the page is hidden: the flight pauses then, and resumes — and
+    // ends with "moveend" — once the page is shown again.)
+    setTimeout(() => { if (!document.hidden) startGrow(); }, 2000);
   } else {
     startGrow();
   }
@@ -3560,7 +3571,8 @@ function fitSearchRadius(bounds, lat, lon) {
   // Room for the label above the circle (96 px) and a margin elsewhere; these add
   // up to SEARCH_FIT_PAD_X/Y, which searchEdgeClearance assumes.
   const options = { paddingTopLeft: [40, 96], paddingBottomRight: [40, 40], maxZoom: SEARCH_FIT_MAX_ZOOM };
-  if (prefersReducedMotion.matches) { map.fitBounds(bounds, options); return false; }
+  // Reduced motion: no animation at all (a same-zoom fit would still glide).
+  if (prefersReducedMotion.matches) { map.fitBounds(bounds, { ...options, animate: false }); return false; }
   map.flyToBounds(bounds, { ...options, duration: 1.2 });
   return true;
 }

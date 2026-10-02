@@ -3006,6 +3006,37 @@ function degToCompass(deg) {
  * @param {string|null} stationName  - Human-readable station name
  * @param {number|null} precipPct    - Real forecast PoP 0–100 (from fetchForecastPoP)
  */
+/**
+ * Gusts are only reported while the wind gusts, and the 5-minute reports between
+ * the full hourly ones sometimes leave a gust out even then (a station gusting at
+ * 3:05 and 3:15 can send none at 3:10). So a gust seen in this station's reports
+ * within the last 15 minutes is still shown — with its age — instead of the
+ * reading flipping to "None" and back at every refresh.
+ */
+const GUST_CARRY_MS = 15 * 60_000;
+const GUST_MEMORY_LIMIT = 50;
+/** station → { kmh, at }: the newest gust seen in its reports */
+const recentGusts = new Map();
+
+/**
+ * The gust to show for a report: its own, or one from the same station within
+ * GUST_CARRY_MS before it.
+ * @returns {{kmh:number, ageMin:number}|null} null when the station isn't gusting
+ */
+function shownGust(stationId, props) {
+  const at = Date.parse(props?.timestamp);
+  const kmh = props?.windGust?.value;
+  if (kmh != null) {
+    if (Number.isFinite(at)) setBoundedCache(recentGusts, stationId, { kmh, at }, GUST_MEMORY_LIMIT);
+    return { kmh, ageMin: 0 };
+  }
+  const last = recentGusts.get(stationId);
+  if (last && Number.isFinite(at) && at >= last.at && at - last.at <= GUST_CARRY_MS) {
+    return { kmh: last.kmh, ageMin: Math.round((at - last.at) / 60_000) };
+  }
+  return null;
+}
+
 function renderWeather(data, stationId, stationName, precipPct = null) {
   const p = data.properties;
 
@@ -3038,7 +3069,8 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   /* ── Other observations ── */
   const dewC      = p.dewpoint?.value;
   const dewF      = cToF(dewC);
-  const gustMph  = kmhToMph(p.windGust?.value);
+  const gust     = shownGust(stationId, p);   // this report's gust, or one from the last 15 min
+  const gustMph  = gust ? kmhToMph(gust.kmh) : null;
   const visMi     = mToMi(p.visibility?.value);
   // barometricPressure here is the altimeter setting — what US reports and
   // weather.gov call "Barometer". Sea-level pressure (a different quantity) only
@@ -3047,6 +3079,12 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
   const pressInHg = paToInHg(p.barometricPressure?.value ?? p.seaLevelPressure?.value);
   const humidity  = p.relativeHumidity?.value != null
                   ? Math.round(p.relativeHumidity.value) : null;
+  // Gusts: the value (with its age when carried over from an earlier report), or
+  // "None" when the wind is reported but not gusting — N/A only with no wind data.
+  const gustHtml = gustMph != null
+    ? gustMph + ' mph' + (gust.ageMin
+      ? '<br><span style="font-size:0.7rem;color:var(--text-muted)">' + gust.ageMin + ' min ago</span>' : '')
+    : val(null, '', windMph != null ? 'None' : 'N/A');
   // Calm (0 wind) has no meaningful direction: stations still send 0° ("from N").
   const isCalm    = p.windSpeed?.value === 0;
   const windDir   = p.windDirection?.value;
@@ -3176,7 +3214,7 @@ function renderWeather(data, stationId, stationName, precipPct = null) {
       </div>
       <div class="weather-item">
         <div class="weather-item-label">Gusts</div>
-        <div class="weather-item-value">${val(gustMph, ' mph')}</div>
+        <div class="weather-item-value">${gustHtml}</div>
       </div>
       <div class="weather-item">
         <div class="weather-item-label">Visibility</div>

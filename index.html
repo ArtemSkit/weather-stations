@@ -392,10 +392,11 @@
     z-index: 1100;                       /* above the station popup (1000) */
     width: 330px; max-width: calc(100% - 32px);
     /* Never let a long list of alerts run off the bottom of the map, nor cover the
-       bottom-left zoom control (which ends ~100px above the map's bottom edge).
+       bottom-left zoom control and the LIVE ALERTS button above it (which ends
+       ~140px above the map's bottom edge).
        The 4rem floor keeps the summary chip visible in very short windows: there,
        showing the alert matters more than keeping clear of the zoom buttons. */
-    max-height: max(4rem, calc(100% - 16px - 110px)); overflow-y: auto;
+    max-height: max(4rem, calc(100% - 16px - 150px)); overflow-y: auto;
     display: none; flex-direction: column; gap: 8px;
     font-family: 'Syne', sans-serif;
   }
@@ -861,6 +862,78 @@
   #map.tap-mode.leaflet-container { cursor: crosshair; }
   #map.tap-mode .wx-alert-area,
   #map.tap-mode .leaflet-marker-icon { pointer-events: none; }
+  /* Live-alert areas are drawn on one canvas, which shows a pointer over them;
+     keep the crosshair there too (their clicks reach the map in pin mode). */
+  #map.tap-mode .leaflet-liveAlerts-pane canvas { cursor: crosshair !important; }
+  /* Live alerts on: the searched area's own polygons and labels are hidden (not
+     removed), so nothing is drawn twice and they return intact afterwards. */
+  #map.live-alerts-on .wx-alert-area,
+  #map.live-alerts-on .alert-area-label { display: none; }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SEARCH RADIUS (the circle around the stations a search found)
+     Nothing is drawn INSIDE the circle — that is the part people read. The rim
+     glow, the slowly turning dotted ring and the dimmed map are all outside it.
+     The pane never takes clicks: alert areas and the map below stay clickable.
+     ════════════════════════════════════════════════════════════════════════════ */
+  .leaflet-searchRadius-pane,
+  .leaflet-searchRadius-pane svg { pointer-events: none; }
+  .search-radius-ticks { animation: radius-sweep 18s linear infinite; }
+  @keyframes radius-sweep { to { stroke-dashoffset: -240; } }
+  .search-radius-label {
+    display: inline-block; white-space: nowrap;
+    /* Above the top of the rim, clear of the rings outside it. */
+    transform: translate(-50%, calc(-100% - 38px));
+    background: rgba(10,14,23,0.92); border: 1px solid var(--accent); border-radius: 14px;
+    padding: 4px 11px; color: var(--text); font-size: 0.68rem;
+    box-shadow: 0 0 18px rgba(0,212,255,0.35);
+  }
+  .search-radius-label b { color: var(--accent); }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     LIVE ALERTS (map control above the zoom buttons: toggle + colour key)
+     ════════════════════════════════════════════════════════════════════════════ */
+  .live-alerts-ctl { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .live-alerts-row { display: flex; gap: 6px; }
+  .live-alerts-ctl button {
+    display: inline-flex; align-items: center; gap: 7px; min-height: 30px;
+    background: var(--surface); color: var(--accent); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 5px 10px; cursor: pointer;
+    font-family: 'Syne', sans-serif; font-weight: 600; font-size: 0.7rem; letter-spacing: 0.08em;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.45);
+  }
+  .live-alerts-ctl button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .live-alerts-ctl button[hidden] { display: none; }   /* KEY only while live alerts are on */
+  #live-alerts-btn .lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+  #live-alerts-btn[aria-pressed="true"] { border-color: var(--red); color: #ffb3ba; background: #2a1219; }
+  #live-alerts-btn[aria-pressed="true"] .lamp { background: var(--red); animation: live-lamp 1.6s infinite; }
+  @keyframes live-lamp {
+    0%   { box-shadow: 0 0 0 0 rgba(255,71,87,0.6); }
+    100% { box-shadow: 0 0 0 8px rgba(255,71,87,0); }
+  }
+  #live-alerts-count { color: var(--text); font-family: 'Space Mono', monospace; font-weight: 400; }
+  #live-legend {
+    width: 250px; max-width: calc(100vw - 40px); max-height: min(40vh, 320px); overflow-y: auto;
+    background: rgba(17,24,39,0.96); border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.6); padding: 6px; list-style: none; margin: 0;
+  }
+  #live-legend[hidden] { display: none; }
+  /* An open colour key rises above the alert banner (1100) rather than under it;
+     a phone's open station sheet still covers it. */
+  main:not(.sheet-open) .leaflet-bottom.leaflet-left:has(#live-legend:not([hidden])) { z-index: 1101; }
+  #live-legend li + li { margin-top: 1px; }
+  .live-alerts-ctl #live-legend button {
+    width: 100%; box-shadow: none; border: none; background: transparent; color: var(--text);
+    font-family: 'Space Mono', monospace; font-weight: 400; letter-spacing: 0; font-size: 0.68rem;
+    text-align: left; min-height: 28px;
+  }
+  .live-alerts-ctl #live-legend button:hover { background: var(--surface2); }
+  #live-legend button[aria-pressed="false"] { opacity: 0.45; }
+  #live-legend button[aria-pressed="false"] .live-legend-name { text-decoration: line-through; }
+  .live-legend-swatch { width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.35); }
+  .live-legend-name { flex: 1; }
+  .live-legend-count { color: var(--text-muted); }
+  #live-legend .live-legend-empty { padding: 6px 8px; color: var(--text-muted); font-size: 0.68rem; }
 
   /* Desktop: while pin mode is on, its banner (which wraps to two lines in
      mid-width windows) would cover the panel's ✕ — start the panel below it.
@@ -874,7 +947,7 @@
   /* The alert banner moves below it too, so the alert summary stays visible. */
   main:has(#tap-place-banner.active) #alert-banner {
     top: calc(var(--tap-banner-h, 48px) + 16px);
-    max-height: max(4rem, calc(100% - var(--tap-banner-h, 48px) - 16px - 110px));
+    max-height: max(4rem, calc(100% - var(--tap-banner-h, 48px) - 16px - 150px));
   }
 
   /* Desktop: the station panel fills the top-right column and can reach the
@@ -1060,16 +1133,17 @@
       top: 8px; width: auto; max-width: none;
       /* Clear a landscape phone's notch / rounded corners (viewport-fit=cover). */
       left: calc(8px + var(--safe-left)); right: calc(8px + var(--safe-right));
-      /* Full width here, so stay above the lifted zoom control (left, ~155px above
-         the bottom) and the Locate Me button (right, ~70px). The 4rem floor keeps
+      /* Full width here, so stay above the lifted zoom control and the LIVE ALERTS
+         button above it (left, ~195px above the bottom) and the Locate Me button
+         (right, ~70px). The 4rem floor keeps
          the summary chip visible on short landscape phones. */
-      max-height: max(4rem, calc(100% - 8px - 180px - var(--safe-bottom)));
+      max-height: max(4rem, calc(100% - 8px - 220px - var(--safe-bottom)));
     }
     /* Pin mode on phones: same idea as the desktop rule above, with phone spacing
        (these selectors match the desktop ones in specificity and come later). */
     main:has(#tap-place-banner.active) #alert-banner {
       top: calc(var(--tap-banner-h, 74px) + 8px);
-      max-height: max(4rem, calc(100% - var(--tap-banner-h, 74px) - 8px - 180px - var(--safe-bottom)));
+      max-height: max(4rem, calc(100% - var(--tap-banner-h, 74px) - 8px - 220px - var(--safe-bottom)));
     }
     main.sheet-open:has(#tap-place-banner.active) #alert-banner {
       max-height: max(4rem, calc(100% - var(--tap-banner-h, 74px) - 8px - var(--sheet-h, 70vh) - 74px));
@@ -1604,8 +1678,10 @@ window.addEventListener('load', () => {
  * 10.  Weather popup renderer
  * 11.  Station refresh loop
  * 12.  Station panel open / close
- * 13.  Map marker management
+ * 13.  Map marker management (+ the search circle around the stations shown)
  * 14.  Post-geocode pipeline (loadStationsAt)
+ * 14B. Dangerous-weather alerts for the searched area
+ * 14C. Live alerts (every alert area in the map view)
  * 15.  URL query-string helpers
  * 16.  Main search dispatcher (doSearch)
  * 17.  Draggable-pin feature
@@ -2503,7 +2579,8 @@ function alertViewportBounds(lat, lon) {
  * storm-based polygons (tornado, severe thunderstorm, flash-flood warnings) and
  * the larger county/zone-based products (most watches) — and returns only those
  * that contain the point. A separate cached regional feed supplements this with
- * nearby inline polygons that are visible in the initial map viewport.
+ * nearby inline polygons inside the search circle's area (or, for a single-station
+ * link, the view around it).
  *
  * Results are cached per rounded coordinate for ALERTS_TTL_MS. A failed or
  * timed-out fetch resolves to **null** (not an empty array) so callers can tell
@@ -3189,6 +3266,7 @@ function clearStations() {
   stationMarkers.forEach(m => map.removeLayer(m));
   stationMarkers = [];
   stationRecords = [];   // drop the Tier-3 flagging records too
+  clearSearchRadius();   // and the circle around them
 }
 
 /**
@@ -3245,24 +3323,209 @@ function makeStationMarker(id, name, lat, lng) {
 }
 
 /**
- * Plot all stations from a GeoJSON FeatureCollection returned by fetchStations().
+ * Plot the stations a search found and draw the circle around them.
+ *
+ * NOAA returns a whole forecast area's station list — often 150–230 miles
+ * across, over 1,000 in Alaska — so only the stations near the searched point
+ * are shown (see selectStationsInRadius) and a circle marks that search area.
  * Replaces any previously plotted markers.
  *
  * @param {Object} geoJSON  - FeatureCollection from the NOAA stations endpoint
+ * @param {number} lat      - the searched point
+ * @param {number} lon
+ * @returns {{west:number,south:number,east:number,north:number}} the circle's box
+ *          (the map area the alert loader should look at)
  */
-function plotStations(geoJSON) {
+function plotStations(geoJSON, lat, lon) {
   clearStations();
-  (geoJSON.features || []).forEach(f => {
-    // Skip any malformed entry (no id or no usable location): Leaflet throws on a
-    // non-numeric position, which would abort plotting every station after it.
-    const [lng, lat] = f?.geometry?.coordinates || [];   // GeoJSON order is [lng, lat]
-    const id = f?.properties?.stationIdentifier;
-    if (!id || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    const el = makeStationMarker(id, f.properties.name, lat, lng);
+  // Skip any malformed entry (no id or no usable location): Leaflet throws on a
+  // non-numeric position, which would abort plotting every station after it.
+  const valid = (geoJSON.features || []).filter(f => {
+    const [lng, la] = f?.geometry?.coordinates || [];   // GeoJSON order is [lng, lat]
+    return f?.properties?.stationIdentifier && Number.isFinite(la) && Number.isFinite(lng);
+  });
+  const { inside, edgeMi } = selectStationsInRadius(lat, lon, valid);
+  inside.forEach(({ f, lat: la, lng }) => {
+    const el = makeStationMarker(f.properties.stationIdentifier, f.properties.name, la, lng);
     // Remember each marker so flagStationsInAlerts() (Tier 3) can later test it
     // against the active warning polygons and toggle its .alerted ring.
-    stationRecords.push({ el, lat, lng });
+    stationRecords.push({ el, lat: la, lng });
   });
+  return drawSearchRadius(lat, lon, edgeMi, inside.length);
+}
+
+/* ── Search radius ──────────────────────────────────────────────────────────── */
+const SEARCH_RADIUS_MI  = 50;    // stations within this distance are shown…
+const SEARCH_MIN_STATIONS = 8;   // …or the nearest 8, when fewer are that close
+const SEARCH_STRETCH    = 1.25;  // the edge may move up to 25% further out to find room between stations
+const SEARCH_EDGE_GAP_MI = 2;    // extra room past the last station when none lies beyond it
+const METRES_PER_MILE   = 1609.344;
+/** A box covering every world copy — the dimmed area the circle is cut out of. */
+const SEARCH_MASK_OUTER = [[-85, -540], [85, -540], [85, 540], [-85, 540]];
+
+/** Great-circle distance between two points, in miles. */
+function milesBetween(lat1, lon1, lat2, lon2) {
+  const r = x => x * Math.PI / 180;
+  const h = Math.sin(r(lat2 - lat1) / 2) ** 2 +
+            Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(r(lon2 - lon1) / 2) ** 2;
+  return 2 * 3958.8 * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Pick the stations to show and where the circle's edge goes.
+ * Keeps every station within SEARCH_RADIUS_MI, or the nearest SEARCH_MIN_STATIONS
+ * when fewer are that close. The edge sits halfway between the last station kept
+ * and the first one left out, so neither marker lands on the line — and it goes in
+ * the WIDEST such gap up to SEARCH_STRETCH beyond that distance, because stations
+ * often sit so close together that the first gap leaves no room. The stretch is
+ * capped, so a dense list can never grow the circle to cover everything.
+ *
+ * @param {number}   lat
+ * @param {number}   lon
+ * @param {Object[]} features - station Features with valid coordinates
+ * @returns {{ inside: {f:Object, lat:number, lng:number, mi:number}[], edgeMi: number }}
+ */
+function selectStationsInRadius(lat, lon, features) {
+  const all = features.map(f => {
+    const [lng, la] = f.geometry.coordinates;
+    return { f, lat: la, lng, mi: milesBetween(lat, lon, la, lng) };
+  }).sort((a, b) => a.mi - b.mi);
+  if (!all.length) return { inside: [], edgeMi: SEARCH_RADIUS_MI };
+
+  const limitMi = Math.max(SEARCH_RADIUS_MI, all[Math.min(SEARCH_MIN_STATIONS, all.length) - 1].mi);
+  const minKept = all.filter(s => s.mi <= limitMi).length;
+  const maxKept = all.filter(s => s.mi <= limitMi * SEARCH_STRETCH).length;
+  // The gap after keeping k stations (unlimited past the last station).
+  const gapAfter = k => (k < all.length ? all[k].mi - all[k - 1].mi : Infinity);
+  let kept = minKept;
+  for (let k = minKept + 1; k <= maxKept; k++) if (gapAfter(k) > gapAfter(kept)) kept = k;
+
+  const lastIn = all[kept - 1].mi;
+  const edgeMi = kept < all.length
+    ? (lastIn + all[kept].mi) / 2
+    : lastIn * 1.06 + SEARCH_EDGE_GAP_MI;
+  return { inside: all.slice(0, kept), edgeMi };
+}
+
+// Above the alert areas (overlay pane, 400) so the dimming covers them evenly,
+// below the station markers (600). Its own SVG renderer lives in this pane.
+map.createPane('searchRadius').style.zIndex = 410;
+const searchRadiusRenderer = L.svg({ pane: 'searchRadius' });
+const searchRadiusLayer = L.layerGroup().addTo(map);
+/** The circle on screen: { lat, lon, r (metres), rim, rings[], mask, label } or null. */
+let searchRadius = null;
+
+/**
+ * Draw the circle around the shown stations and fit it on screen: a crisp rim,
+ * a soft glow and a slowly turning dotted ring just OUTSIDE it, and the map
+ * outside the circle dimmed. Grows out from the point unless motion is reduced.
+ * @returns {{west:number,south:number,east:number,north:number}} the circle's box
+ */
+function drawSearchRadius(lat, lon, miles, count) {
+  clearSearchRadius();
+  const r = miles * METRES_PER_MILE;
+  const ring = opts => L.circle([lat, lon], {
+    renderer: searchRadiusRenderer, radius: 0, fill: false, interactive: false, color: '#00d4ff', ...opts
+  }).addTo(searchRadiusLayer);
+  // Dimmed map outside: a world-sized shape with the circle cut out of it.
+  const mask = L.polygon([SEARCH_MASK_OUTER], {
+    renderer: searchRadiusRenderer, stroke: false, fillColor: '#05070c', fillOpacity: 0.32, interactive: false
+  }).addTo(searchRadiusLayer);
+  // Rings `px` screen pixels beyond the rim: three fading glows, then the dotted ring.
+  const rings = [
+    { px: 4,  layer: ring({ weight: 6,  opacity: 0.30 }) },
+    { px: 10, layer: ring({ weight: 8,  opacity: 0.13 }) },
+    { px: 18, layer: ring({ weight: 10, opacity: 0.05 }) },
+    { px: 30, layer: ring({ weight: 5,  opacity: 0.5, dashArray: '1 13', className: 'search-radius-ticks' }) }
+  ];
+  const rim = ring({ weight: 2, opacity: 0.95 });
+  const shownMi = Math.round(miles);
+  const label = L.marker([lat, lon], { interactive: false, keyboard: false, icon: L.divIcon({
+    className: '', iconSize: null,
+    html: `<span class="search-radius-label"><b>${count}</b> station${count === 1 ? '' : 's'} · within <b>${shownMi} mi</b></span>`
+  }) });
+  const circle = { lat, lon, r: 0, rim, rings, mask, label };
+  searchRadius = circle;
+
+  const bounds = L.latLng(lat, lon).toBounds(r * 2.15);
+  const flying = fitSearchRadius(bounds, lat, lon);
+
+  // Grow out from the point — at once when motion is reduced, or when the page is
+  // in a background tab (no animation frames run there). While the map is still
+  // flying, Leaflet scales the drawing mid-zoom, so the grow waits for it to land
+  // (with a fallback in case the flight ends without a "moveend").
+  const still = prefersReducedMotion.matches || document.hidden;
+  const ease = t => 1 - Math.pow(1 - t, 3);
+  let started = false;
+  const startGrow = () => {
+    if (started || searchRadius !== circle) return;
+    started = true;
+    const start = performance.now(), duration = still ? 0 : 900;
+    (function grow(now) {
+      if (searchRadius !== circle) return;     // a newer search replaced it
+      const t = duration ? Math.min(1, (now - start) / duration) : 1;
+      circle.r = r * ease(t);
+      layoutSearchRadius();
+      if (t < 1) { requestAnimationFrame(grow); return; }
+      label.addTo(searchRadiusLayer);
+      layoutSearchRadius();
+    })(start);
+  };
+  if (flying && !still) {
+    map.once('moveend', startGrow);
+    setTimeout(startGrow, 2000);
+  } else {
+    startGrow();
+  }
+
+  return { west: bounds.getWest(), south: bounds.getSouth(), east: bounds.getEast(), north: bounds.getNorth() };
+}
+
+/**
+ * Fit the circle (and the label and rings outside it) on screen. A map with no
+ * size (laid out while hidden) can't be fitted — flyToBounds would divide by
+ * zero — so it is simply centred at a typical zoom instead.
+ * @returns {boolean} true when the map is now flying (animating) to the circle
+ */
+function fitSearchRadius(bounds, lat, lon) {
+  const size = map.getSize();
+  if (!size.x || !size.y) { map.setView([lat, lon], 8); return false; }
+  const options = { paddingTopLeft: [40, 96], paddingBottomRight: [40, 40], maxZoom: 11 };
+  if (prefersReducedMotion.matches) { map.fitBounds(bounds, options); return false; }
+  map.flyToBounds(bounds, { ...options, duration: 1.2 });
+  return true;
+}
+
+/**
+ * Lay the circle out for the current zoom: the outside rings a fixed number of
+ * SCREEN pixels beyond the rim (so they look the same at every zoom), the circle
+ * cut out of the dimming, and the label above the top of the rim.
+ */
+function layoutSearchRadius() {
+  const c = searchRadius;
+  if (!c) return;
+  const metresPerPixel = 40075016.686 * Math.cos(c.lat * Math.PI / 180) / (256 * Math.pow(2, map.getZoom()));
+  c.rim.setRadius(c.r);
+  c.rings.forEach(g => g.layer.setRadius(c.r ? c.r + g.px * metresPerPixel : 0));
+
+  // The hole follows Leaflet's own drawing of the rim (an ellipse on screen), so
+  // the edge of the dimming lines up exactly with the line.
+  const p = c.rim._point, rx = c.rim._radius, ry = c.rim._radiusY || rx;
+  if (!c.r || !p || !rx) { c.mask.setLatLngs([SEARCH_MASK_OUTER]); return; }
+  const hole = [];
+  for (let i = 0; i < 128; i++) {
+    const a = (i / 128) * 2 * Math.PI;
+    hole.push(map.layerPointToLatLng(L.point(p.x + rx * Math.cos(a), p.y + ry * Math.sin(a))));
+  }
+  c.mask.setLatLngs([SEARCH_MASK_OUTER, hole]);
+  c.label.setLatLng(map.layerPointToLatLng(L.point(p.x, p.y - ry)));
+}
+map.on('zoomend', layoutSearchRadius);
+
+/** Remove the circle (clearStations runs this when a new search starts). */
+function clearSearchRadius() {
+  searchRadius = null;
+  searchRadiusLayer.clearLayers();
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3306,7 +3569,9 @@ async function loadStationsAt(lat, lon, gen) {
 
   setStatus('loading', 'FETCHING STATIONS…');
   overlayText.textContent = 'Fetching weather stations…';
-  moveMapTo(lat, lon, 10);
+  // Zoom 8 is about the size of a typical search circle; once the stations are
+  // in, the map fits the actual circle (plotStations → drawSearchRadius).
+  moveMapTo(lat, lon, 8);
 
   let data;
   areaLoading = { status: 'FETCHING STATIONS…', overlay: 'Fetching weather stations…' };
@@ -3324,7 +3589,7 @@ async function loadStationsAt(lat, lon, gen) {
   }
   if (area !== areaGeneration) return false;     // a newer area replaced this one
   areaLoading = null;
-  plotStations(data);
+  const radiusBox = plotStations(data, lat, lon);
 
   // A newer search still running owns the status bar and overlay; leave them.
   if (mayUpdateSearchUi(gen)) {
@@ -3336,7 +3601,8 @@ async function loadStationsAt(lat, lon, gen) {
   // Fetch and display any active dangerous-weather alerts for this area, then keep
   // them refreshed on a timer.  Fire-and-forget: alerts are supplementary and must
   // never delay or block the station map. A stale result is discarded internally.
-  loadAlertsForArea(lat, lon);
+  // Nearby warning polygons are picked from the area the circle covers.
+  loadAlertsForArea(lat, lon, radiusBox);
   return true;
 }
 
@@ -3345,10 +3611,10 @@ async function loadStationsAt(lat, lon, gen) {
    ─────────────────────────────────────────────────────────────────────────────
    Alerts are area-based, not station-based: the NWS issues them for polygons or
    county/forecast zones, never for individual observation stations.  So they are
-   anchored to the searched point and its initial map viewport, displayed three ways:
+   anchored to the searched point and its search circle's area, displayed three ways:
 
      • Tier 1 — a banner listing alerts affecting the point plus nearby inline
-       polygons visible in the initial map view, colour-coded and ranked by
+       polygons inside that area, colour-coded and ranked by
        severity (renderAlertBanner).
      • Tier 2 — each alert's geographic footprint drawn on the map as a coloured
        polygon with a label and detail popup (renderAlertAreas).
@@ -3396,7 +3662,9 @@ let zoneFetchActive = 0;
  * @returns {HTMLElement|null}
  */
 function openAlertPopupElement() {
-  return activeAlertAreaOwner?.getPopup?.()?.getElement?.() || null;
+  // A live-alert area's popup (14C) follows the same click-away and Escape rules.
+  return activeAlertAreaOwner?.getPopup?.()?.getElement?.() ||
+         (livePopup?.isOpen() ? livePopup.getElement() : null) || null;
 }
 
 /**
@@ -3445,12 +3713,22 @@ function prepareAlertPopupPan(event) {
   const area = event.target?.closest?.('.wx-alert-area');
   const popup = area ? alertAreaOwners.get(area)?.getPopup?.() : null;
   if (!popup) return;
+  fitAlertPopup(popup.options, event.clientX, event.clientY);
+}
+
+/**
+ * Size an alert popup for a click at (clientX, clientY) and set its auto-pan
+ * padding so it clears the alert banner and an open station panel (shared by the
+ * searched area's popups and the live-alert popups, 14C).
+ * @param {Object} options - the popup's options (changed in place)
+ */
+function fitAlertPopup(options, clientX, clientY) {
   const mapBox = document.getElementById('map').getBoundingClientRect();
 
   // Fit the popup to narrow phones: the content (up to 320px) plus its margins,
   // the wrapper and the 44px × must stay inside the map, or the × is off-screen.
   const width = Math.max(160, Math.min(320, mapBox.width - 104));
-  popup.options.maxWidth = width;
+  options.maxWidth = width;
   // The popup opens centred above the tap point; these bound its likely footprint
   // (height: the 360px content cap plus margins, frame, tip and offset).
   const halfWidth = width / 2 + 40, height = 440;
@@ -3463,7 +3741,7 @@ function prepareAlertPopupPan(event) {
     const panel = popupPanel.getBoundingClientRect();
     if (getComputedStyle(popupPanel).position === 'fixed') {   // phone bottom sheet
       bottom = clampY(mapBox.bottom - panel.top + 8);
-    } else if (event.clientY - height < panel.bottom) {         // desktop side panel
+    } else if (clientY - height < panel.bottom) {         // desktop side panel
       right = clampX(mapBox.right - panel.left + 8);
     }
   }
@@ -3473,14 +3751,14 @@ function prepareAlertPopupPan(event) {
     // is a 330px column), so a click elsewhere doesn't pan the map for nothing.
     // Where it ends up counts: a popup sticking out on the right is pushed left
     // by Leaflet's own auto-pan, possibly into the banner's column.
-    const popupLeft = Math.min(event.clientX - halfWidth, mapBox.right - right - 2 * halfWidth);
+    const popupLeft = Math.min(clientX - halfWidth, mapBox.right - right - 2 * halfWidth);
     if (popupLeft < banner.right) top = clampY(banner.bottom - mapBox.top + 8);
   }
-  popup.options.autoPanPaddingTopLeft = [16, top];
-  popup.options.autoPanPaddingBottomRight = [right, bottom];
+  options.autoPanPaddingTopLeft = [16, top];
+  options.autoPanPaddingBottomRight = [right, bottom];
   // Leave room for the popup's own frame and tip in what remains, so on short
   // screens its content scrolls instead of being cut off at the map's edge.
-  popup.options.maxHeight = Math.max(120, mapBox.height - top - bottom - 60);
+  options.maxHeight = Math.max(120, mapBox.height - top - bottom - 60);
 }
 
 document.addEventListener('click', prepareAlertPopupPan, { capture: true });
@@ -4136,13 +4414,15 @@ function showAlerts(alerts) {
  * ZIP, unknown address) leaves this area on screen, so it must keep its alerts.
  * @param {number} lat
  * @param {number} lon
+ * @param {Object} [viewport] - map area whose nearby warning polygons count (the
+ *        search circle's box); defaults to the view centred here at zoom 10
  */
-async function loadAlertsForArea(lat, lon) {
+async function loadAlertsForArea(lat, lon, viewport) {
   const token = {};
   alertLoadToken = token;
   currentLat = lat;
   currentLon = lon;
-  currentViewport = alertViewportBounds(lat, lon);
+  currentViewport = viewport || alertViewportBounds(lat, lon);
   if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
 
   try {
@@ -4210,6 +4490,363 @@ async function refreshAlerts() {
     console.error('[WX.MAP] Alert refresh failed:', error);
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   14C. LIVE ALERTS  (every watch / warning / advisory in the visible map)
+   ─────────────────────────────────────────────────────────────────────────────
+   A toggle above the zoom buttons. While on, the map shows every active NWS
+   alert area inside the current view and keeps adding the ones that come into
+   view as the user pans or zooms.
+
+   Source: NOAA's watch/warning/advisory map service, which answers "every alert
+   area in this box" in ONE request — already split into counties/zones and
+   simplified to the zoom level (the whole country is ~600 KB). The NWS API would
+   need a separate download per county/zone outline (20–40 MB nationwide).
+
+   While live alerts are on, the searched area's own alert polygons (14B) are
+   hidden so nothing is drawn twice; the alert banner and the red station rings
+   still describe the searched place.
+   ───────────────────────────────────────────────────────────────────────────── */
+const LIVE_ALERTS_URL = 'https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query';
+
+/*
+ * The NWS hazard-map colours (weather.gov legend) for the common products, so a
+ * colour means what forecasters intend. Anything else gets a stable hashed colour.
+ */
+const LIVE_ALERT_COLORS = {
+  'Tornado Warning': '#FF0000', 'Tornado Watch': '#FFFF00',
+  'Severe Thunderstorm Warning': '#FFA500', 'Severe Thunderstorm Watch': '#DB7093',
+  'Flash Flood Warning': '#8B0000', 'Flash Flood Watch': '#2E8B57',
+  'Flood Warning': '#00FF00', 'Flood Watch': '#2E8B57', 'Flood Advisory': '#00FF7F', 'Flood Statement': '#00FF00',
+  'Coastal Flood Warning': '#228B22', 'Coastal Flood Watch': '#66CDAA', 'Coastal Flood Advisory': '#7CFC00',
+  'Coastal Flood Statement': '#6B8E23',
+  'Hurricane Warning': '#DC143C', 'Hurricane Watch': '#FF00FF',
+  'Tropical Storm Warning': '#B22222', 'Tropical Storm Watch': '#F08080', 'Storm Surge Warning': '#B524F7',
+  'Winter Storm Warning': '#FF69B4', 'Winter Storm Watch': '#4682B4', 'Winter Weather Advisory': '#7B68EE',
+  'Blizzard Warning': '#FF4500', 'Ice Storm Warning': '#8B008B',
+  'Extreme Heat Warning': '#C71585', 'Extreme Heat Watch': '#800000', 'Heat Advisory': '#FF7F50',
+  'Extreme Cold Warning': '#0000FF', 'Extreme Cold Watch': '#5F9EA0', 'Cold Weather Advisory': '#AFEEEE',
+  'Freeze Warning': '#483D8B', 'Freeze Watch': '#00FFFF', 'Frost Advisory': '#6495ED',
+  'High Wind Warning': '#DAA520', 'High Wind Watch': '#B8860B', 'Wind Advisory': '#D2B48C', 'Lake Wind Advisory': '#D2B48C',
+  'Red Flag Warning': '#FF1493', 'Fire Weather Watch': '#FFDEAD',
+  'Dense Fog Advisory': '#708090', 'Special Weather Statement': '#FFE4B5', 'Air Quality Alert': '#808080',
+  'Small Craft Advisory': '#D8BFD8', 'Gale Warning': '#DDA0DD', 'Storm Warning': '#9400D3',
+  'Hazardous Seas Warning': '#D8BFD8', 'Marine Weather Statement': '#FFDAB9',
+  'Rip Current Statement': '#40E0D0', 'Beach Hazards Statement': '#40E0D0', 'High Surf Advisory': '#BA55D3'
+};
+/** Colour of an alert type on the map (the NWS colour, or a stable hashed one). */
+function liveAlertColor(event) {
+  return LIVE_ALERT_COLORS[event] || `hsl(${alertHue(event)}, 70%, 60%)`;
+}
+/**
+ * A readable text colour for an alert type on the dark popup: the NWS colour
+ * mixed halfway with white, so dark reds and blues (#8B0000, #0000FF) stay legible.
+ */
+function liveAlertTextColor(event) {
+  const hex = LIVE_ALERT_COLORS[event];
+  if (!hex) return `hsl(${alertHue(event)}, 85%, 72%)`;
+  const mix = i => Math.round((parseInt(hex.slice(i, i + 2), 16) + 255) / 2);
+  return `rgb(${mix(1)}, ${mix(3)}, ${mix(5)})`;
+}
+// Drawing order: statements and advisories underneath, warnings on top.
+const LIVE_SIG_RANK = { S: 0, Y: 1, A: 2, W: 3 };
+
+// Between the searched area's polygons (overlay pane, 400) and the search circle
+// (410): one canvas draws hundreds of areas far faster than SVG.
+map.createPane('liveAlerts').style.zIndex = 405;
+const liveAlertsRenderer = L.canvas({ pane: 'liveAlerts', padding: 0.3 });
+const liveAlertsLayer = L.layerGroup().addTo(map);
+
+let liveAlertsOn = false;
+/*
+ * Drawn county/zone pieces: { layer, props, bounds }. NOAA renumbers its records
+ * every few minutes, so pieces are never matched by id: each answer simply
+ * replaces whatever was drawn inside the box it covers.
+ */
+const livePieces = new Set();
+const liveHiddenEvents = new Set();  // alert types switched off in the colour key
+let liveAlertsSeq = 0;               // newest view request; older answers are dropped
+let liveMoveTimer = 0, liveRefreshTimer = 0, liveRetryTimer = 0;
+let liveRefreshMissed = false;
+/** 'loading' until the first answer, then 'ok' or 'error' (never "0 alerts" by mistake). */
+let liveState = 'off';
+let liveFailureShown = false;        // one toast per run of failures, not one per pan
+let livePopup = null;                // the live-alert popup, while one is open
+
+/** Simplification allowed for a zoom level, in degrees: about one screen pixel. */
+function liveAlertTolerance(zoom) {
+  return 360 / (256 * Math.pow(2, zoom));
+}
+
+/** A map-service text field, or undefined when empty (the service sends " " for none). */
+function liveField(value) {
+  const v = typeof value === 'string' ? value.trim() : value;
+  return v || undefined;
+}
+
+/** Load every alert piece inside the current view (padded a little) and draw them. */
+async function loadLiveAlerts() {
+  if (!liveAlertsOn) return;
+  const seq = ++liveAlertsSeq;
+  clearTimeout(liveRetryTimer);
+  const b = map.getBounds().pad(0.15);
+  // Clamp to real coordinates: a zoomed-out view can reach past the world's edge.
+  const west = Math.max(-180, b.getWest()), east = Math.min(180, b.getEast());
+  const south = Math.max(-85, b.getSouth()), north = Math.min(85, b.getNorth());
+  const queried = L.latLngBounds([south, west], [north, east]);
+  const params = new URLSearchParams({
+    where: '1=1', geometry: `${west},${south},${east},${north}`, geometryType: 'esriGeometryEnvelope',
+    inSR: '4326', spatialRel: 'esriSpatialRelIntersects', outSR: '4326', returnGeometry: 'true',
+    outFields: 'prod_type,sig,onset,ends,expiration,issuance,url,cap_id',
+    maxAllowableOffset: liveAlertTolerance(map.getZoom()).toFixed(6), f: 'geojson'
+  });
+  try {
+    const { response, data } = await fetchJsonWithTimeout(`${LIVE_ALERTS_URL}?${params}`);
+    if (seq !== liveAlertsSeq || !liveAlertsOn) return;    // a newer view, or switched off
+    if (!response.ok || !Array.isArray(data?.features)) throw new Error(`HTTP ${response.status}`);
+    replaceLivePieces(data.features, queried);
+    // The service stops at 4,000 pieces; say so rather than silently showing part.
+    if (data.exceededTransferLimit || data.properties?.exceededTransferLimit) {
+      showToast('Too many alert areas to show at this zoom — zoom in to see them all');
+    }
+    liveState = 'ok';
+    liveFailureShown = false;
+  } catch (error) {
+    if (seq !== liveAlertsSeq || !liveAlertsOn) return;
+    liveState = 'error';
+    if (!liveFailureShown) showToast('Live alerts couldn\'t load — retrying');
+    liveFailureShown = true;
+    liveRetryTimer = setTimeout(loadLiveAlerts, 30_000);   // don't wait for a pan or the 2-min tick
+  }
+  renderLiveLegend();
+}
+
+/**
+ * Make the drawn pieces match an answer: every piece inside the queried box is
+ * replaced by the answer's pieces (so ended, cancelled and renumbered alerts can
+ * never linger or be mistaken for others); pieces elsewhere stay, except any
+ * whose alert has ended.
+ */
+function replaceLivePieces(features, queried) {
+  const now = Date.now();
+  for (const piece of livePieces) {
+    if (queried.intersects(piece.bounds) || Date.parse(piece.props.expiration) < now) {
+      liveAlertsLayer.removeLayer(piece.layer);
+      livePieces.delete(piece);
+    }
+  }
+  // (An area whose alert has already ended is not drawn at all.)
+  features.filter(f => f?.geometry && !(Date.parse(liveField(f.properties?.expiration)) < now)).forEach(f => {
+    const p = f.properties || {};
+    const props = {
+      prod_type: liveField(p.prod_type) || 'Weather alert', sig: liveField(p.sig),
+      onset: liveField(p.onset), ends: liveField(p.ends), expiration: liveField(p.expiration),
+      issuance: liveField(p.issuance), url: liveField(p.url), cap_id: liveField(p.cap_id)
+    };
+    const color = liveAlertColor(props.prod_type);
+    const layer = L.geoJSON(f.geometry, {
+      renderer: liveAlertsRenderer,
+      style: { color, weight: 1.2, opacity: 0.95, fillColor: color, fillOpacity: 0.28 }
+    });
+    layer.on('click', e => {
+      // Pin mode: the tap places the pin (the map's own click handler), no popup.
+      if (!tapModeActive) openLiveAlertPopup(props, e.latlng, e.originalEvent);
+    });
+    layer.on('mouseover', () => highlightLiveAlert(props.cap_id, true));
+    layer.on('mouseout',  () => highlightLiveAlert(props.cap_id, false));
+    livePieces.add({ layer, props, bounds: layer.getBounds() });
+    if (!liveHiddenEvents.has(props.prod_type)) liveAlertsLayer.addLayer(layer);
+  });
+  // Warnings on top of watches, watches on top of advisories and statements —
+  // across answers too (pieces added by a later pan would otherwise draw on top).
+  [...livePieces]
+    .sort((a, b) => (LIVE_SIG_RANK[a.props.sig] ?? 0) - (LIVE_SIG_RANK[b.props.sig] ?? 0))
+    .forEach(piece => { if (liveAlertsLayer.hasLayer(piece.layer)) piece.layer.bringToFront(); });
+}
+
+/** Light up every piece of one alert (a watch can cover dozens of counties). */
+function highlightLiveAlert(capId, on) {
+  if (!capId) return;
+  for (const piece of livePieces) {
+    if (piece.props.cap_id === capId) piece.layer.setStyle({ weight: on ? 2.5 : 1.2, fillOpacity: on ? 0.5 : 0.28 });
+  }
+}
+
+/** Distinct alerts (not county pieces) inside the current view, per alert type. */
+function liveAlertsInView() {
+  const view = map.getBounds();
+  const byEvent = new Map();   // event → { sig, ids: Set(cap_id) }
+  for (const piece of livePieces) {
+    if (!view.intersects(piece.bounds)) continue;
+    const ev = piece.props.prod_type;
+    if (!byEvent.has(ev)) byEvent.set(ev, { sig: piece.props.sig, ids: new Set() });
+    byEvent.get(ev).ids.add(piece.props.cap_id || piece);
+  }
+  return byEvent;
+}
+
+/**
+ * Rebuild the colour key and the button's count, most serious types first.
+ * While loading or after a failure it says so — never a misleading "0".
+ * A keyboard user on a row keeps focus on the same alert type.
+ */
+function renderLiveLegend() {
+  const focusedEvent = liveLegend.contains(document.activeElement) ? document.activeElement.dataset.event : null;
+  const rows = [...liveAlertsInView().entries()].sort((a, b) =>
+    (LIVE_SIG_RANK[b[1].sig] ?? 0) - (LIVE_SIG_RANK[a[1].sig] ?? 0) || b[1].ids.size - a[1].ids.size);
+  const total = rows.reduce((n, [, v]) => n + v.ids.size, 0);
+  liveAlertsCount.textContent = !liveAlertsOn ? '' : liveState === 'loading' ? '· …'
+    : liveState === 'error' ? '· !' : `· ${total}`;
+  liveAlertsBtn.title = liveState === 'error'
+    ? 'Live alerts couldn\'t be loaded — retrying'
+    : 'Show every watch, warning and advisory in the map view';
+
+  liveLegend.replaceChildren();
+  const note = text => {
+    const li = document.createElement('li');
+    li.className = 'live-legend-empty';
+    li.textContent = text;
+    liveLegend.appendChild(li);
+  };
+  if (liveState === 'loading') { note('Loading alerts…'); return; }
+  if (liveState === 'error') note('Couldn\'t load live alerts — retrying…');
+  if (!rows.length) { if (liveState === 'ok') note('No active alerts in this view.'); return; }
+  rows.forEach(([event, { ids }]) => {
+    const li = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.event = event;
+    button.setAttribute('aria-pressed', String(!liveHiddenEvents.has(event)));
+    button.innerHTML = `<span class="live-legend-swatch" style="background:${liveAlertColor(event)}"></span>` +
+      `<span class="live-legend-name">${escapeHtml(event)}</span><span class="live-legend-count">${ids.size}</span>`;
+    button.addEventListener('click', () => toggleLiveAlertType(event, button));
+    li.appendChild(button);
+    liveLegend.appendChild(li);
+    if (event === focusedEvent) button.focus();
+  });
+}
+
+/** Hide or show every area of one alert type (a colour-key row). */
+function toggleLiveAlertType(event, button) {
+  const hide = !liveHiddenEvents.has(event);
+  if (hide) liveHiddenEvents.add(event); else liveHiddenEvents.delete(event);
+  button.setAttribute('aria-pressed', String(!hide));
+  for (const piece of livePieces) {
+    if (piece.props.prod_type !== event) continue;
+    if (hide) liveAlertsLayer.removeLayer(piece.layer); else liveAlertsLayer.addLayer(piece.layer);
+  }
+}
+
+/**
+ * Open an area's popup: what the map service knows at once, then the alert's
+ * full NWS record (headline, severity, areas) in the same layout as the
+ * searched area's own alert popups, placed clear of the banner and panel.
+ */
+function openLiveAlertPopup(props, latlng, clickEvent) {
+  const color = liveAlertTextColor(props.prod_type);
+  const basic = { event: props.prod_type, onset: props.onset || props.issuance, ends: props.ends,
+                  expires: props.expiration };
+  const options = { className: 'wx-alert-popup', autoPan: true };
+  const point = clickEvent?.clientX != null ? clickEvent : map.latLngToContainerPoint(latlng);
+  fitAlertPopup(options, point.clientX ?? point.x, point.clientY ?? point.y);
+  const popup = L.popup(options).setLatLng(latlng).setContent(alertAreaPopupHtml(basic, color));
+  livePopup = popup;
+  popup.on('remove', () => { if (livePopup === popup) livePopup = null; });
+  popup.openOn(map);
+
+  if (!isTrustedNwsApiUrl(props.url, '/alerts/')) return;   // only follow NWS's own links
+  fetchJsonWithTimeout(props.url).then(({ response, data }) => {
+    if (livePopup !== popup || !response.ok || !data?.properties) return;
+    popup.setContent(alertAreaPopupHtml(data.properties, color));
+  }).catch(() => { /* the basic popup stays */ });
+}
+
+/** Turn live alerts on or off. */
+function setLiveAlerts(on) {
+  liveAlertsOn = on;
+  liveAlertsBtn.setAttribute('aria-pressed', String(on));
+  liveLegendBtn.hidden = !on;
+  clearInterval(liveRefreshTimer);
+  clearTimeout(liveMoveTimer);
+  clearTimeout(liveRetryTimer);
+  liveRefreshMissed = false;
+  if (livePopup) map.closePopup(livePopup);
+  // The searched area's own polygons would be drawn twice: hide them with a CSS
+  // class (not by removing their layer), so their labels, popups and stacking
+  // stay intact for when live alerts are switched off again.
+  map.getContainer().classList.toggle('live-alerts-on', on);
+  if (on) {
+    if (activeAlertAreaOwner) map.closePopup();
+    liveState = 'loading';
+    liveFailureShown = false;
+    loadLiveAlerts();
+    liveRefreshTimer = setInterval(refreshLiveAlerts, ALERTS_REFRESH_MS);
+  } else {
+    liveAlertsSeq++;                 // ignore any answer still on its way
+    liveAlertsLayer.clearLayers();
+    livePieces.clear();
+    liveState = 'off';
+    setLiveLegendOpen(false);
+    // The canvas covers the whole map: take it away, or it would keep catching
+    // clicks meant for the searched area's polygons below it.
+    if (map.hasLayer(liveAlertsRenderer)) map.removeLayer(liveAlertsRenderer);
+  }
+  renderLiveLegend();
+}
+
+/** The 2-minute refresh tick: skipped while the page is hidden, caught up on return. */
+function refreshLiveAlerts() {
+  if (!liveAlertsOn) return;
+  if (document.hidden) { liveRefreshMissed = true; return; }
+  loadLiveAlerts();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !liveRefreshMissed) return;
+  liveRefreshMissed = false;
+  refreshLiveAlerts();
+});
+
+// Moving the map loads what came into view — one request per pause, not per frame.
+map.on('moveend', () => {
+  if (!liveAlertsOn) return;
+  renderLiveLegend();
+  clearTimeout(liveMoveTimer);
+  liveMoveTimer = setTimeout(loadLiveAlerts, 350);
+});
+
+/* The control: [colour key] above [LIVE ALERTS · n] [KEY], above the zoom buttons. */
+const LiveAlertsControl = L.Control.extend({
+  options: { position: 'bottomleft' },
+  onAdd() {
+    const box = L.DomUtil.create('div', 'leaflet-control live-alerts-ctl');
+    box.innerHTML = `
+      <ul id="live-legend" hidden aria-label="Alert types in view"></ul>
+      <div class="live-alerts-row">
+        <button type="button" id="live-alerts-btn" aria-pressed="false"
+                title="Show every watch, warning and advisory in the map view">
+          <span class="lamp" aria-hidden="true"></span>LIVE ALERTS <span id="live-alerts-count"></span>
+        </button>
+        <button type="button" id="live-legend-btn" aria-expanded="false" aria-controls="live-legend" hidden>KEY</button>
+      </div>`;
+    // Clicks, double-clicks and scrolling here must not reach the map.
+    L.DomEvent.disableClickPropagation(box);
+    L.DomEvent.disableScrollPropagation(box);
+    return box;
+  }
+});
+new LiveAlertsControl().addTo(map);
+const liveAlertsBtn   = document.getElementById('live-alerts-btn');
+const liveAlertsCount = document.getElementById('live-alerts-count');
+const liveLegendBtn   = document.getElementById('live-legend-btn');
+const liveLegend      = document.getElementById('live-legend');
+
+/** Show or fold away the colour key. */
+function setLiveLegendOpen(open) {
+  liveLegend.hidden = !open;
+  liveLegendBtn.setAttribute('aria-expanded', String(open));
+}
+liveAlertsBtn.addEventListener('click', () => setLiveAlerts(!liveAlertsOn));
+liveLegendBtn.addEventListener('click', () => setLiveLegendOpen(liveLegend.hidden));
 
 /* ─────────────────────────────────────────────────────────────────────────────
    15. URL QUERY-STRING HELPERS
@@ -4726,8 +5363,8 @@ fabLocate.addEventListener('click', () => {
         throw new Error('No coordinates in station response');
       }
 
-      // Zoom 10 like every other search: the alert lookup includes nearby warning
-      // polygons that are visible at that zoom (see alertViewportBounds).
+      // A single station has no search circle: zoom 10 around it, and the alert
+      // lookup includes the nearby warning polygons visible there (alertViewportBounds).
       moveMapTo(lat, lng, 10);
 
       const stName = data.properties?.stationName || stationParam;

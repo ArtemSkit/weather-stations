@@ -524,10 +524,13 @@ async function runUpdateFlow({ controller, active = null, waiting = null }) {
 test('round-4 UI fixes: popups, keyboard panel, iOS zoom, cookies, fonts', () => {
   // A closed popup lingers in the DOM for Leaflet's 200 ms fade; ask the tracked owner.
   const openAlertPopupElement = vm.runInNewContext(
-    `(activeAlertAreaOwner => (${extractFunction('openAlertPopupElement')})())`);
+    `((activeAlertAreaOwner, livePopup = null) => (${extractFunction('openAlertPopupElement')})())`);
   assert.equal(openAlertPopupElement(null), null);
   const el = {};
   assert.equal(openAlertPopupElement({ getPopup: () => ({ getElement: () => el }) }), el);
+  // A live-alert popup (14C) obeys the same Escape / click-away rules while open.
+  assert.equal(openAlertPopupElement(null, { isOpen: () => true, getElement: () => el }), el);
+  assert.equal(openAlertPopupElement(null, { isOpen: () => false, getElement: () => el }), null);
   assert.doesNotMatch(extractFunction('handleAlertPopupClickAway') + extractFunction('handleAlertPopupEscape'),
     /querySelector/);
   assert.match(extractFunction('addAlertGeometryToMap'), /autoPan: true, autoPanPadding: \[16, 16\]/);
@@ -645,11 +648,12 @@ test('Enter that confirms an IME composition does not start a search', () => {
 });
 
 test('the alert banner stays clear of the map controls and the station panel', () => {
-  // Desktop: above the bottom-left zoom control; beside an open panel in narrow windows.
-  assert.match(html, /#alert-banner \{[^}]*max-height: max\(4rem, calc\(100% - 16px - 110px\)\);/);
+  // Desktop: above the bottom-left zoom control and the LIVE ALERTS button above it;
+  // beside an open panel in narrow windows.
+  assert.match(html, /#alert-banner \{[^}]*max-height: max\(4rem, calc\(100% - 16px - 150px\)\);/);
   assert.match(html, /main\.sheet-open #alert-banner \{ max-width: calc\(100% - 16px - 314px - 32px\); \}/);
   // Phones: above the zoom control and Locate Me, full width even with the sheet open.
-  assert.match(html, /max-height: max\(4rem, calc\(100% - 8px - 180px - var\(--safe-bottom\)\)\);/);
+  assert.match(html, /max-height: max\(4rem, calc\(100% - 8px - 220px - var\(--safe-bottom\)\)\);/);
   // An open or hovered station inside a warning keeps readable dark text.
   assert.match(html, /\.station-marker\.alerted:hover,\s*\.station-marker\.alerted\.active \{ color: var\(--bg\); \}/);
   // A rebuilt banner keeps keyboard focus; the dead install-prompt hook is gone.
@@ -699,7 +703,7 @@ test('alert popups pan clear of the banner and panel, and their × never covers 
   const run = ({ x, y, map, panelStyle = 'absolute', panelRect, bannerBottom = 260 }) => {
     const options = {};
     const area = {};
-    vm.runInNewContext(`(${extractFunction('prepareAlertPopupPan')})`, {
+    vm.runInNewContext(`(() => { ${extractFunction('fitAlertPopup')} return ${extractFunction('prepareAlertPopupPan')}; })()`, {
       alertAreaOwners: new Map([[area, { getPopup: () => ({ options }) }]]),
       document: { getElementById: () => ({ getBoundingClientRect: () => map }) },
       alertBanner: { classList: { contains: () => true }, getBoundingClientRect: () => ({ bottom: bannerBottom, right: 346 }) },
@@ -1706,7 +1710,7 @@ test('station panel shows readings promptly and formats them cleanly', () => {
   assert.match(html, /const MAX_REFRESH_SECONDS = 3600;/);
 
   // Malformed station entries are skipped instead of aborting the whole plot.
-  assert.match(extractFunction('plotStations'), /Number\.isFinite\(lat\)/);
+  assert.match(extractFunction('plotStations'), /Number\.isFinite\(la\) && Number\.isFinite\(lng\)/);
 });
 
 test('every search path allocates or receives a generation before awaiting', () => {
@@ -2337,4 +2341,115 @@ test('keyboard: the focused map shows a ring and a held Enter searches once', ()
   // High Contrast mode drops box-shadow; the transparent outline becomes the ring.
   assert.match(html, /#map:focus-visible::after \{[^}]*outline: 2px solid transparent; outline-offset: -2px;/);
   assert.match(html, /if \(e\.key === 'Enter' && !e\.repeat && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
+});
+
+test('search radius: nearby stations only, and the circle edge never sits on a marker', () => {
+  const pick = vm.runInNewContext(`(() => {
+    const SEARCH_RADIUS_MI = 50, SEARCH_MIN_STATIONS = 8, SEARCH_STRETCH = 1.25, SEARCH_EDGE_GAP_MI = 2;
+    ${extractFunction('milesBetween')}
+    ${extractFunction('selectStationsInRadius')}
+    return selectStationsInRadius;
+  })()`);
+  // Stations due north of (30, -98) at the given distances (1° of latitude ≈ 69.09 mi).
+  const at = miles => ({ geometry: { coordinates: [-98, 30 + miles / 69.09] }, properties: {} });
+  const run = list => pick(30, -98, list.map(at));
+
+  // Plenty nearby: everything within 50 mi, edge halfway to the next one out.
+  let r = run([5, 10, 15, 20, 25, 30, 35, 40, 45, 49, 80, 120]);
+  assert.equal(r.inside.length, 10);
+  assert.ok(Math.abs(r.edgeMi - (49 + 80) / 2) < 0.5);
+
+  // Sparse area: the nearest 8 even beyond 50 mi.
+  r = run([20, 60, 70, 75, 90, 100, 110, 130, 180, 250]);
+  assert.equal(r.inside.length, 8);
+  assert.ok(r.edgeMi > 130 && r.edgeMi < 180);
+
+  // The 8th and 9th are almost the same distance (the Weatherford case): the edge
+  // moves to the widest gap within 25% further out, keeping the 9th too.
+  r = run([20, 40, 60, 70, 80, 90, 95, 100, 101, 160]);
+  assert.equal(r.inside.length, 9);
+  assert.ok(r.edgeMi - r.inside.at(-1).mi >= 0.05 * r.edgeMi, 'edge clear of the last station kept');
+
+  // Dense list (one station every mile to 200 mi): the stretch is capped, so the
+  // circle can't run away to cover the whole list.
+  r = run(Array.from({ length: 200 }, (_, i) => i + 1));
+  assert.ok(r.edgeMi >= 50 && r.edgeMi <= 63, `edge ${r.edgeMi}`);
+  // Like the real Weatherford list: tight steps past 50 mi, then a real gap.
+  r = run([10, 18, 25, 31, 38, 44, 46.3, 50.2, 51.7, 53, 54.5, 57, 66, 70, 75, 81]);
+  assert.equal(r.inside.length, 12, 'stops at the 57 → 66 mi gap');
+  assert.ok(r.edgeMi > 57 && r.edgeMi < 66);
+
+  // Nothing beyond the last station: a little past it.
+  r = run([10, 20]);
+  assert.equal(r.inside.length, 2);
+  assert.ok(r.edgeMi > 20);
+  const none = run([]);
+  assert.equal(none.inside.length, 0);
+  assert.equal(none.edgeMi, 50);
+});
+
+test('live alerts: NWS colours, readable popup text, one view request at a time', () => {
+  const colours = vm.runInNewContext(`(() => {
+    ${html.match(/const LIVE_ALERT_COLORS = \{[\s\S]*?\n\};/)[0]}
+    ${extractFunction('alertHue')}
+    ${extractFunction('liveAlertColor')}
+    ${extractFunction('liveAlertTextColor')}
+    return { liveAlertColor, liveAlertTextColor };
+  })()`);
+  assert.equal(colours.liveAlertColor('Tornado Warning'), '#FF0000');
+  assert.equal(colours.liveAlertColor('Extreme Heat Warning'), '#C71585');
+  assert.match(colours.liveAlertColor('Something New'), /^hsl\(\d+, 70%, 60%\)$/);
+  // Dark NWS colours are lightened for text on the dark popup.
+  assert.equal(colours.liveAlertTextColor('Flash Flood Warning'), 'rgb(197, 128, 128)');
+
+  const load = extractFunction('loadLiveAlerts');
+  assert.match(load, /if \(seq !== liveAlertsSeq \|\| !liveAlertsOn\) return;/, 'stale views are dropped');
+  assert.match(load, /maxAllowableOffset: liveAlertTolerance\(map\.getZoom\(\)\)\.toFixed\(6\)/, 'outlines simplified to the zoom');
+  const toggle = extractFunction('setLiveAlerts');
+  // The searched area's polygons are hidden with a class (kept intact), and the
+  // full-map canvas is removed when off so it can't catch their clicks.
+  assert.match(toggle, /classList\.toggle\('live-alerts-on', on\)/);
+  assert.doesNotMatch(toggle, /removeLayer\(alertAreaGroup\)/);
+  assert.match(toggle, /map\.removeLayer\(liveAlertsRenderer\)/);
+  assert.match(html, /#map\.live-alerts-on \.wx-alert-area,\s*#map\.live-alerts-on \.alert-area-label \{ display: none; \}/);
+  // Pin mode: a tap on an alert area places the pin instead of opening a popup.
+  assert.match(extractFunction('replaceLivePieces'), /if \(!tapModeActive\) openLiveAlertPopup/);
+});
+
+test('live alerts: each answer replaces what was drawn in its box (NOAA renumbers records)', () => {
+  // A tiny stand-in for Leaflet: bounds are [west, south, east, north] boxes.
+  const box = (w, s, e, n) => ({ w, s, e, n, intersects: o => !(o.e < w || o.w > e || o.n < s || o.s > n) });
+  const drawn = new Set();
+  const fake = {
+    L: { geoJSON: g => ({ g, on() {}, getBounds: () => box(...g.box), bringToFront() {}, setStyle() {} }) },
+    liveAlertsLayer: { addLayer: l => drawn.add(l), removeLayer: l => drawn.delete(l), hasLayer: l => drawn.has(l) },
+    livePieces: new Set(), liveHiddenEvents: new Set(), liveAlertsRenderer: {}, tapModeActive: false,
+    LIVE_SIG_RANK: { S: 0, Y: 1, A: 2, W: 3 }, liveAlertColor: () => '#fff', Date
+  };
+  const replace = vm.runInNewContext(`(() => {
+    ${extractFunction('liveField')}
+    ${extractFunction('replaceLivePieces')}
+    return replaceLivePieces;
+  })()`, fake);
+  const later = new Date(Date.now() + 3_600_000).toISOString();
+  const piece = (event, b, extra = {}) => ({ geometry: { box: b },
+    properties: { prod_type: event, sig: 'W', expiration: later, ends: ' ', cap_id: event, ...extra } });
+
+  // First answer for a box: two warnings.
+  replace([piece('Tornado Warning', [0, 0, 1, 1]), piece('Flood Warning', [2, 2, 3, 3])], box(0, 0, 5, 5));
+  assert.equal(fake.livePieces.size, 2);
+  // A blank field (" ") is treated as empty, not as a date.
+  assert.equal([...fake.livePieces][0].props.ends, undefined);
+  // Next answer for the same box no longer lists the tornado warning (cancelled):
+  // it is gone, whatever ids the service reused.
+  replace([piece('Flood Warning', [2, 2, 3, 3])], box(0, 0, 5, 5));
+  assert.deepEqual([...fake.livePieces].map(p => p.props.prod_type), ['Flood Warning']);
+  // An answer for a box elsewhere leaves this one's pieces alone…
+  replace([piece('Gale Warning', [20, 20, 21, 21])], box(19, 19, 25, 25));
+  assert.equal(fake.livePieces.size, 2);
+  // …but an alert that has ended is dropped anywhere.
+  replace([piece('Heat Advisory', [40, 40, 41, 41], { expiration: new Date(Date.now() - 1000).toISOString() })], box(39, 39, 45, 45));
+  replace([], box(60, 60, 61, 61));
+  assert.ok(![...fake.livePieces].some(p => p.props.prod_type === 'Heat Advisory'));
+  assert.equal(drawn.size, fake.livePieces.size, 'what is drawn matches the pieces kept');
 });

@@ -11,15 +11,16 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 3. [Search Methods](#search-methods)
 4. [Draggable Pin](#draggable-pin)
 5. [Locate Me Button](#locate-me-button)
-6. [Weather Station Popup](#weather-station-popup)
-7. [Dangerous-Weather Alerts](#dangerous-weather-alerts)
-8. [URL Query Parameters](#url-query-parameters)
-9. [Progressive Web App (PWA)](#progressive-web-app-pwa)
-10. [Architecture](#architecture)
-11. [Data Sources & APIs](#data-sources--apis)
-12. [Offline Support](#offline-support)
-13. [Quality Checks](#quality-checks)
-14. [Browser Compatibility](#browser-compatibility)
+6. [Search Circle](#search-circle)
+7. [Weather Station Popup](#weather-station-popup)
+8. [Dangerous-Weather Alerts](#dangerous-weather-alerts)
+9. [URL Query Parameters](#url-query-parameters)
+10. [Progressive Web App (PWA)](#progressive-web-app-pwa)
+11. [Architecture](#architecture)
+12. [Data Sources & APIs](#data-sources--apis)
+13. [Offline Support](#offline-support)
+14. [Quality Checks](#quality-checks)
+15. [Browser Compatibility](#browser-compatibility)
 
 ---
 
@@ -29,13 +30,15 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 |---|---|
 | **Multi-mode search** | ZIP code, lat/lon coordinates, or street address |
 | **Interactive map** | Leaflet.js + OpenStreetMap tiles, dark-mode filtered |
-| **Station markers** | All nearby NOAA stations plotted as clickable badges |
+| **Station markers** | The NOAA stations near the searched point (within 50 mi, or the nearest 8), plotted as clickable badges |
+| **Search circle** | A glowing circle marks the searched area and labels it ("13 stations · within 48 mi") |
 | **Live observations** | Auto-refreshing weather data (configurable interval, 10 s – 1 h; paused while the app is in the background) |
 | **Dual temperature** | °F displayed prominently; °C shown alongside it |
 | **Feels Like** | Heat Index or Wind Chill, whichever is applicable |
 | **Precipitation chance** | Real probability of precipitation for the current hour, from the NWS gridded forecast |
 | **Dangerous-weather alerts** | Active NWS watches/warnings/advisories for the area in a severity-ranked banner; each alert's footprint drawn on the map; a pulsing red ring on stations inside a warning polygon |
 | **Alert map areas** | Every alert's area drawn as a uniquely-coloured polygon with an event label and a click/tap popup (severity + in-effect time window) |
+| **Live alerts** | One button shows every watch, warning and advisory in the map view, in the NWS map colours, and keeps adding new ones as you pan or zoom |
 | **Sky conditions** | Cloud layer amount and base altitude |
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
@@ -177,6 +180,17 @@ The **⊕ crosshair button** in the bottom-right corner of the map uses your dev
 
 ---
 
+## Search Circle
+
+NOAA's station list for a location covers its whole forecast area — often 150–230 miles across, and over 1,000 miles in Alaska — far more than fits on screen. So every search (ZIP, address, coordinates, a dropped pin, Locate Me, or a shared link) shows only the stations near the searched point:
+
+- every station **within 50 miles**, or the **nearest 8** when fewer are that close;
+- the circle's edge sits in the **widest gap between stations** from that distance up to 25% further out (stations often come in tight clusters), so the edge doesn't land on a marker and the circle can never balloon to cover the whole list.
+
+A **glowing circle** marks that area, with a label such as **"13 stations · within 48 mi"**. The circle's edge sits halfway between the last station shown and the first one left out. Nothing is drawn inside the circle; the glow, a slowly turning dotted ring and a gentle dimming of the map are all **outside** it. The map zooms to fit the circle, and the circle grows out from the searched point (instantly when the system asks for reduced motion). A direct `?station=` link shows just that station, without a circle.
+
+---
+
 ## Weather Station Popup
 
 Click any station badge on the map — or focus it with `Tab` and press `Enter` — to open the info panel (opening it from the keyboard moves focus into it; with focus in the panel, `Esc` closes it and returns focus to the badge — otherwise use its ✕). It shows:
@@ -221,9 +235,9 @@ On touch devices (and any window ≤ 640 px wide) the popup becomes a **bottom s
 
 ## Dangerous-Weather Alerts
 
-Every search pulls the **active National Weather Service alerts** that contain the searched point — tornado and flash-flood warnings, severe-thunderstorm and winter-storm warnings, flood and tornado watches, heat advisories, and so on. It also adds nearby same-state alerts with inline polygons when their filled footprints intersect the initial map viewport. WX.MAP combines the NWS point feed with a cached state alert index: the point feed preserves relevant zone-only products, while the state feed contributes only visible inline polygons rather than loading every unrelated zone in the state.
+Every search pulls the **active National Weather Service alerts** that contain the searched point — tornado and flash-flood warnings, severe-thunderstorm and winter-storm warnings, flood and tornado watches, heat advisories, and so on. It also adds nearby same-state alerts with inline polygons when their filled footprints intersect the search circle's area. WX.MAP combines the NWS point feed with a cached state alert index: the point feed preserves relevant zone-only products, while the state feed contributes only visible inline polygons rather than loading every unrelated zone in the state.
 
-> **Why alerts attach to the *area*, not a station.** The NWS never issues alerts for individual observation stations — it issues them for **polygons** (storm-based warnings) or **county/forecast zones** (most watches). WX.MAP therefore anchors alerts to the searched point and the initial map view, then surfaces them in three complementary ways.
+> **Why alerts attach to the *area*, not a station.** The NWS never issues alerts for individual observation stations — it issues them for **polygons** (storm-based warnings) or **county/forecast zones** (most watches). WX.MAP therefore anchors alerts to the searched point and the search circle's area, then surfaces them in three complementary ways — and the **Live alerts** button shows every alert in the map view on demand.
 
 ### Tier 1 — area alert banner
 
@@ -250,6 +264,15 @@ Each area gets a **distinct colour** — hashed from the alert's id, so it stays
 ### Tier 3 — per-station danger ring
 
 Storm-based warnings (tornado, severe-thunderstorm, flash-flood) are issued as tight **polygons** that often cover only part of a city — so they can apply to some stations in the area but not others. WX.MAP runs a point-in-polygon test on every plotted station and gives any station **inside an active warning polygon** a **pulsing red ring**. Zone-only alerts have no storm polygon, so they get no ring — but they still appear as a map area (Tier 2) and in the banner.
+
+### Live alerts — everything in the map view
+
+The **LIVE ALERTS** button above the zoom buttons turns on live tracking of every active watch, warning and advisory **inside the visible map** — anywhere in the country, not just around the searched place. Pan or zoom and the areas that come into view are added; areas already drawn stay. The button shows how many alerts are in view ("…" while loading, "!" when the alert service can't be reached — it retries on its own; it never shows a misleading "0"); **KEY** opens a colour key listing each alert type in view with its count, and clicking a type hides or shows its areas.
+
+- **Colours** follow the National Weather Service's own hazard map (Tornado Warning red, Flood Warning green, Winter Storm Warning pink, and so on), so they mean what forecasters intend. Warnings are drawn on top of watches and advisories.
+- **Hover** an area to highlight every county of that alert; **click or tap** it for the same popup as the searched area's alerts (event, severity, time window, headline, affected areas), loaded from the alert's NWS record. Escape or a click elsewhere closes it.
+- **One request per view.** The outlines come from NOAA's watch/warning/advisory map service, which returns every alert area inside the view in a single request, already simplified for the zoom level (the whole country is about 600 KB). The set is re-checked every **2 minutes** (paused while the app is in the background), and areas that have ended are removed.
+- While live alerts are on, the searched area's own alert areas (Tier 2) are hidden so nothing is drawn twice; the banner (Tier 1) and the station rings (Tier 3) still describe the searched place. In pin mode, tapping an alert area places the pin as usual.
 
 ### Refresh & resilience
 
@@ -401,6 +424,7 @@ weather-stations/
 | Service | Purpose | Key required |
 |---|---|---|
 | [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, hourly forecast (precip chance), active alerts, alert-area zone geometry | No |
+| [NOAA watch/warning/advisory map service](https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer) | Live alerts: every alert area inside the map view, one request per view | No |
 | [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates | No |
 | [Photon (komoot)](https://photon.komoot.io/) | Street address → coordinates (+ ZIP fallback) | No |
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |

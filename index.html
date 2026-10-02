@@ -3380,9 +3380,11 @@ const SEARCH_RADIUS_MI  = 50;    // stations within this distance are shown…
 const SEARCH_MIN_STATIONS = 8;   // …or the nearest 8, when fewer are that close
 const SEARCH_STRETCH    = 1.25;  // to find room between stations the edge may move up to 25% further out…
 const SEARCH_INWARD     = 0.7;   // …or 30% further in (never below the nearest 8)
-// How the map fits the circle: the box around it (× radius), the padding left for
-// the label above it and the edges (total px), and the closest zoom.
-const SEARCH_FIT_BOX = 2.15, SEARCH_FIT_PAD_X = 80, SEARCH_FIT_PAD_Y = 136, SEARCH_FIT_MAX_ZOOM = 11;
+// How the map fits the circle: the box around it (× radius), the room left above
+// it for the label and at the other edges (px), and the closest zoom…
+const SEARCH_FIT_BOX = 2.15, SEARCH_FIT_TOP = 96, SEARCH_FIT_EDGE = 40, SEARCH_FIT_MAX_ZOOM = 11;
+// …and that room in total across and down (searchEdgeClearance sizes the circle with it).
+const SEARCH_FIT_PAD_X = 2 * SEARCH_FIT_EDGE, SEARCH_FIT_PAD_Y = SEARCH_FIT_TOP + SEARCH_FIT_EDGE;
 const METRES_PER_MILE   = 1609.344;
 /**
  * A box covering every world copy on screen — the dimmed area the circle is cut
@@ -3484,17 +3486,17 @@ function searchEdgeClearance(lat, edgeMi) {
 map.createPane('searchRadius').style.zIndex = 410;
 const searchRadiusRenderer = L.svg({ pane: 'searchRadius', padding: 0.5 });
 const searchRadiusLayer = L.layerGroup().addTo(map);
-/** The circle on screen: { lat, lon, r (metres), rim, rings[], mask, label } or null. */
+/** The circle on screen: { lat, r (metres), rim, rings[], mask, label } or null. */
 let searchRadius = null;
 
 /**
  * Draw the circle around the shown stations and fit it on screen: a crisp rim,
  * a soft glow and a slowly turning dotted ring just OUTSIDE it, and the map
  * outside the circle dimmed. Grows out from the point unless motion is reduced.
+ * (plotStations has already cleared the previous circle, via clearStations.)
  * @returns {{west:number,south:number,east:number,north:number}} the circle's box
  */
 function drawSearchRadius(lat, lon, miles, count) {
-  clearSearchRadius();
   const r = miles * METRES_PER_MILE;
   const ring = opts => L.circle([lat, lon], {
     renderer: searchRadiusRenderer, radius: 0, fill: false, interactive: false, color: '#00d4ff', ...opts
@@ -3518,7 +3520,7 @@ function drawSearchRadius(lat, lon, miles, count) {
     className: '', iconSize: null,
     html: `<span class="search-radius-label"><b>${count}</b> station${count === 1 ? '' : 's'} · within <b>${shownMi} mi</b></span>`
   }) });
-  const circle = { lat, lon, r: 0, rim, rings, mask, label };
+  const circle = { lat, r: 0, rim, rings, mask, label };
   searchRadius = circle;
 
   const bounds = L.latLng(lat, lon).toBounds(r * SEARCH_FIT_BOX);
@@ -3571,9 +3573,9 @@ function drawSearchRadius(lat, lon, miles, count) {
 function fitSearchRadius(bounds, lat, lon) {
   const size = map.getSize();
   if (size.x <= SEARCH_FIT_PAD_X || size.y <= SEARCH_FIT_PAD_Y) { map.setView([lat, lon], 8); return false; }
-  // Room for the label above the circle (96 px) and a margin elsewhere; these add
-  // up to SEARCH_FIT_PAD_X/Y, which searchEdgeClearance assumes.
-  const options = { paddingTopLeft: [40, 96], paddingBottomRight: [40, 40], maxZoom: SEARCH_FIT_MAX_ZOOM };
+  // Room for the label above the circle and a margin elsewhere.
+  const options = { paddingTopLeft: [SEARCH_FIT_EDGE, SEARCH_FIT_TOP],
+                    paddingBottomRight: [SEARCH_FIT_EDGE, SEARCH_FIT_EDGE], maxZoom: SEARCH_FIT_MAX_ZOOM };
   // Reduced motion: no animation at all (a same-zoom fit would still glide).
   if (prefersReducedMotion.matches) { map.fitBounds(bounds, { ...options, animate: false }); return false; }
   map.flyToBounds(bounds, { ...options, duration: 1.2 });
@@ -3748,7 +3750,7 @@ let zoneFetchActive = 0;
 function openAlertPopupElement() {
   // A live-alert area's popup (14C) follows the same click-away and Escape rules.
   return activeAlertAreaOwner?.getPopup?.()?.getElement?.() ||
-         (livePopup?.isOpen() ? livePopup.getElement() : null) || null;
+         (livePopup?.isOpen() ? livePopup.getElement() : null);
 }
 
 /**

@@ -2349,7 +2349,7 @@ test('keyboard: the focused map shows a ring and a held Enter searches once', ()
   assert.match(html, /if \(e\.key === 'Enter' && !e\.repeat && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
 });
 
-test('search radius: nearby stations only, and the circle edge never sits on a marker', () => {
+test('search radius: nearby stations only, and the circle edge keeps clear of markers where the gaps allow', () => {
   const pick = vm.runInNewContext(`(() => {
     const SEARCH_RADIUS_MI = 50, SEARCH_MIN_STATIONS = 8, SEARCH_STRETCH = 1.25, SEARCH_INWARD = 0.7;
     ${extractFunction('milesBetween')}
@@ -2420,7 +2420,8 @@ test('search radius: nearby stations only, and the circle edge never sits on a m
   // A map smaller than the fit padding is centred, not fitted at a nonsense zoom.
   const fitCalls = [];
   const fit = vm.runInNewContext(`(${extractFunction('fitSearchRadius')})`, {
-    SEARCH_FIT_PAD_X: 80, SEARCH_FIT_PAD_Y: 136, SEARCH_FIT_MAX_ZOOM: 11, prefersReducedMotion: { matches: false },
+    SEARCH_FIT_PAD_X: 80, SEARCH_FIT_PAD_Y: 136, SEARCH_FIT_TOP: 96, SEARCH_FIT_EDGE: 40, SEARCH_FIT_MAX_ZOOM: 11,
+    prefersReducedMotion: { matches: false },
     map: { getSize: () => ({ x: 400, y: 120 }), setView: () => fitCalls.push('setView'), flyToBounds: () => fitCalls.push('fly') }
   });
   assert.equal(fit({}, 30, -98), false);

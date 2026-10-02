@@ -4621,6 +4621,9 @@ function loadAlertRecord(id, url) {
     } catch (_) {
       // Places stay unknown; opening the card tries again at once.
       setBoundedCache(alertRecordFailedAt, id, Date.now(), ALERT_RECORD_CACHE_LIMIT);
+      // Redraw too, so its header drops "Finding the places…" now that no lookup
+      // is on its way (else it stays until the next pan if this was the last one).
+      scheduleLiveBannerRefresh();
       return false;
     } finally {
       alertRecordInFlight.delete(id);

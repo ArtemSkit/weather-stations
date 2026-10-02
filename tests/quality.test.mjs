@@ -1176,6 +1176,8 @@ test('alert times never invent an end and show a future start', () => {
   // shares it), and a failed one rests for 5 minutes before the loader retries.
   const load = extractFunction('loadAlertRecord');
   assert.match(load, /if \(alertRecordInFlight\.has\(id\)\) return alertRecordInFlight\.get\(id\);/);
+  // A failed lookup redraws the list too, so no header keeps "Finding the places…".
+  assert.match(load, /setBoundedCache\(alertRecordFailedAt, id, Date\.now\(\), ALERT_RECORD_CACHE_LIMIT\);[\s\S]*?scheduleLiveBannerRefresh\(\);\s*return false;/);
   assert.match(extractFunction('queueAlertRecords'), /Date\.now\(\) - \(alertRecordFailedAt\.get\(id\) \?\? -Infinity\) < ALERT_RECORD_RETRY_MS/);
   assert.match(extractFunction('loadAlertCardDetails'), /updateAlertScrollHint\(\);\s*\/\/ the card's new height/);
   // What the user opened stays open when the list is rebuilt.

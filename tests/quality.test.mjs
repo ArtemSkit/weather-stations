@@ -2959,6 +2959,12 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.match(rows[1], /<p><b>Friday:<\/b> Friday details\.<\/p><p><b>Friday Night:<\/b> Friday Night details\.<\/p>/);
   assert.match(rows[2], /High <\/span>90°<\/span><small>32°C<\/small>/);
   assert.doesNotMatch(rows[2], /fc-lo|Night:/);
+  // A missing temperature: only the other one shows; with neither, a dash.
+  const gaps = r.renderForecastDays([day('Sunday', null), night('Sunday Night', 61),
+                                     day('Monday', null), night('Monday Night', undefined)]).split('<details').slice(1);
+  assert.match(gaps[0], /<span class="fc-temps"><span class="fc-lo">[^]*?Low <\/span>61°<\/span><small>16°C<\/small><\/span>/);
+  assert.doesNotMatch(gaps[0], /fc-hi/);
+  assert.match(gaps[1], /<span class="fc-temps">—<\/span>/);
   const now = Date.parse('2026-10-01T22:30:00-05:00');
   const hour = (start, end) => ({ startTime: start, endTime: end, temperature: 70, temperatureUnit: 'F',
     shortForecast: 'Clear', isDaytime: false, probabilityOfPrecipitation: { value: 0 } });

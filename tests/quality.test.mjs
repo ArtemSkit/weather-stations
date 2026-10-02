@@ -960,6 +960,10 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
     ${extractFunction('val')}
     ${extractFunction('degToCompass')}
     ${extractFunction('formatTime')}
+    ${extractFunction('setBoundedCache')}
+    const GUST_CARRY_MS = 15 * 60_000, GUST_MEMORY_LIMIT = 50;
+    const recentGusts = new Map();
+    ${extractFunction('shownGust')}
     ${extractFunction('renderWeather')}
     return renderWeather;
   })()`, {
@@ -976,6 +980,20 @@ test('station panel shows what weather.gov would: rounding, calm, clear, feels-l
   assert.match(body(), /13<sup>°C<\/sup>/);
   assert.match(body(), /7 mph/);
   assert.match(body(), /Overcast @ 2600 ft/);
+
+  // Gusts: shown when reported; "None" when the wind isn't gusting (N/A only with
+  // no wind data); a gust from the last 15 minutes carries over a report that
+  // leaves it out (the 5-minute reports often do), with its age.
+  const gustRow = () => body().match(/Gusts<\/div> <div class="weather-item-value">(.*?)<\/div>/)[1];
+  const at = min => new Date(Date.parse('2026-10-02T03:00:00Z') + min * 60_000).toISOString();
+  obs({ timestamp: at(0), windSpeed: { value: 33.3 }, windGust: { value: 48.2 } });
+  assert.equal(gustRow(), '30 mph');
+  obs({ timestamp: at(5), windSpeed: { value: 37 }, windGust: { value: null } });
+  assert.match(gustRow(), /^30 mph<br><span[^>]*>5 min ago<\/span>$/);
+  obs({ timestamp: at(20), windSpeed: { value: 37 }, windGust: { value: null } });
+  assert.equal(gustRow(), '<span class="na">None</span>', 'over 15 minutes old: no longer shown');
+  obs({ timestamp: at(21), windGust: { value: null } });
+  assert.equal(gustRow(), '<span class="na">N/A</span>', 'no wind data at all');
 
   // PANC-like calm (00000KT) and an automated CLR with its 3810 m placeholder.
   obs({ windSpeed: { value: 0 }, windDirection: { value: 0 }, cloudLayers: [{ amount: 'CLR', base: { value: 3810 } }] });

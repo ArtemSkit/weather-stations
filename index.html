@@ -1076,7 +1076,7 @@
   }
   @keyframes alert-focus-flash   { from { fill-opacity: 0.3; } to { fill-opacity: 0; } }
   @keyframes alert-focus-breathe { 0%, 100% { stroke-opacity: 0.22; } 50% { stroke-opacity: 0.6; } }
-  .alert-focus-line { animation: alert-focus-march 1.1s linear infinite; }
+  .alert-focus-line { animation: alert-focus-march 2.6s linear infinite; }   /* an unhurried ~14 px/s */
   @keyframes alert-focus-march { to { stroke-dashoffset: -36; } }   /* two dash periods: a seamless loop */
   .leaflet-tooltip.alert-focus-label {
     /* Opaque: an area's own name chip may sit right underneath it. */
@@ -3991,6 +3991,7 @@ async function loadStationsAt(lat, lon, gen) {
   // must not linger (or stay clickable and open a stale panel) during the fetch,
   // nor be left behind next to the new location if the station fetch fails.
   clearStations();
+  clearAlertFocus();   // an area picked out from the alert list goes too
   // The circle is redrawn once the stations are in: keep its RADIUS switch in
   // place meanwhile rather than letting it blink out. plotStations settles it
   // (shown with the new circle, hidden if no station is found); so does a failure.
@@ -4619,9 +4620,13 @@ function zoomToAlert(id, label = '') {
     map.fitBounds(bounds, { ...options, animate: false });
     show();
   } else {
+    // A short flight: the highlight waits for the landing (drawn mid-flight,
+    // Leaflet would stretch its lines several times thicker as the map zooms).
+    map.flyToBounds(bounds, { ...options, duration: ALERT_FOCUS_FLIGHT_S });
+    // Listen only now: an earlier glide that the flight just cut short reports
+    // its own "moveend", which would show the highlight before the flight.
     map.once('moveend', show);
-    map.flyToBounds(bounds, { ...options, duration: 1 });
-    setTimeout(show, 1600);   // (in case the flight ends without a "moveend")
+    setTimeout(show, ALERT_FOCUS_FLIGHT_S * 1000 + 400);   // (in case it ends without one)
   }
 }
 
@@ -4633,6 +4638,7 @@ map.createPane('alertFocusLabel').style.zIndex = 655;
 const alertFocusPanes = [map.getPane('alertFocus'), map.getPane('alertFocusLabel')];
 const alertFocusRenderer = L.svg({ pane: 'alertFocus', padding: 0.5 });
 const alertFocusLayer = L.layerGroup().addTo(map);
+const ALERT_FOCUS_FLIGHT_S = 0.6;   // the zoom to the area, in seconds
 const ALERT_FOCUS_SHOW_MS = 7000;   // then it fades…
 const ALERT_FOCUS_FADE_MS = 800;    // …over this (the pane's CSS transition)
 let alertFocusSeq = 0;              // newest zoom; an older one's late landing shows nothing

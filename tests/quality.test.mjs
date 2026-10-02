@@ -122,6 +122,8 @@ test('a failed newer search keeps the area that is loading or shown', async () =
     function loadAlertsForArea() { log.push('alerts'); }
     function setForecastPoint() { log.push('forecast point'); }
     function clearForecastPoint() { log.push('forecast cleared'); }
+    function clearAlertFocus() {}
+    function liveSearchLanded() {}
     ${extractFunction('stationCountLabel')}
     ${extractFunction('mayUpdateSearchUi')}
     ${extractFunction('reportSearchError')}
@@ -1202,7 +1204,12 @@ test('alert times never invent an end and show a future start', () => {
   // after a few seconds or at a click on the map, and never taking clicks.
   const zoom = extractFunction('zoomToAlert');
   assert.match(zoom, /const seq = \+\+alertFocusSeq;[\s\S]*if \(shown \|\| seq !== alertFocusSeq\) return;[\s\S]*showAlertFocus\(shapes, label, center\);/);
-  assert.match(zoom, /map\.once\('moveend', show\);\s*map\.flyToBounds/);
+  // (Listening only once the short flight has begun: a glide it cuts short ends
+  // with a "moveend" of its own.)
+  assert.match(zoom, /map\.flyToBounds\(bounds, \{ \.\.\.options, duration: ALERT_FOCUS_FLIGHT_S \}\);[\s\S]*?map\.once\('moveend', show\);/);
+  assert.match(html, /const ALERT_FOCUS_FLIGHT_S = 0\.6;/);
+  // A new search takes it away too.
+  assert.match(extractFunction('loadStationsAt'), /clearStations\(\);\s*clearAlertFocus\(\);/);
   const focus = extractFunction('showAlertFocus');
   assert.match(focus, /className: 'alert-focus-halo'[\s\S]*className: 'alert-focus-line'[\s\S]*dashArray: '10 8'/);
   assert.match(focus, /map\.on\('click', clearAlertFocus\);[\s\S]*alertFocusPanes\.forEach\(pane => pane\.classList\.add\('fading'\)\);[\s\S]*setTimeout\(clearAlertFocus, ALERT_FOCUS_FADE_MS\)/);
@@ -2690,7 +2697,7 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(load, /liveRetryTimer = setTimeout\(refreshLiveAlerts, 30_000\);/);
   assert.match(extractFunction('setLiveAlerts'), /liveAlertsSeq\+\+;[^\n]*\n\s*liveAppliedSeq = liveAlertsSeq;/, 'switching off drops answers on their way');
   // Never a misleading count while the view's own answer is on its way.
-  assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;\s*liveViewPending = true;/);
+  assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;[\s\S]*?liveViewPending = true;/);
   assert.match(extractFunction('renderLiveLegend'), /liveViewPending \? '· …' : `· \$\{total\}`/);
   assert.match(load, /const tolerance = liveAlertTolerance\(map\.getZoom\(\)\)\.toFixed\(6\);[\s\S]*maxAllowableOffset: tolerance/, 'outlines simplified to the zoom');
   const toggle = extractFunction('setLiveAlerts');
@@ -2705,7 +2712,7 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(html, /#map\.live-alerts-on \.wx-alert-area,\s*#map\.live-alerts-on \.alert-area-label:not\(\.live-area-label\) \{ display: none; \}/);
   // Live mode: name chips on the live areas, and the banner lists the alerts in
   // view (rebuilt only when that set changes), following every move of the map.
-  assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;\s*liveViewPending = true;[^\n]*\n\s*renderLiveView\(\);/);
+  assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;[\s\S]*?liveViewPending = true;[^\n]*\n\s*renderLiveView\(\);/);
   assert.match(extractFunction('renderLiveView'), /renderLiveLegend\(\);\s*renderLiveLabels\(\);\s*renderLiveBanner\(\);/);
   assert.match(extractFunction('renderLiveBanner'), /if \(signature === liveBannerSignature\) return;[\s\S]*renderAlertBanner\(features, true\);/);
   // (Held while the moved view's answer is on its way: no shrink-and-refill.)

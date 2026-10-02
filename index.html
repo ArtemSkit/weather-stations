@@ -5507,6 +5507,17 @@ function renderForecastHours(periods, now = Date.now()) {
   return `<ul class="fc-hours">${rows.join('')}</ul>`;
 }
 
+/**
+ * A load error as the end of "Couldn't load the forecast: …": lower-case, and
+ * without a trailing "please try again" (the Try again button says that).
+ * "Request timed out — please try again" → "request timed out".
+ */
+function forecastErrorReason(error) {
+  const reason = String(error?.message || 'no answer')
+    .replace(/\s*(?:—\s*please try again|and try again)\.?$/i, '').trim() || 'no answer';
+  return reason.charAt(0).toLowerCase() + reason.slice(1);
+}
+
 /** Show the 7-day ('days') or hourly ('hours') view. */
 function selectForecastTab(tab) {
   const days = tab === 'days';
@@ -5538,7 +5549,7 @@ async function openForecast() {
   } catch (error) {
     if (seq !== forecastSeq || !forecastDialog.open) return;
     fcDays.innerHTML = fcHours.innerHTML =
-      `<p class="fc-empty">Couldn't load the forecast: ${escapeHtml(error.message || 'no answer')}.` +
+      `<p class="fc-empty">Couldn't load the forecast: ${escapeHtml(forecastErrorReason(error))}.` +
       ' <button type="button" class="fc-retry">Try again</button></p>';
   }
 }

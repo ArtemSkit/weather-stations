@@ -5109,8 +5109,9 @@ map.on('moveend', () => {
 });
 
 /* The control: [colour key] above [‹] [LIVE ALERTS · n] [KEY] [RADIUS], above the
-   zoom buttons; ‹ folds the rest away. (RADIUS, the search circle's on/off switch, belongs to section 13 but
-   shares this row so the map's corner keeps a single stack of controls.) */
+   zoom buttons; ‹ folds the rest away. (RADIUS, the search circle's on/off switch,
+   belongs to section 13 but shares this row so the map's corner keeps a single
+   stack of controls.) */
 const LiveAlertsControl = L.Control.extend({
   options: { position: 'bottomleft' },
   onAdd() {

@@ -3505,7 +3505,7 @@ function drawSearchRadius(lat, lon, miles, count) {
   // once the map has landed (see startGrow): mid-flight Leaflet only scales the
   // old drawing, so it would visibly shrink towards the centre.
   const mask = L.polygon([SEARCH_MASK_OUTER], {
-    renderer: searchRadiusRenderer, stroke: false, fillColor: '#05070c', fillOpacity: 0.32, interactive: false
+    renderer: searchRadiusRenderer, stroke: false, fillColor: '#101826', fillOpacity: 0.2, interactive: false
   });
   // Rings `px` screen pixels beyond the rim: three fading glows, then the dotted ring.
   const rings = [

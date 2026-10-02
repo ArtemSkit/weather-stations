@@ -897,6 +897,15 @@
   #search-radius-btn[aria-pressed="false"] { color: var(--text-muted); }
   #map.radius-off .leaflet-searchRadius-pane,
   #map.radius-off .search-radius-label { display: none; }
+  /* Under 360px wide, LIVE ALERTS · 123, KEY and RADIUS don't fit on one row, and
+     a second row would push the controls into the alert banner's space: RADIUS
+     then shows just its ring (the word stays for screen readers, and in the title). */
+  @media (max-width: 359px) {
+    #search-radius-btn .radius-text {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+    }
+  }
 
   /* ════════════════════════════════════════════════════════════════════════════
      LIVE ALERTS (map control above the zoom buttons: toggle + colour key)
@@ -5077,7 +5086,7 @@ const LiveAlertsControl = L.Control.extend({
         </button>
         <button type="button" id="live-legend-btn" aria-expanded="false" aria-controls="live-legend" hidden>KEY</button>
         <button type="button" id="search-radius-btn" aria-pressed="true"
-                title="Show or hide the search circle"><span class="ring" aria-hidden="true"></span>RADIUS</button>
+                title="Show or hide the search circle"><span class="ring" aria-hidden="true"></span><span class="radius-text">RADIUS</span></button>
       </div>`;
     // Clicks, double-clicks and scrolling here must not reach the map.
     L.DomEvent.disableClickPropagation(box);

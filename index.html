@@ -3872,6 +3872,7 @@ async function loadStationsAt(lat, lon, gen) {
     if (area === areaGeneration) {
       areaLoading = null;
       map.getContainer().classList.remove('has-search-radius');   // no circle is coming
+      clearForecastPoint();   // …and no area for FORECAST to describe
     }
     // This area's own failure. Its caller reports it only while its search is
     // the newest; if a newer search has meanwhile failed before reaching the map,
@@ -5380,6 +5381,12 @@ const fcHours        = document.getElementById('fc-hours');
 function setForecastPoint(lat, lon) {
   forecastPoint = { lat, lon };
   forecastBtn.hidden = false;
+}
+
+/** No area on the map (a search failed after clearing it): hide FORECAST. */
+function clearForecastPoint() {
+  forecastPoint = null;
+  forecastBtn.hidden = true;
 }
 
 /**

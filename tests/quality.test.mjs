@@ -2411,6 +2411,20 @@ test('search radius: nearby stations only, and the circle edge never sits on a m
   const none = run([]);
   assert.equal(none.inside.length, 0);
   assert.equal(none.edgeMi, 50);
+
+  // No stations: no "0 stations" circle. Markers go on the circle's copy of the
+  // world (western Aleutians), while the warning check keeps NWS's longitudes.
+  const plot = extractFunction('plotStations');
+  assert.match(plot, /if \(!inside\.length\) return undefined;\s*return drawSearchRadius/);
+  assert.match(plot, /const onScreenLng = lng \+ 360 \* Math\.round\(\(lon - lng\) \/ 360\);[\s\S]*makeStationMarker\([^)]*onScreenLng\)[\s\S]*stationRecords\.push\(\{ el, lat: la, lng \}\)/);
+  // A map smaller than the fit padding is centred, not fitted at a nonsense zoom.
+  const fitCalls = [];
+  const fit = vm.runInNewContext(`(${extractFunction('fitSearchRadius')})`, {
+    SEARCH_FIT_PAD_X: 80, SEARCH_FIT_PAD_Y: 136, SEARCH_FIT_MAX_ZOOM: 11, prefersReducedMotion: { matches: false },
+    map: { getSize: () => ({ x: 400, y: 120 }), setView: () => fitCalls.push('setView'), flyToBounds: () => fitCalls.push('fly') }
+  });
+  assert.equal(fit({}, 30, -98), false);
+  assert.deepEqual(fitCalls, ['setView']);
 });
 
 test('live alerts: NWS colours, readable popup text, one view request at a time', () => {

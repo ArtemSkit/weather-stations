@@ -5543,8 +5543,10 @@ async function openForecast() {
     // instead of letting Try again do nothing.
     if (forecastDialog.open) {
       forecastSeq++;   // and ignore the answer still on its way for the old area
+      forecastPlace.textContent = '';   // no "Near …" for a place that's gone
+      forecastFoot.textContent = 'National Weather Service';
       fcDays.innerHTML = fcHours.innerHTML =
-        '<p class="fc-empty">There is no area on the map any more — search for a place first.</p>';
+        '<p class="fc-empty">There is no area on the map anymore — search for a place first.</p>';
     }
     return;
   }
@@ -5590,12 +5592,15 @@ forecastDialog.addEventListener('click', e => {
 // page's own Esc handlers (alert popup, pin mode) hidden behind it.
 forecastDialog.addEventListener('keydown', e => { if (e.key === 'Escape') e.stopPropagation(); });
 // Closing returns focus to FORECAST — unless a failed search hid it meanwhile:
-// then focus goes to the search box (the next thing to do) rather than the page top.
+// then focus goes to the search box (the next thing to do) rather than the page
+// top. On touch screens to FIND instead: focusing the box would pop up the
+// on-screen keyboard nobody asked for.
 forecastDialog.addEventListener('close', () => {
   // (Focus is then left on the page or, in Chrome, on the closed dialog's ✕.)
   const stranded = !document.activeElement || document.activeElement === document.body ||
                    forecastDialog.contains(document.activeElement);
-  if (forecastBtn.hidden && stranded) zipInput.focus();
+  if (!forecastBtn.hidden || !stranded) return;
+  (window.matchMedia('(pointer: coarse)').matches ? searchBtn : zipInput).focus();
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────

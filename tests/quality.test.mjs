@@ -2768,7 +2768,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.match(extractFunction('loadStationsAt'), /classList\.remove\('has-search-radius'\);[^\n]*\n\s*clearForecastPoint\(\);/);
   // The area went away behind an open forecast: Try again says so (no silent
   // no-op, and a late answer for the old area is ignored); closing then puts
-  // focus on the search box instead of the hidden button.
+  // focus on the search box (FIND on touch screens) instead of the hidden button.
   const panels = { days: { innerHTML: 'old' }, hours: { innerHTML: 'old' } };
   const fctx = { forecastPoint: null, forecastSeq: 3, forecastDialog: { open: true },
                  fcDays: panels.days, fcHours: panels.hours,

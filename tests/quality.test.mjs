@@ -2443,7 +2443,8 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
 
 test('live alerts: each answer replaces what was drawn in its box (NOAA renumbers records)', () => {
   // A tiny stand-in for Leaflet: bounds are [west, south, east, north] boxes.
-  const box = (w, s, e, n) => ({ w, s, e, n, intersects: o => !(o.e < w || o.w > e || o.n < s || o.s > n) });
+  const box = (w, s, e, n) => ({ w, s, e, n, intersects: o => !(o.e < w || o.w > e || o.n < s || o.s > n),
+    getCenter: () => ({ lat: (s + n) / 2, lng: (w + e) / 2 }) });
   const drawn = new Set();
   const fake = {
     L: { geoJSON: g => ({ g, on() {}, getBounds: () => box(...g.box), bringToFront() {}, setStyle() {} }) },
@@ -2463,28 +2464,45 @@ test('live alerts: each answer replaces what was drawn in its box (NOAA renumber
     properties: { prod_type: event, sig: 'W', expiration: later, ends: ' ', cap_id: event, ...extra } });
 
   // First answer for a box: two warnings.
-  replace([piece('Tornado Warning', [0, 0, 1, 1]), piece('Flood Warning', [2, 2, 3, 3])], box(0, 0, 5, 5));
+  replace([piece('Tornado Warning', [0, 0, 1, 1]), piece('Flood Warning', [2, 2, 3, 3])], [box(0, 0, 5, 5)], 0);
   assert.equal(fake.livePieces.size, 2);
   // A blank field (" ") is treated as empty, not as a date.
   assert.equal([...fake.livePieces][0].props.ends, undefined);
   // Next answer for the same box no longer lists the tornado warning (cancelled):
   // it is gone, whatever ids the service reused.
-  replace([piece('Flood Warning', [2, 2, 3, 3])], box(0, 0, 5, 5));
+  replace([piece('Flood Warning', [2, 2, 3, 3])], [box(0, 0, 5, 5)], 0);
   assert.deepEqual([...fake.livePieces].map(p => p.props.prod_type), ['Flood Warning']);
   // An answer for a box elsewhere leaves this one's pieces alone…
-  replace([piece('Gale Warning', [20, 20, 21, 21])], box(19, 19, 25, 25));
+  replace([piece('Gale Warning', [20, 20, 21, 21])], [box(19, 19, 25, 25)], 0);
   assert.equal(fake.livePieces.size, 2);
   // …but an alert that has ended is dropped anywhere.
-  replace([piece('Heat Advisory', [40, 40, 41, 41], { expiration: new Date(Date.now() - 1000).toISOString() })], box(39, 39, 45, 45));
-  replace([], box(60, 60, 61, 61));
+  replace([piece('Heat Advisory', [40, 40, 41, 41], { expiration: new Date(Date.now() - 1000).toISOString() })], [box(39, 39, 45, 45)], 0);
+  replace([], [box(60, 60, 61, 61)], 0);
   assert.ok(![...fake.livePieces].some(p => p.props.prod_type === 'Heat Advisory'));
   // A long hazard whose MESSAGE has lapsed but whose hazard hasn't ended (a river
   // flood, a multi-day gale) stays: "ended" is the hazard's end, not the message's.
   const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
-  replace([piece('Flood Watch', [70, 70, 71, 71], { expiration: hourAgo, ends: later })], box(69, 69, 75, 75));
-  replace([], box(80, 80, 81, 81));
+  replace([piece('Flood Watch', [70, 70, 71, 71], { expiration: hourAgo, ends: later })], [box(69, 69, 75, 75)], 0);
+  replace([], [box(80, 80, 81, 81)], 0);
   assert.ok([...fake.livePieces].some(p => p.props.prod_type === 'Flood Watch'));
   assert.equal(drawn.size, fake.livePieces.size, 'what is drawn matches the pieces kept');
+  // After a long pan onto another copy of the world, the old copy's pieces (over
+  // a full turn away) are dropped instead of kept until their alerts end.
+  replace([], [box(430, 0, 440, 5)], 435);
+  assert.ok(![...fake.livePieces].some(p => p.props.prod_type === 'Flood Watch'));
+  assert.equal(drawn.size, fake.livePieces.size);
+});
+
+test('live alerts: a whole-world view replaces every piece, and date-line zones are drawn once', () => {
+  const load = extractFunction('loadLiveAlerts');
+  // The single -180…180 box of a zoomed-out view would never clear shapes placed
+  // around the centre outside it; a whole-world answer clears everything instead.
+  assert.match(load, /boxes\.length === 1 && boxes\[0\]\.east - boxes\[0\]\.west >= 360\s*\? \[L\.latLngBounds\(\[-90, -1e6\], \[90, 1e6\]\)\]/);
+  // Shapes are placed around the view that was asked for, captured before the wait.
+  assert.match(load, /const nearLon = \(b\.getWest\(\) \+ b\.getEast\(\)\) \/ 2;[\s\S]*await Promise\.all/);
+  assert.doesNotMatch(load, /map\.getCenter\(\)/);
+  // A zone split at the date line comes back in both boxes' answers: kept once.
+  assert.match(load, /const key = `\$\{f\?\.properties\?\.cap_id\}\|\$\{JSON\.stringify\(f\?\.geometry\)\}`;/);
 });
 
 test('live alerts across the date line: the view is split, and shapes land on the copy on screen', () => {
@@ -2518,4 +2536,14 @@ test('live alerts across the date line: the view is split, and shapes land on th
   // An ordinary shape near the centre is left where it is.
   const plainShape = h.placeGeometry({ type: 'Polygon', coordinates: [[[-98, 30], [-97, 30], [-97, 31], [-98, 30]]] }, -96);
   assert.deepEqual(coords(plainShape), [[[-98, 30], [-97, 30], [-97, 31], [-98, 30]]]);
+  // A hole moves with its outer ring even when its own middle is on the other side
+  // of "half a turn away" (from 179: outer middle -1 is 180° off and moves a turn,
+  // hole middle +0.5 is 178.5° off and alone would stay put, outside its polygon).
+  const holed = h.placeGeometry({ type: 'Polygon', coordinates: [
+    [[-3, 0], [1, 0], [1, 4], [-3, 4]], [[0, 1], [1, 1], [1, 2], [0, 2]]] }, 179);
+  const [outer, hole] = coords(holed);
+  assert.deepEqual(outer.map(c => c[0]), [357, 361, 361, 357]);
+  assert.deepEqual(hole.map(c => c[0]), [360, 361, 361, 360], 'the hole stays inside its polygon');
+  // An empty outline is left empty (no NaN longitudes for Leaflet to throw on).
+  assert.deepEqual(coords(h.placeGeometry({ type: 'Polygon', coordinates: [[]] }, -150)), [[]]);
 });

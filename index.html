@@ -4684,25 +4684,31 @@ function liveQueryBoxes(west, south, east, north) {
  * The service gives longitudes in -180…180, so an outline that crosses the date
  * line jumps from +179 to -179 mid-ring (drawn as a band around the whole world).
  * Each ring is first made continuous (no jump over 180° between neighbours), then
- * moved by whole turns of 360° so its middle lies nearest `nearLon`.
+ * each polygon is moved by whole turns of 360° so its outer ring's middle lies
+ * nearest `nearLon` — its holes move with it, so they always stay inside.
  */
 function placeGeometry(geometry, nearLon) {
   if (geometry.type === 'GeometryCollection') {
     return { ...geometry, geometries: geometry.geometries.map(g => placeGeometry(g, nearLon)) };
   }
   const isRing = a => Array.isArray(a) && typeof a[0]?.[0] === 'number';
-  const placeRing = ring => {
+  const continuous = ring => {
     let prev = null;
-    const continuous = ring.map(([lon, ...rest]) => {
+    return ring.map(([lon, ...rest]) => {
       if (prev !== null) lon += 360 * Math.round((prev - lon) / 360);
       prev = lon;
       return [lon, ...rest];
     });
-    const mid = continuous.reduce((sum, c) => sum + c[0], 0) / continuous.length;
-    const turn = 360 * Math.round((nearLon - mid) / 360);
-    return turn ? continuous.map(([lon, ...rest]) => [lon + turn, ...rest]) : continuous;
   };
-  const walk = a => (isRing(a) ? placeRing(a) : a.map(walk));
+  // A polygon: its outer ring, then any holes (a lone ring is placed by itself).
+  const placePolygon = rings => {
+    const joined = rings.map(continuous);
+    const outer = joined[0];
+    const mid = outer.reduce((sum, c) => sum + c[0], 0) / outer.length;
+    const turn = outer.length ? 360 * Math.round((nearLon - mid) / 360) : 0;
+    return turn ? joined.map(r => r.map(([lon, ...rest]) => [lon + turn, ...rest])) : joined;
+  };
+  const walk = a => (isRing(a) ? placePolygon([a])[0] : isRing(a[0]) ? placePolygon(a) : a.map(walk));
   return { ...geometry, coordinates: geometry.type === 'Point' ? geometry.coordinates : walk(geometry.coordinates) };
 }
 
@@ -4714,7 +4720,15 @@ async function loadLiveAlerts(confirmingEmpty = false) {
   const b = map.getBounds().pad(0.15);
   const boxes = liveQueryBoxes(b.getWest(), b.getSouth(), b.getEast(), b.getNorth());
   // Each box as it sits on the map (shifted onto the copy of the world on screen).
-  const queried = boxes.map(q => L.latLngBounds([q.south, q.west + q.shift], [q.north, q.east + q.shift]));
+  // A whole-world answer replaces every piece, on every copy: its shapes are placed
+  // around the map's centre, often outside -180…180, where a -180…180 box would
+  // never clear them and each reload would stack another set on top.
+  const queried = boxes.length === 1 && boxes[0].east - boxes[0].west >= 360
+    ? [L.latLngBounds([-90, -1e6], [90, 1e6])]
+    : boxes.map(q => L.latLngBounds([q.south, q.west + q.shift], [q.north, q.east + q.shift]));
+  // The shapes go next to the view that was ASKED for (not wherever the map has
+  // flown by the time the answer arrives), so they land inside the boxes above.
+  const nearLon = (b.getWest() + b.getEast()) / 2;
   const tolerance = liveAlertTolerance(map.getZoom()).toFixed(6);
   const urlFor = q => `${LIVE_ALERTS_URL}?${new URLSearchParams({
     where: '1=1', geometry: `${q.west},${q.south},${q.east},${q.north}`, geometryType: 'esriGeometryEnvelope',
@@ -4728,11 +4742,19 @@ async function loadLiveAlerts(confirmingEmpty = false) {
     answers.forEach(({ response, data }) => {
       if (!response.ok || !Array.isArray(data?.features)) throw new Error(`HTTP ${response.status}`);
     });
+    // A zone split at the date line touches both boxes, so both answers list it:
+    // keep one copy (by alert and outline — NOAA's record ids get renumbered).
+    const seen = new Set();
+    const unique = answers.flatMap(({ data }) => data.features).filter(f => {
+      if (answers.length < 2) return true;
+      const key = `${f?.properties?.cap_id}|${JSON.stringify(f?.geometry)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     // Every piece placed on the copy of the world on screen (and made continuous
     // where it crosses the date line).
-    const nearLon = map.getCenter().lng;
-    const features = answers.flatMap(({ data }) => data.features.map(f =>
-      (f?.geometry ? { ...f, geometry: placeGeometry(f.geometry, nearLon) } : f)));
+    const features = unique.map(f => (f?.geometry ? { ...f, geometry: placeGeometry(f.geometry, nearLon) } : f));
     // NOAA briefly answers "nothing" while it renumbers its records. An empty
     // answer that would clear areas already drawn here is checked again in 5 s
     // before it is believed.
@@ -4741,7 +4763,7 @@ async function loadLiveAlerts(confirmingEmpty = false) {
       liveRetryTimer = setTimeout(() => loadLiveAlerts(true), 5000);
       return;
     }
-    replaceLivePieces(features, queried);
+    replaceLivePieces(features, queried, nearLon);
     // The service stops at 4,000 pieces; say so rather than silently showing part.
     const truncated = answers.some(({ data }) =>
       Boolean(data.exceededTransferLimit || data.properties?.exceededTransferLimit));
@@ -4763,15 +4785,18 @@ async function loadLiveAlerts(confirmingEmpty = false) {
  * Make the drawn pieces match an answer: every piece inside the queried box(es) is
  * replaced by the answer's pieces (so ended, cancelled and renumbered alerts can
  * never linger or be mistaken for others); pieces elsewhere stay, except any
- * whose alert has ended.
+ * whose alert has ended or that sit on another copy of the world.
  * @param {Object[]} features
- * @param {L.LatLngBounds|L.LatLngBounds[]} queried - the box(es) the answer covers
+ * @param {L.LatLngBounds[]} queried - the box(es) the answer covers
+ * @param {number} nearLon - the middle of the view asked for
  */
-function replaceLivePieces(features, queried) {
-  const boxes = Array.isArray(queried) ? queried : [queried];
+function replaceLivePieces(features, queried, nearLon) {
   const now = Date.now();
+  // Over a full turn away: left on another copy of the world by a long pan, never
+  // on screen again until asked for anew — kept, they'd only cost time and memory.
+  const farAway = piece => Math.abs(piece.bounds.getCenter().lng - nearLon) > 360;
   for (const piece of livePieces) {
-    if (boxes.some(q => q.intersects(piece.bounds)) || liveAlertEnded(piece.props, now)) {
+    if (queried.some(q => q.intersects(piece.bounds)) || farAway(piece) || liveAlertEnded(piece.props, now)) {
       liveAlertsLayer.removeLayer(piece.layer);
       livePieces.delete(piece);
     }

@@ -1125,8 +1125,10 @@
     #forecast-dialog {
       width: 100vw; max-height: 86vh; max-height: 86dvh;
       margin: auto 0 0; border-radius: 14px 14px 0 0; border-bottom: none;
-      padding-bottom: var(--safe-bottom);
     }
+    /* Room for the home bar, inside the sheet: a tap on the dialog's own padding
+       would count as a tap outside it and close the forecast. */
+    .fc-foot { padding-bottom: calc(8px + var(--safe-bottom)); }
 
     /* Search bar stretches to full width on the second row */
     .search-bar {

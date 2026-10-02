@@ -966,7 +966,7 @@
   /* Live alerts on: the searched area's own polygons and labels are hidden (not
      removed), so nothing is drawn twice and they return intact afterwards. */
   #map.live-alerts-on .wx-alert-area,
-  #map.live-alerts-on .alert-area-label { display: none; }
+  #map.live-alerts-on .alert-area-label:not(.live-area-label) { display: none; }
   /* Live alerts off: their canvas, which covers the whole map, is hidden so it
      can't catch clicks meant for the searched area's polygons below it. Hidden,
      never removed: Leaflet's canvas, once removed and added back, keeps a stale
@@ -4199,12 +4199,21 @@ function unwrapAlertText(text) {
     .join('\n\n');
 }
 
+/* The banner opens expanded until the user collapses it; from then on it stays
+   collapsed through refreshes, new searches and reloads (no list springing open
+   at every pin drop) until they expand it again. */
+const ALERT_BANNER_COLLAPSED_KEY = 'wxmap_alerts_collapsed';
+let alertBannerCollapsed = false;
+try { alertBannerCollapsed = localStorage.getItem(ALERT_BANNER_COLLAPSED_KEY) === '1'; } catch (_) { /* storage blocked */ }
+
 /**
  * Tier 1 — render the alert banner from a list of alert Features.
  * Hides the banner entirely when there are no active alerts.
- * @param {Object[]} features - GeoJSON alert Features from fetchAlerts()
+ * @param {Object[]} features - GeoJSON alert Features from fetchAlerts(), or the
+ *        live alerts in view (14C), whose cards carry `detailsUrl` instead of text
+ * @param {boolean} [inView] - the list is "alerts in view" (live mode), not the searched area's
  */
-function renderAlertBanner(features) {
+function renderAlertBanner(features, inView = false) {
   const sorted = sortAlerts(features || []);
 
   // No active alerts → clear and hide the banner, then bail.
@@ -4221,9 +4230,9 @@ function renderAlertBanner(features) {
   // Collapsible summary chip: alert count + the single most severe event name.
   const summary = `
     <button class="alert-summary alert-${topClass}" type="button"
-            data-role="toggle" aria-expanded="true">
+            data-role="toggle" aria-expanded="${!alertBannerCollapsed}">
       <span class="alert-summary-icon" aria-hidden="true">⚠️</span>
-      <span class="alert-summary-text">${sorted.length} alert${plural} · ${escapeHtml(top.event || 'Weather alert')}</span>
+      <span class="alert-summary-text">${sorted.length} alert${plural}${inView ? ' in view' : ''} · ${escapeHtml(top.event || 'Weather alert')}</span>
       <span class="alert-summary-caret" aria-hidden="true">▾</span>
     </button>`;
 
@@ -4239,15 +4248,19 @@ function renderAlertBanner(features) {
       .filter(Boolean).map(s => `<span class="alert-when">${escapeHtml(s)}</span>`).join(' ');
     // Unwrap each part separately so the NWS hard line wraps don't split sentences.
     const detail  = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
+    // A live alert has no text yet: its card fetches the NWS record when opened.
+    const lazy    = !detail && p.detailsUrl;
+    const bodyAttr = lazy ? ' data-details-url="' + escapeHtml(p.detailsUrl) + '"' : '';
+    const descText = lazy ? 'Loading the full NWS text…' : detail;
     return `
       <div class="alert-card alert-${cls}">
         <button class="alert-card-head" type="button" data-role="card" aria-expanded="false">
           <span class="alert-event">${escapeHtml(p.event || 'Weather alert')}</span>
           <span class="alert-expires">${expires}</span>
         </button>
-        <div class="alert-card-body">
+        <div class="alert-card-body"${bodyAttr}>
           ${p.headline ? `<p class="alert-headline">${escapeHtml(p.headline)}</p>` : ''}
-          <p class="alert-desc">${escapeHtml(detail)}</p>
+          <p class="alert-desc">${escapeHtml(descText)}</p>
         </div>
       </div>`;
   }).join('');
@@ -4256,8 +4269,8 @@ function renderAlertBanner(features) {
   // put it back on the summary chip instead of dropping it to the page start.
   const hadFocus = alertBanner.contains(document.activeElement);
 
-  // Start expanded so alerts are visible on arrival; the user can collapse them.
-  alertBanner.className = 'visible expanded';
+  // Expanded on arrival so alerts are seen — unless the user has collapsed it.
+  alertBanner.className = alertBannerCollapsed ? 'visible' : 'visible expanded';
   alertBanner.innerHTML = summary + `<div class="alert-list">${cards}</div>`;
   if (hadFocus) alertBanner.querySelector('[data-role="toggle"]')?.focus();
 }
@@ -4268,14 +4281,50 @@ alertBanner.addEventListener('click', e => {
   if (toggle) {
     const expanded = alertBanner.classList.toggle('expanded');
     toggle.setAttribute('aria-expanded', String(expanded));
+    // Remembered: later renders (refreshes, new searches, reloads) keep this.
+    alertBannerCollapsed = !expanded;
+    try { localStorage.setItem(ALERT_BANNER_COLLAPSED_KEY, expanded ? '0' : '1'); } catch (_) { /* storage blocked */ }
+    if (liveAlertsOn) renderLiveLabels();   // the banner's new size frees or covers map labels
     return;
   }
   const head = e.target.closest('[data-role="card"]');
   if (head) {
-    const open = head.closest('.alert-card').classList.toggle('open');
+    const card = head.closest('.alert-card');
+    const open = card.classList.toggle('open');
     head.setAttribute('aria-expanded', String(open));
+    if (open) loadAlertCardDetails(card);
   }
 });
+
+/**
+ * A live alert's card (14C) arrives without its text: the first time it opens,
+ * fetch the alert's NWS record (only from NOAA's own /alerts/ links) and fill in
+ * the headline, description and instructions.
+ * @param {Element} card
+ */
+async function loadAlertCardDetails(card) {
+  const body = card.querySelector('.alert-card-body[data-details-url]');
+  if (!body || body.dataset.loaded) return;
+  body.dataset.loaded = 'loading';
+  const desc = body.querySelector('.alert-desc');
+  const url = body.dataset.detailsUrl;
+  if (!isTrustedNwsApiUrl(url, '/alerts/')) {
+    desc.textContent = 'No further details were published for this alert.';
+    return;
+  }
+  try {
+    const { response, data } = await fetchJsonWithTimeout(url);
+    const p = data?.properties;
+    if (!response.ok || !p) throw new Error(`HTTP ${response.status}`);
+    const detail = [p.description, p.instruction].map(unwrapAlertText).filter(Boolean).join('\n\n');
+    body.innerHTML = (p.headline ? `<p class="alert-headline">${escapeHtml(p.headline)}</p>` : '') +
+      `<p class="alert-desc">${escapeHtml(detail || 'No further details were published for this alert.')}</p>`;
+    body.dataset.loaded = 'done';
+  } catch (_) {
+    desc.textContent = 'Couldn\'t load the details — close and reopen the card to try again.';
+    delete body.dataset.loaded;   // the next opening tries again
+  }
+}
 
 /**
  * Standard ray-casting point-in-polygon test.
@@ -4688,8 +4737,11 @@ function drawAlertArea(f, seq) {
 /** Clear the banner, map areas, station flags, and refresh loop (e.g. when a new search starts). */
 function clearAlerts() {
   if (alertsTimer) { clearInterval(alertsTimer); alertsTimer = null; }
-  alertBanner.className = '';
-  alertBanner.innerHTML = '';
+  // (In live mode the banner shows the alerts in view, which a new search doesn't change.)
+  if (!liveAlertsOn) {
+    alertBanner.className = '';
+    alertBanner.innerHTML = '';
+  }
   clearAlertAreas();
   // Queued (not yet started) zone lookups for the old area are now useless —
   // drop them instead of spending the NWS rate limit on outlines nobody will see.
@@ -4704,7 +4756,7 @@ function clearAlerts() {
 
 /** Draw an alert set everywhere (banner, station rings, map areas) and remember it. */
 function showAlerts(alerts) {
-  renderAlertBanner(alerts);
+  if (!liveAlertsOn) renderAlertBanner(alerts);   // live mode: the banner lists what's in view (14C)
   flagStationsInAlerts(alerts);
   renderAlertAreas(alerts);
   // Commit only after synchronous rendering succeeds. If malformed data throws,
@@ -5045,7 +5097,7 @@ async function loadLiveAlerts(confirmingEmpty = false) {
     // page is hidden (it catches up when shown) instead of retrying in the background.
     liveRetryTimer = setTimeout(refreshLiveAlerts, 30_000);
   }
-  renderLiveLegend();
+  renderLiveView();
 }
 
 /**
@@ -5188,6 +5240,100 @@ function toggleLiveAlertType(event, button) {
     if (hide) liveAlertsLayer.removeLayer(piece.layer); else liveAlertsLayer.addLayer(piece.layer);
   }
   if (!hide) restackLivePieces();
+  renderLiveLabels();    // a hidden type loses its labels…
+  renderLiveBanner();    // …and its banner cards
+}
+
+/* Name chips on the live areas ("FLOOD", "HEAT"), like the searched area's own. */
+const liveLabelLayer = L.layerGroup().addTo(map);
+const LIVE_LABEL_LIMIT = 30;   // a zoomed-out view can hold hundreds of alerts
+
+/** The alerts drawn in the current view: alert id → the props and pieces in view. */
+function liveAlertsDrawnInView() {
+  const view = map.getBounds();
+  const byId = new Map();
+  for (const piece of livePieces) {
+    if (liveHiddenEvents.has(piece.props.prod_type) || !view.intersects(piece.bounds)) continue;
+    const id = piece.props.cap_id || piece;
+    if (!byId.has(id)) byId.set(id, { props: piece.props, pieces: [] });
+    byId.get(id).pieces.push(piece);
+  }
+  return byId;
+}
+
+/**
+ * Label each live alert in view once, on the middle of the visible part of its
+ * largest piece — the most serious alerts first, and none overlapping another
+ * label (at most LIVE_LABEL_LIMIT), so a zoomed-out view isn't buried in chips.
+ */
+function renderLiveLabels() {
+  liveLabelLayer.clearLayers();
+  if (!liveAlertsOn) return;
+  const view = map.getBounds();
+  const candidates = [];
+  for (const { props, pieces } of liveAlertsDrawnInView().values()) {
+    let best = null;
+    for (const piece of pieces) {
+      const b = piece.bounds;
+      const visible = L.latLngBounds(
+        [Math.max(b.getSouth(), view.getSouth()), Math.max(b.getWest(), view.getWest())],
+        [Math.min(b.getNorth(), view.getNorth()), Math.min(b.getEast(), view.getEast())]);
+      const ne = visible.getNorthEast(), sw = visible.getSouthWest();
+      const area = (ne.lat - sw.lat) * (ne.lng - sw.lng);
+      if (!best || area > best.area) best = { area, at: visible.getCenter() };
+    }
+    candidates.push({ props, ...best });
+  }
+  candidates.sort((a, b) =>
+    (LIVE_SIG_RANK[b.props.sig] ?? 0) - (LIVE_SIG_RANK[a.props.sig] ?? 0) || b.area - a.area);
+  // Keep clear of what sits over the map: the alert banner, an open station
+  // panel and the search circle's own label (boxes in map-container pixels).
+  const mapBox = map.getContainer().getBoundingClientRect();
+  const obstacles = [alertBanner, popupPanel, document.querySelector('.search-radius-label')]
+    .filter(el => el && el.offsetParent !== null)
+    .map(el => el.getBoundingClientRect())
+    .map(r => ({ left: r.left - mapBox.left, right: r.right - mapBox.left,
+                 top: r.top - mapBox.top, bottom: r.bottom - mapBox.top }));
+  const placed = [];   // screen boxes of the labels so far
+  for (const { props, at } of candidates) {
+    if (placed.length >= LIVE_LABEL_LIMIT) break;
+    const text = shortAlertLabel(props.prod_type);
+    const pt = map.latLngToContainerPoint(at);
+    const half = text.length * 3.6 + 8;   // about half the chip's width
+    if (placed.some(o => Math.abs(o.x - pt.x) < o.half + half + 6 && Math.abs(o.y - pt.y) < 22)) continue;
+    if (obstacles.some(r => pt.x + half > r.left - 4 && pt.x - half < r.right + 4 &&
+                            pt.y + 10 > r.top - 4 && pt.y - 10 < r.bottom + 4)) continue;
+    placed.push({ x: pt.x, y: pt.y, half });
+    L.tooltip({ permanent: true, direction: 'center', interactive: false,
+                className: 'alert-area-label live-area-label' })
+      .setLatLng(at)
+      .setContent(`<span style="color:${liveAlertTextColor(props.prod_type)}">${escapeHtml(text)}</span>`)
+      .addTo(liveLabelLayer);
+  }
+}
+
+/* The banner in live mode lists the alerts drawn in view, kept in step with the
+   map as it moves (rebuilt only when that set changes, so an open card stays). */
+let liveBannerSignature = null;
+
+function renderLiveBanner() {
+  if (!liveAlertsOn) return;
+  const features = [...liveAlertsDrawnInView()].map(([id, { props }]) => ({
+    id: typeof id === 'string' ? id : '',
+    properties: { event: props.prod_type, onset: props.onset, ends: props.ends,
+                  expires: props.expiration, detailsUrl: props.url }
+  }));
+  const signature = alertsSignature(features);
+  if (signature === liveBannerSignature) return;
+  liveBannerSignature = signature;
+  renderAlertBanner(features, true);
+}
+
+/** Everything that follows the view in live mode: count and key, labels, banner. */
+function renderLiveView() {
+  renderLiveLegend();
+  renderLiveLabels();
+  renderLiveBanner();
 }
 
 /**
@@ -5243,8 +5389,14 @@ function setLiveAlerts(on) {
     liveState = 'off';
     setLiveLegendOpen(false);
     // (The now-empty canvas stays on the map, hidden by CSS while off.)
+    // The banner goes back to the searched area's own alerts.
+    renderAlertBanner(shownAlerts);
   }
-  renderLiveLegend();
+  // A live banner is rebuilt at every pan: announcing each would be noise, so the
+  // banner only speaks up (aria-live) for the searched area's alerts.
+  alertBanner.setAttribute('aria-live', on ? 'off' : 'polite');
+  liveBannerSignature = null;
+  renderLiveView();
 }
 
 /** The 2-minute refresh tick: skipped while the page is hidden, caught up on return. */
@@ -5263,7 +5415,7 @@ document.addEventListener('visibilitychange', () => {
 map.on('moveend', () => {
   if (!liveAlertsOn) return;
   liveViewPending = true;          // what came into view isn't counted until its answer is in
-  renderLiveLegend();
+  renderLiveView();                // labels and banner follow what's drawn in view now
   clearTimeout(liveMoveTimer);
   liveMoveTimer = setTimeout(() => loadLiveAlerts(), 350);
 });

@@ -1072,6 +1072,11 @@ test('alert times never invent an end and show a future start', () => {
 
   // Run the real banner: a warning starting tomorrow with no set end.
   const banner = { className: '', innerHTML: '', contains: () => false, querySelector: () => null };
+  const bannerCtx = {
+    Date, String, alertBanner: banner, document: {}, alertBannerCollapsed: false,
+    ALERT_CLASS_RANK: { crit: 0, warn: 1, watch: 2, info: 3 },
+    ALERT_SEV_WEIGHT: {}, ALERT_URGENCY_WEIGHT: {}, ALERT_CERTAINTY_WEIGHT: {}
+  };
   const render = vm.runInNewContext(`(() => {
     ${helpers}
     ${extractFunction('unwrapAlertText')}
@@ -1080,14 +1085,23 @@ test('alert times never invent an end and show a future start', () => {
     ${extractFunction('sortAlerts')}
     ${extractFunction('renderAlertBanner')}
     return renderAlertBanner;
-  })()`, {
-    Date, String, alertBanner: banner, document: {},
-    ALERT_CLASS_RANK: { crit: 0, warn: 1, watch: 2, info: 3 },
-    ALERT_SEV_WEIGHT: {}, ALERT_URGENCY_WEIGHT: {}, ALERT_CERTAINTY_WEIGHT: {}
-  });
+  })()`, bannerCtx);
   const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
   render([{ id: 'a', properties: { ...flood, onset: tomorrow } }]);
   assert.match(banner.innerHTML, /<span class="alert-when">from [^<]+<\/span> <span class="alert-when">until further notice<\/span>/);
+  assert.equal(banner.className, 'visible expanded', 'expanded on arrival');
+
+  // Once the user collapses it, later renders (refreshes, new searches) keep it collapsed.
+  bannerCtx.alertBannerCollapsed = true;
+  render([{ id: 'a', properties: flood }]);
+  assert.equal(banner.className, 'visible');
+  assert.match(banner.innerHTML, /data-role="toggle" aria-expanded="false"/);
+  // Live mode lists the alerts in view; their cards fetch the NWS text when opened.
+  render([{ id: 'b', properties: { event: 'Flood Warning', ends: tomorrow,
+    detailsUrl: 'https://api.weather.gov/alerts/urn:oid:x"><b>' } }], true);
+  assert.match(banner.innerHTML, /1 alert in view · Flood Warning/);
+  assert.match(banner.innerHTML, /<div class="alert-card-body" data-details-url="https:\/\/api\.weather\.gov\/alerts\/urn:oid:x&quot;&gt;&lt;b&gt;">/);
+  assert.match(banner.innerHTML, /Loading the full NWS text…/);
 });
 
 test('the hidden toast never makes the page taller than the window', () => {
@@ -2575,7 +2589,17 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.doesNotMatch(toggle, /removeLayer\(alertAreaGroup\)/);
   assert.doesNotMatch(toggle, /removeLayer\(liveAlertsRenderer\)/);
   assert.match(html, /#map:not\(\.live-alerts-on\) \.leaflet-liveAlerts-pane \{ display: none; \}/);
-  assert.match(html, /#map\.live-alerts-on \.wx-alert-area,\s*#map\.live-alerts-on \.alert-area-label \{ display: none; \}/);
+  assert.match(html, /#map\.live-alerts-on \.wx-alert-area,\s*#map\.live-alerts-on \.alert-area-label:not\(\.live-area-label\) \{ display: none; \}/);
+  // Live mode: name chips on the live areas, and the banner lists the alerts in
+  // view (rebuilt only when that set changes), following every move of the map.
+  assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;\s*liveViewPending = true;[^\n]*\n\s*renderLiveView\(\);/);
+  assert.match(extractFunction('renderLiveView'), /renderLiveLegend\(\);\s*renderLiveLabels\(\);\s*renderLiveBanner\(\);/);
+  assert.match(extractFunction('renderLiveBanner'), /if \(signature === liveBannerSignature\) return;[\s\S]*renderAlertBanner\(features, true\);/);
+  assert.match(extractFunction('renderLiveLabels'), /className: 'alert-area-label live-area-label'/);
+  // …while the searched area's alerts keep updating underneath without replacing
+  // it, and switching live mode off brings the searched area's banner back.
+  assert.match(extractFunction('showAlerts'), /if \(!liveAlertsOn\) renderAlertBanner\(alerts\);/);
+  assert.match(toggle, /renderAlertBanner\(shownAlerts\);/);
   // Pin mode: a tap on an alert area places the pin instead of opening a popup.
   const pieces = extractFunction('replaceLivePieces');
   assert.match(pieces, /if \(tapModeActive\) return;[\s\S]*openLiveAlertPopup\(props, e\.latlng, e\.originalEvent\)/);

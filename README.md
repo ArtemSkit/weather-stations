@@ -30,8 +30,8 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 |---|---|
 | **Multi-mode search** | ZIP code, lat/lon coordinates, or street address |
 | **Interactive map** | Leaflet.js + OpenStreetMap tiles, dark-mode filtered |
-| **Station markers** | The NOAA stations near the searched point (within 50 mi, or the nearest 8), plotted as clickable badges |
-| **Search circle** | A glowing circle marks the searched area and labels it ("13 stations · within 48 mi") |
+| **Station markers** | The NOAA stations near the searched point (about 50 mi, or the nearest 8), plotted as clickable badges |
+| **Search circle** | A glowing circle marks the searched area and labels it ("8 stations · within 41 mi") |
 | **Live observations** | Auto-refreshing weather data (configurable interval, 10 s – 1 h; paused while the app is in the background) |
 | **Dual temperature** | °F displayed prominently; °C shown alongside it |
 | **Feels Like** | Heat Index or Wind Chill, whichever is applicable |
@@ -184,10 +184,10 @@ The **⊕ crosshair button** in the bottom-right corner of the map uses your dev
 
 NOAA's station list for a location covers its whole forecast area — often 150–230 miles across, and over 1,000 miles in Alaska — far more than fits on screen. So every search (ZIP, address, coordinates, a dropped pin, Locate Me, or a shared link) shows only the stations near the searched point:
 
-- every station **within 50 miles**, or the **nearest 8** when fewer are that close;
-- the circle's edge sits in the **widest gap between stations** from that distance up to 25% further out (stations often come in tight clusters), so the edge doesn't land on a marker and the circle can never balloon to cover the whole list.
+- about every station **within 50 miles**, or the **nearest 8** when fewer are that close;
+- the circle's edge is placed where it has room: just clear of the last station shown, by a marker's width **as drawn on your screen**. Stations often come in tight clusters, so to find such a gap the edge may move up to 25% further out or 30% further in (never below the nearest 8); the stations left out aren't drawn, so the edge may sit right next to the first of them. Where stations are too dense for any gap that wide, it takes the widest one available. Every station inside the edge is always shown, so the label's distance is true.
 
-A **glowing circle** marks that area, with a label such as **"13 stations · within 48 mi"**. The circle's edge sits halfway between the last station shown and the first one left out. Nothing is drawn inside the circle; the glow, a slowly turning dotted ring and a gentle dimming of the map are all **outside** it. The map zooms to fit the circle, and the circle grows out from the searched point (instantly when the system asks for reduced motion). A direct `?station=` link shows just that station, without a circle.
+A **glowing circle** marks that area, with a label such as **"8 stations · within 41 mi"**. Nothing is drawn inside the circle; the glow, a slowly turning dotted ring and a gentle dimming of the map are all **outside** it. The map zooms to fit the circle, and the circle grows out from the searched point (instantly when the system asks for reduced motion). A direct `?station=` link shows just that station, without a circle.
 
 ---
 
@@ -271,7 +271,7 @@ The **LIVE ALERTS** button above the zoom buttons turns on live tracking of ever
 
 - **Colours** follow the National Weather Service's own hazard map (Tornado Warning red, Flood Warning green, Winter Storm Warning pink, and so on), so they mean what forecasters intend. Warnings are drawn on top of watches and advisories.
 - **Hover** an area to highlight every county of that alert; **click or tap** it for the same popup as the searched area's alerts (event, severity, time window, headline, affected areas), loaded from the alert's NWS record. Escape or a click elsewhere closes it.
-- **One request per view.** The outlines come from NOAA's watch/warning/advisory map service, which returns every alert area inside the view in a single request, already simplified for the zoom level (the whole country is about 600 KB). The set is re-checked every **2 minutes** (paused while the app is in the background), and areas that have ended are removed.
+- **One request per view.** The outlines come from NOAA's watch/warning/advisory map service, which returns every alert area inside the view in a single request, already simplified for the zoom level (the whole country is about 600 KB). The set is re-checked every **2 minutes** (paused while the app is in the background), and areas whose hazard has ended are removed (by the hazard's end time, not the message's; a brief empty answer from the service is double-checked before anything is cleared).
 - While live alerts are on, the searched area's own alert areas (Tier 2) are hidden so nothing is drawn twice; the banner (Tier 1) and the station rings (Tier 3) still describe the searched place. In pin mode, tapping an alert area places the pin as usual.
 
 ### Refresh & resilience

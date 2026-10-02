@@ -2347,41 +2347,60 @@ test('keyboard: the focused map shows a ring and a held Enter searches once', ()
 
 test('search radius: nearby stations only, and the circle edge never sits on a marker', () => {
   const pick = vm.runInNewContext(`(() => {
-    const SEARCH_RADIUS_MI = 50, SEARCH_MIN_STATIONS = 8, SEARCH_STRETCH = 1.25, SEARCH_EDGE_GAP_MI = 2;
+    const SEARCH_RADIUS_MI = 50, SEARCH_MIN_STATIONS = 8, SEARCH_STRETCH = 1.25, SEARCH_INWARD = 0.7;
     ${extractFunction('milesBetween')}
     ${extractFunction('selectStationsInRadius')}
     return selectStationsInRadius;
   })()`);
   // Stations due north of (30, -98) at the given distances (1° of latitude ≈ 69.09 mi).
   const at = miles => ({ geometry: { coordinates: [-98, 30 + miles / 69.09] }, properties: {} });
-  const run = list => pick(30, -98, list.map(at));
+  // 10% of the radius: a 14 px marker + gap on a ~200 px circle (desktop).
+  const CLEAR = 0.1;
+  const run = (list, clearance = CLEAR) => pick(30, -98, list.map(at), clearance);
+  /** Every station inside the edge is shown, so "within N mi" is true. */
+  const check = (list, r) => {
+    const hiddenInside = list.filter(d => d < r.edgeMi - 0.1).length - r.inside.length;
+    assert.equal(hiddenInside, 0, '"within N mi" must be true: no hidden station inside the edge');
+  };
 
-  // Plenty nearby: everything within 50 mi, edge halfway to the next one out.
-  let r = run([5, 10, 15, 20, 25, 30, 35, 40, 45, 49, 80, 120]);
+  // Plenty nearby with a clear gap after 49 mi: everything within 50 mi.
+  let list = [5, 10, 15, 20, 25, 30, 35, 40, 45, 49, 80, 120];
+  let r = run(list);
   assert.equal(r.inside.length, 10);
-  assert.ok(Math.abs(r.edgeMi - (49 + 80) / 2) < 0.5);
+  assert.ok(r.edgeMi - 49 >= CLEAR * r.edgeMi - 0.01, 'room past the last station');
+  check(list, r);
 
   // Sparse area: the nearest 8 even beyond 50 mi.
-  r = run([20, 60, 70, 75, 90, 100, 110, 130, 180, 250]);
+  list = [20, 60, 70, 75, 90, 100, 110, 130, 180, 250];
+  r = run(list);
   assert.equal(r.inside.length, 8);
-  assert.ok(r.edgeMi > 130 && r.edgeMi < 180);
+  assert.ok(r.edgeMi >= 130 / (1 - CLEAR) - 0.5 && r.edgeMi < 180);
+  check(list, r);
 
-  // The 8th and 9th are almost the same distance (the Weatherford case): the edge
-  // moves to the widest gap within 25% further out, keeping the 9th too.
-  r = run([20, 40, 60, 70, 80, 90, 95, 100, 101, 160]);
-  assert.equal(r.inside.length, 9);
-  assert.ok(r.edgeMi - r.inside.at(-1).mi >= 0.05 * r.edgeMi, 'edge clear of the last station kept');
+  // The real Weatherford list: tight steps around 50 mi. The edge moves to a spot
+  // with room (in or out, near 50 mi first) instead of crossing a marker.
+  list = [10, 18, 25, 31, 38, 41, 44, 46.3, 50.2, 51.7, 53, 54.5, 57, 66, 70, 75, 81];
+  r = run(list);
+  assert.ok(r.edgeMi - r.inside.at(-1).mi >= CLEAR * r.edgeMi - 0.01, `room: ${JSON.stringify(r.inside.at(-1).mi)} → ${r.edgeMi}`);
+  assert.ok(r.edgeMi >= 40 && r.edgeMi <= 66, `edge ${r.edgeMi}`);
+  check(list, r);
 
-  // Dense list (one station every mile to 200 mi): the stretch is capped, so the
-  // circle can't run away to cover the whole list.
-  r = run(Array.from({ length: 200 }, (_, i) => i + 1));
-  assert.ok(r.edgeMi >= 50 && r.edgeMi <= 63, `edge ${r.edgeMi}`);
-  // Like the real Weatherford list: tight steps past 50 mi, then a real gap.
-  r = run([10, 18, 25, 31, 38, 44, 46.3, 50.2, 51.7, 53, 54.5, 57, 66, 70, 75, 81]);
-  assert.equal(r.inside.length, 12, 'stops at the 57 → 66 mi gap');
-  assert.ok(r.edgeMi > 57 && r.edgeMi < 66);
+  // A phone's smaller circle needs more room (18% of the radius) than this list has
+  // anywhere near 50 mi: the edge then takes the widest gap in range (57 → 66 mi),
+  // right up to the first station left out (which isn't drawn).
+  r = run(list, 0.18);
+  assert.ok(Math.abs(r.inside.at(-1).mi - 57) < 0.05);   // (great-circle vs. flat 69.09 mi/°)
+  assert.ok(r.edgeMi > 65 && r.edgeMi < 66, `edge ${r.edgeMi}`);
+  check(list, r);
 
-  // Nothing beyond the last station: a little past it.
+  // Dense list (one station every mile to 200 mi): no room anywhere, so the widest
+  // gap in range is used — the circle neither collapses nor runs away.
+  list = Array.from({ length: 200 }, (_, i) => i + 1);
+  r = run(list);
+  assert.ok(r.edgeMi >= 35 && r.edgeMi <= 63, `edge ${r.edgeMi}`);
+  check(list, r);
+
+  // Nothing beyond the last station: just past it.
   r = run([10, 20]);
   assert.equal(r.inside.length, 2);
   assert.ok(r.edgeMi > 20);
@@ -2430,6 +2449,8 @@ test('live alerts: each answer replaces what was drawn in its box (NOAA renumber
   };
   const replace = vm.runInNewContext(`(() => {
     ${extractFunction('liveField')}
+    ${extractFunction('liveAlertEnded')}
+    ${extractFunction('restackLivePieces')}
     ${extractFunction('replaceLivePieces')}
     return replaceLivePieces;
   })()`, fake);
@@ -2453,5 +2474,11 @@ test('live alerts: each answer replaces what was drawn in its box (NOAA renumber
   replace([piece('Heat Advisory', [40, 40, 41, 41], { expiration: new Date(Date.now() - 1000).toISOString() })], box(39, 39, 45, 45));
   replace([], box(60, 60, 61, 61));
   assert.ok(![...fake.livePieces].some(p => p.props.prod_type === 'Heat Advisory'));
+  // A long hazard whose MESSAGE has lapsed but whose hazard hasn't ended (a river
+  // flood, a multi-day gale) stays: "ended" is the hazard's end, not the message's.
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+  replace([piece('Flood Watch', [70, 70, 71, 71], { expiration: hourAgo, ends: later })], box(69, 69, 75, 75));
+  replace([], box(80, 80, 81, 81));
+  assert.ok([...fake.livePieces].some(p => p.props.prod_type === 'Flood Watch'));
   assert.equal(drawn.size, fake.livePieces.size, 'what is drawn matches the pieces kept');
 });

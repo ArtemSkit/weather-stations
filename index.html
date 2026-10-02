@@ -918,9 +918,9 @@
     box-shadow: 0 10px 40px rgba(0,0,0,0.6); padding: 6px; list-style: none; margin: 0;
   }
   #live-legend[hidden] { display: none; }
-  /* An open colour key rises above the alert banner (1100) rather than under it;
-     a phone's open station sheet still covers it. */
-  main:not(.sheet-open) .leaflet-bottom.leaflet-left:has(#live-legend:not([hidden])) { z-index: 1101; }
+  /* An open colour key rises above the alert banner (1100) rather than under it
+     (a phone's open station sheet still covers it: see the mobile block). */
+  .leaflet-bottom.leaflet-left:has(#live-legend:not([hidden])) { z-index: 1101; }
   #live-legend li + li { margin-top: 1px; }
   .live-alerts-ctl #live-legend button {
     width: 100%; box-shadow: none; border: none; background: transparent; color: var(--text);
@@ -1177,6 +1177,8 @@
       z-index: 1150;
       transition: bottom 0.3s cubic-bezier(0.32, 0.72, 0, 1);
     }
+    /* An open station sheet covers the colour key like the other map controls. */
+    main.sheet-open .leaflet-bottom.leaflet-left:has(#live-legend:not([hidden])) { z-index: 1000; }
     /* No room above the sheet (set in initMobile): hide rather than cover the header. */
     main.sheet-open.sheet-crowded #fab-locate { visibility: hidden; }
 
@@ -3344,7 +3346,18 @@ function plotStations(geoJSON, lat, lon) {
     const [lng, la] = f?.geometry?.coordinates || [];   // GeoJSON order is [lng, lat]
     return f?.properties?.stationIdentifier && Number.isFinite(la) && Number.isFinite(lng);
   });
-  const { inside, edgeMi } = selectStationsInRadius(lat, lon, valid);
+  // The room the edge needs depends on the circle's final size on screen, which
+  // depends on the edge (the map zooms in whole steps): estimate from the screen,
+  // then re-check with the chosen edge until the needed room stops growing.
+  let clearance = searchEdgeClearance(lat);
+  let pick = selectStationsInRadius(lat, lon, valid, clearance);
+  for (let pass = 0; pass < 3; pass++) {
+    const needed = searchEdgeClearance(lat, pick.edgeMi);
+    if (needed <= clearance) break;
+    clearance = needed;
+    pick = selectStationsInRadius(lat, lon, valid, clearance);
+  }
+  const { inside, edgeMi } = pick;
   inside.forEach(({ f, lat: la, lng }) => {
     const el = makeStationMarker(f.properties.stationIdentifier, f.properties.name, la, lng);
     // Remember each marker so flagStationsInAlerts() (Tier 3) can later test it
@@ -3357,8 +3370,11 @@ function plotStations(geoJSON, lat, lon) {
 /* ── Search radius ──────────────────────────────────────────────────────────── */
 const SEARCH_RADIUS_MI  = 50;    // stations within this distance are shown…
 const SEARCH_MIN_STATIONS = 8;   // …or the nearest 8, when fewer are that close
-const SEARCH_STRETCH    = 1.25;  // the edge may move up to 25% further out to find room between stations
-const SEARCH_EDGE_GAP_MI = 2;    // extra room past the last station when none lies beyond it
+const SEARCH_STRETCH    = 1.25;  // to find room between stations the edge may move up to 25% further out…
+const SEARCH_INWARD     = 0.7;   // …or 30% further in (never below the nearest 8)
+// How the map fits the circle: the box around it (× radius), the padding left for
+// the label above it and the edges (total px), and the closest zoom.
+const SEARCH_FIT_BOX = 2.15, SEARCH_FIT_PAD_X = 80, SEARCH_FIT_PAD_Y = 136, SEARCH_FIT_MAX_ZOOM = 11;
 const METRES_PER_MILE   = 1609.344;
 /** A box covering every world copy — the dimmed area the circle is cut out of. */
 const SEARCH_MASK_OUTER = [[-85, -540], [85, -540], [85, 540], [-85, 540]];
@@ -3373,38 +3389,80 @@ function milesBetween(lat1, lon1, lat2, lon2) {
 
 /**
  * Pick the stations to show and where the circle's edge goes.
- * Keeps every station within SEARCH_RADIUS_MI, or the nearest SEARCH_MIN_STATIONS
- * when fewer are that close. The edge sits halfway between the last station kept
- * and the first one left out, so neither marker lands on the line — and it goes in
- * the WIDEST such gap up to SEARCH_STRETCH beyond that distance, because stations
- * often sit so close together that the first gap leaves no room. The stretch is
- * capped, so a dense list can never grow the circle to cover everything.
+ *
+ * Shows every station within SEARCH_RADIUS_MI, or the nearest SEARCH_MIN_STATIONS
+ * when fewer are that close — and always EVERY station inside the edge, so the
+ * label's "within N mi" stays true. Only shown stations get markers, so the edge
+ * just needs room beyond the last one shown: `clearance` of the radius (a marker's
+ * size measured against the circle as it will be drawn on this screen). Stations
+ * left out are not drawn, so the edge may sit right next to the first of them —
+ * nearly the whole gap is usable. To find such room the edge may settle anywhere
+ * from SEARCH_INWARD to SEARCH_STRETCH times that distance (never below the
+ * nearest 8), nearest to that distance first; where stations are too dense for any such gap, it takes the
+ * widest gap available. The stretch is capped, so a dense list can never grow the
+ * circle to cover everything.
  *
  * @param {number}   lat
  * @param {number}   lon
- * @param {Object[]} features - station Features with valid coordinates
+ * @param {Object[]} features  - station Features with valid coordinates
+ * @param {number}   clearance - room needed past the last shown station, as a share of the radius
  * @returns {{ inside: {f:Object, lat:number, lng:number, mi:number}[], edgeMi: number }}
  */
-function selectStationsInRadius(lat, lon, features) {
+function selectStationsInRadius(lat, lon, features, clearance) {
   const all = features.map(f => {
     const [lng, la] = f.geometry.coordinates;
     return { f, lat: la, lng, mi: milesBetween(lat, lon, la, lng) };
   }).sort((a, b) => a.mi - b.mi);
-  if (!all.length) return { inside: [], edgeMi: SEARCH_RADIUS_MI };
+  const n = all.length;
+  if (!n) return { inside: [], edgeMi: SEARCH_RADIUS_MI };
 
-  const limitMi = Math.max(SEARCH_RADIUS_MI, all[Math.min(SEARCH_MIN_STATIONS, all.length) - 1].mi);
-  const minKept = all.filter(s => s.mi <= limitMi).length;
-  const maxKept = all.filter(s => s.mi <= limitMi * SEARCH_STRETCH).length;
-  // The gap after keeping k stations (unlimited past the last station).
-  const gapAfter = k => (k < all.length ? all[k].mi - all[k - 1].mi : Infinity);
-  let kept = minKept;
-  for (let k = minKept + 1; k <= maxKept; k++) if (gapAfter(k) > gapAfter(kept)) kept = k;
+  const minCount = Math.min(SEARCH_MIN_STATIONS, n);
+  const limitMi  = Math.max(SEARCH_RADIUS_MI, all[minCount - 1].mi);
+  const need     = 1 / (1 - clearance);              // edge ÷ last shown station
+  // Room after showing the nearest k: next station's distance ÷ the last one's.
+  const room = k => (k < n ? all[k].mi / Math.max(all[k - 1].mi, 0.01) : Infinity);
+
+  let fit = 0, widest = 0;
+  for (let k = minCount; k <= n; k++) {
+    const d = all[k - 1].mi;
+    if (d > limitMi * SEARCH_STRETCH) break;
+    if (d < limitMi * SEARCH_INWARD && k < n) continue;
+    if (room(k) >= need && (!fit || Math.abs(d - limitMi) < Math.abs(all[fit - 1].mi - limitMi))) fit = k;
+    if (!widest || room(k) > room(widest)) widest = k;
+  }
+  const kept = fit || widest || all.filter(s => s.mi <= limitMi).length;
 
   const lastIn = all[kept - 1].mi;
-  const edgeMi = kept < all.length
-    ? (lastIn + all[kept].mi) / 2
-    : lastIn * 1.06 + SEARCH_EDGE_GAP_MI;
+  const next   = kept < n ? all[kept].mi : Infinity;
+  // Just clear of the last station shown, but short of the next one (which is not
+  // shown, so the edge may touch it): with too little room that is the most room
+  // this list allows.
+  const edgeMi = Math.min(Math.max(lastIn, 0.5) * need, next * 0.995);
   return { inside: all.slice(0, kept), edgeMi };
+}
+
+/**
+ * The room the circle's edge needs past the last shown station, as a share of the
+ * radius: a marker's radius plus a small gap, against the circle's size in pixels
+ * once the map has zoomed to fit it (whole zoom levels, so often smaller than the
+ * screen allows). Without a size (map laid out while hidden) a typical value.
+ * @param {number} lat
+ * @param {number} [edgeMi] - a proposed radius; omitted: estimate from the screen alone
+ */
+function searchEdgeClearance(lat, edgeMi) {
+  const size = map.getSize();
+  if (!size.x || !size.y) return 0.1;
+  const markerPx = window.matchMedia('(pointer: coarse), (max-width: 640px)').matches ? 17 : 14;
+  let radiusPx;
+  if (edgeMi) {
+    const r = edgeMi * METRES_PER_MILE;
+    const zoom = Math.min(SEARCH_FIT_MAX_ZOOM, map.getBoundsZoom(
+      L.latLng(lat, 0).toBounds(r * SEARCH_FIT_BOX), false, L.point(SEARCH_FIT_PAD_X, SEARCH_FIT_PAD_Y)));
+    radiusPx = r / (40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * Math.pow(2, zoom)));
+  } else {
+    radiusPx = Math.min(size.x - SEARCH_FIT_PAD_X, size.y - SEARCH_FIT_PAD_Y) / SEARCH_FIT_BOX;
+  }
+  return radiusPx > 0 ? Math.min(0.4, (markerPx + 5) / radiusPx) : 0.1;
 }
 
 // Above the alert areas (overlay pane, 400) so the dimming covers them evenly,
@@ -3447,7 +3505,7 @@ function drawSearchRadius(lat, lon, miles, count) {
   const circle = { lat, lon, r: 0, rim, rings, mask, label };
   searchRadius = circle;
 
-  const bounds = L.latLng(lat, lon).toBounds(r * 2.15);
+  const bounds = L.latLng(lat, lon).toBounds(r * SEARCH_FIT_BOX);
   const flying = fitSearchRadius(bounds, lat, lon);
 
   // Grow out from the point — at once when motion is reduced, or when the page is
@@ -3490,7 +3548,9 @@ function drawSearchRadius(lat, lon, miles, count) {
 function fitSearchRadius(bounds, lat, lon) {
   const size = map.getSize();
   if (!size.x || !size.y) { map.setView([lat, lon], 8); return false; }
-  const options = { paddingTopLeft: [40, 96], paddingBottomRight: [40, 40], maxZoom: 11 };
+  // Room for the label above the circle (96 px) and a margin elsewhere; these add
+  // up to SEARCH_FIT_PAD_X/Y, which searchEdgeClearance assumes.
+  const options = { paddingTopLeft: [40, 96], paddingBottomRight: [40, 40], maxZoom: SEARCH_FIT_MAX_ZOOM };
   if (prefersReducedMotion.matches) { map.fitBounds(bounds, options); return false; }
   map.flyToBounds(bounds, { ...options, duration: 1.2 });
   return true;
@@ -4571,11 +4631,21 @@ let liveRefreshMissed = false;
 /** 'loading' until the first answer, then 'ok' or 'error' (never "0 alerts" by mistake). */
 let liveState = 'off';
 let liveFailureShown = false;        // one toast per run of failures, not one per pan
+let liveTruncatedShown = false;      // …and one per stretch of over-full answers
 let livePopup = null;                // the live-alert popup, while one is open
 
 /** Simplification allowed for a zoom level, in degrees: about one screen pixel. */
 function liveAlertTolerance(zoom) {
   return 360 / (256 * Math.pow(2, zoom));
+}
+
+/**
+ * Whether an alert has ended: its hazard end (`ends`) when it has one — the
+ * message's own `expiration` comes much sooner for long hazards (a river flood,
+ * a multi-day gale) whose messages are simply re-issued.
+ */
+function liveAlertEnded(props, now) {
+  return Date.parse(props.ends || props.expiration) < now;
 }
 
 /** A map-service text field, or undefined when empty (the service sends " " for none). */
@@ -4585,7 +4655,7 @@ function liveField(value) {
 }
 
 /** Load every alert piece inside the current view (padded a little) and draw them. */
-async function loadLiveAlerts() {
+async function loadLiveAlerts(confirmingEmpty = false) {
   if (!liveAlertsOn) return;
   const seq = ++liveAlertsSeq;
   clearTimeout(liveRetryTimer);
@@ -4604,11 +4674,19 @@ async function loadLiveAlerts() {
     const { response, data } = await fetchJsonWithTimeout(`${LIVE_ALERTS_URL}?${params}`);
     if (seq !== liveAlertsSeq || !liveAlertsOn) return;    // a newer view, or switched off
     if (!response.ok || !Array.isArray(data?.features)) throw new Error(`HTTP ${response.status}`);
+    // NOAA briefly answers "nothing" while it renumbers its records. An empty
+    // answer that would clear areas already drawn here is checked again in 5 s
+    // before it is believed.
+    if (!data.features.length && confirmingEmpty !== true &&
+        [...livePieces].some(piece => queried.intersects(piece.bounds))) {
+      liveRetryTimer = setTimeout(() => loadLiveAlerts(true), 5000);
+      return;
+    }
     replaceLivePieces(data.features, queried);
     // The service stops at 4,000 pieces; say so rather than silently showing part.
-    if (data.exceededTransferLimit || data.properties?.exceededTransferLimit) {
-      showToast('Too many alert areas to show at this zoom — zoom in to see them all');
-    }
+    const truncated = Boolean(data.exceededTransferLimit || data.properties?.exceededTransferLimit);
+    if (truncated && !liveTruncatedShown) showToast('Too many alert areas to show at this zoom — zoom in to see them all');
+    liveTruncatedShown = truncated;
     liveState = 'ok';
     liveFailureShown = false;
   } catch (error) {
@@ -4616,7 +4694,7 @@ async function loadLiveAlerts() {
     liveState = 'error';
     if (!liveFailureShown) showToast('Live alerts couldn\'t load — retrying');
     liveFailureShown = true;
-    liveRetryTimer = setTimeout(loadLiveAlerts, 30_000);   // don't wait for a pan or the 2-min tick
+    liveRetryTimer = setTimeout(() => loadLiveAlerts(), 30_000);   // don't wait for a pan or the 2-min tick
   }
   renderLiveLegend();
 }
@@ -4630,13 +4708,14 @@ async function loadLiveAlerts() {
 function replaceLivePieces(features, queried) {
   const now = Date.now();
   for (const piece of livePieces) {
-    if (queried.intersects(piece.bounds) || Date.parse(piece.props.expiration) < now) {
+    if (queried.intersects(piece.bounds) || liveAlertEnded(piece.props, now)) {
       liveAlertsLayer.removeLayer(piece.layer);
       livePieces.delete(piece);
     }
   }
   // (An area whose alert has already ended is not drawn at all.)
-  features.filter(f => f?.geometry && !(Date.parse(liveField(f.properties?.expiration)) < now)).forEach(f => {
+  features.filter(f => f?.geometry && !liveAlertEnded({
+    ends: liveField(f.properties?.ends), expiration: liveField(f.properties?.expiration) }, now)).forEach(f => {
     const p = f.properties || {};
     const props = {
       prod_type: liveField(p.prod_type) || 'Weather alert', sig: liveField(p.sig),
@@ -4657,8 +4736,14 @@ function replaceLivePieces(features, queried) {
     livePieces.add({ layer, props, bounds: layer.getBounds() });
     if (!liveHiddenEvents.has(props.prod_type)) liveAlertsLayer.addLayer(layer);
   });
-  // Warnings on top of watches, watches on top of advisories and statements —
-  // across answers too (pieces added by a later pan would otherwise draw on top).
+  restackLivePieces();
+}
+
+/**
+ * Warnings on top of watches, watches on top of advisories and statements —
+ * across answers too, and after a type is shown again from the colour key.
+ */
+function restackLivePieces() {
   [...livePieces]
     .sort((a, b) => (LIVE_SIG_RANK[a.props.sig] ?? 0) - (LIVE_SIG_RANK[b.props.sig] ?? 0))
     .forEach(piece => { if (liveAlertsLayer.hasLayer(piece.layer)) piece.layer.bringToFront(); });
@@ -4735,6 +4820,7 @@ function toggleLiveAlertType(event, button) {
     if (piece.props.prod_type !== event) continue;
     if (hide) liveAlertsLayer.removeLayer(piece.layer); else liveAlertsLayer.addLayer(piece.layer);
   }
+  if (!hide) restackLivePieces();
 }
 
 /**
@@ -4811,7 +4897,7 @@ map.on('moveend', () => {
   if (!liveAlertsOn) return;
   renderLiveLegend();
   clearTimeout(liveMoveTimer);
-  liveMoveTimer = setTimeout(loadLiveAlerts, 350);
+  liveMoveTimer = setTimeout(() => loadLiveAlerts(), 350);
 });
 
 /* The control: [colour key] above [LIVE ALERTS · n] [KEY], above the zoom buttons. */

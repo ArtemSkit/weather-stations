@@ -833,8 +833,21 @@
   .fc-temp { grid-area: temp; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.9rem; color: var(--accent); white-space: nowrap; }
   .fc-temp small { margin-left: 4px; font-size: 0.65rem; font-weight: 400; color: var(--text-muted); }
   .fc-short { grid-area: short; font-size: 0.74rem; }
+  /* A day's ↑ high and ↓ low: warm and cool, °C in small type beneath. */
+  .fc-temps {
+    grid-area: temp; display: flex; flex-wrap: wrap; justify-content: flex-end; column-gap: 8px;
+    font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.9rem; white-space: nowrap;
+  }
+  .fc-hi { color: #ffb37a; }
+  .fc-lo { color: #8fd3ff; }
+  .fc-hi > span[aria-hidden], .fc-lo > span[aria-hidden] { margin-right: 1px; font-size: 0.75rem; }
+  .fc-temps small {
+    flex-basis: 100%; text-align: right; font-size: 0.65rem; font-weight: 400; color: var(--text-muted);
+  }
+  .fc-night-sky { display: block; color: var(--text-muted); font-size: 0.7rem; }
   .fc-meta { grid-area: meta; font-size: 0.66rem; color: var(--text-muted); }
   .fc-day p { margin: 0; padding: 0 16px 12px 58px; font-size: 0.74rem; line-height: 1.55; color: var(--text-muted); }
+  .fc-day p b { color: var(--text); font-weight: 700; }
   /* Hourly: a day heading that stays in view, then one line per hour. */
   .fc-hours { list-style: none; margin: 0; padding: 0; }
   .fc-hour-day {
@@ -6180,10 +6193,34 @@ function forecastEmoji(text, isDaytime) {
 
 /** A period's temperature as HTML: °F, with °C beside it in small type. */
 function forecastTemp(period) {
+  const d = forecastDegrees(period);
+  return d ? `${d.f}°F<small>${d.c}°C</small>` : '—';
+}
+
+/** A period's temperature in whole °F and °C, or null when it has none. */
+function forecastDegrees(period) {
   const t = period?.temperature;
-  if (!Number.isFinite(t)) return '—';
+  if (!Number.isFinite(t)) return null;
   const f = period.temperatureUnit === 'C' ? t * 9 / 5 + 32 : t;
-  return `${Math.round(f)}°F<small>${Math.round((f - 32) * 5 / 9)}°C</small>`;
+  return { f: Math.round(f), c: Math.round((f - 32) * 5 / 9) };
+}
+
+/**
+ * The 7-day periods paired into calendar days: each day with the night after it
+ * ("Friday" + "Friday Night"), so a row can show the day's high and the night's
+ * low. A list that starts at night ("Tonight", "Overnight") or ends on a day has
+ * that part on its own.
+ * @returns {{day:Object|null, night:Object|null}[]}
+ */
+function forecastDayPairs(periods) {
+  const days = [];
+  for (let i = 0; i < periods.length; i++) {
+    const period = periods[i], next = periods[i + 1];
+    if (period.isDaytime && next && !next.isDaytime) { days.push({ day: period, night: next }); i++; }
+    else if (period.isDaytime) days.push({ day: period, night: null });
+    else days.push({ day: null, night: period });
+  }
+  return days;
 }
 
 /**
@@ -6208,22 +6245,39 @@ function forecastHourLabel(hour) {
   return `${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'}`;
 }
 
-/** The 7-day periods as rows; each opens to the forecaster's full wording. */
+/**
+ * The 7-day forecast as one row per day: the day's sky, its high and the night's
+ * low (↑ 73° ↓ 63°, with °C below), the night's sky, the higher of the two rain
+ * chances and the day's wind. Each row opens to the forecaster's full wording
+ * for the day and the night.
+ */
 function renderForecastDays(periods) {
   if (!periods.length) return '<p class="fc-empty">The NWS sent no forecast periods.</p>';
-  return periods.map(period => {
-    const pop = period.probabilityOfPrecipitation?.value;
-    const wind = [period.windDirection, period.windSpeed].filter(Boolean).join(' ');
-    const meta = [pop ? `💧 ${Math.round(pop)}% chance of rain` : '', wind ? `Wind ${wind}` : '']
+  return forecastDayPairs(periods).map(({ day, night }) => {
+    const main = day || night;   // the day's own period, or a night on its own
+    const high = day && forecastDegrees(day);
+    const low = night && forecastDegrees(night);
+    // ↑ high and ↓ low — the arrows are for the eye; screen readers hear the words.
+    const tempHtml = (part, word, d) => '<span class="fc-' + part + '"><span aria-hidden="true">' +
+      (part === 'hi' ? '↑' : '↓') + '</span><span class="sr-only">' + word + ' </span>' + d.f + '°</span>';
+    const temps = [high && tempHtml('hi', 'High', high), low && tempHtml('lo', 'Low', low)].filter(Boolean);
+    const celsius = [high, low].filter(Boolean).map(d => d.c + '°').join(' / ');
+    const pops = [day, night].map(p => p?.probabilityOfPrecipitation?.value).filter(v => v != null);
+    const pop = pops.length ? Math.max(...pops) : null;
+    const wind = [main.windDirection, main.windSpeed].filter(Boolean).join(' ');
+    const meta = [pop ? '💧 ' + Math.round(pop) + '% chance of rain' : '', wind ? 'Wind ' + wind : '']
       .filter(Boolean).map(escapeHtml).join(' · ');
-    const metaHtml = meta ? '<span class="fc-meta">' + meta + '</span>' : '';
-    return `<details class="fc-day${period.isDaytime ? '' : ' fc-night'}"><summary>
-      <span class="fc-icon" aria-hidden="true">${forecastEmoji(period.shortForecast, period.isDaytime)}</span>
-      <span class="fc-name">${escapeHtml(period.name || '')}</span>
-      <span class="fc-temp">${forecastTemp(period)}</span>
-      <span class="fc-short">${escapeHtml(period.shortForecast || '')}</span>
-      ${metaHtml}
-    </summary><p>${escapeHtml(period.detailedForecast || '')}</p></details>`;
+    const nightSky = day && night && night.shortForecast
+      ? '<span class="fc-night-sky">Night: ' + escapeHtml(night.shortForecast) + '</span>' : '';
+    const words = [day, night].filter(Boolean).map(p =>
+      '<p><b>' + escapeHtml(p.name || '') + ':</b> ' + escapeHtml(p.detailedForecast || '') + '</p>').join('');
+    return '<details class="fc-day' + (day ? '' : ' fc-night') + '"><summary>' +
+        '<span class="fc-icon" aria-hidden="true">' + forecastEmoji(main.shortForecast, !!day) + '</span>' +
+        '<span class="fc-name">' + escapeHtml(main.name || '') + '</span>' +
+        '<span class="fc-temps">' + (temps.length ? temps.join('') + '<small>' + celsius + 'C</small>' : '—') + '</span>' +
+        '<span class="fc-short">' + escapeHtml(main.shortForecast || '') + nightSky + '</span>' +
+        (meta ? '<span class="fc-meta">' + meta + '</span>' : '') +
+      '</summary>' + words + '</details>';
   }).join('');
 }
 

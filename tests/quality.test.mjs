@@ -121,6 +121,7 @@ test('a failed newer search keeps the area that is loading or shown', async () =
     function showToast(m) { log.push('toast:' + m); }
     function loadAlertsForArea() { log.push('alerts'); }
     function setForecastPoint() { log.push('forecast point'); }
+    function clearForecastPoint() { log.push('forecast cleared'); }
     ${extractFunction('stationCountLabel')}
     ${extractFunction('mayUpdateSearchUi')}
     ${extractFunction('reportSearchError')}
@@ -2750,6 +2751,18 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.equal(r.forecastEmoji('Mostly Sunny', true), '⛅');
   assert.equal(r.forecastEmoji('Clear', false), '🌙');
   assert.equal(r.forecastTemp({ temperature: null }), '—');
+
+  // Error text reads as one sentence next to the Try again button.
+  const reason = vm.runInNewContext(`(${extractFunction('forecastErrorReason')})`);
+  assert.equal(reason(new Error('Request timed out — please try again')), 'request timed out');
+  assert.equal(reason(new Error('Network error — check your connection and try again')), 'network error — check your connection');
+  assert.equal(reason(new Error('the NWS answered HTTP 500')), 'the NWS answered HTTP 500');
+  assert.equal(reason(null), 'no answer');
+  // A failed search (the map moved, the stations cleared) hides FORECAST.
+  assert.match(extractFunction('loadStationsAt'), /classList\.remove\('has-search-radius'\);[^\n]*\n\s*clearForecastPoint\(\);/);
+  // Phones: the home-bar room is inside the sheet, so a tap there doesn't close it.
+  assert.match(html, /\.fc-foot \{ padding-bottom: calc\(8px \+ var\(--safe-bottom\)\); \}/);
+  assert.doesNotMatch(html.match(/#forecast-dialog \{\s*width: 100vw;[^}]*\}/)[0], /padding-bottom/);
 });
 
 test('live alerts: a whole-world view replaces every piece, and date-line zones are drawn once', () => {

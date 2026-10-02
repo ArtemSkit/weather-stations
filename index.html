@@ -4625,7 +4625,9 @@ let liveAlertsOn = false;
  */
 const livePieces = new Set();
 const liveHiddenEvents = new Set();  // alert types switched off in the colour key
-let liveAlertsSeq = 0;               // newest view request; older answers are dropped
+let liveAlertsSeq = 0;               // newest view request
+let liveAppliedSeq = 0;              // newest request whose answer is drawn; older answers are dropped
+let liveViewPending = false;         // the map moved and that view's answer isn't in yet
 let liveMoveTimer = 0, liveRefreshTimer = 0, liveRetryTimer = 0;
 let liveRefreshMissed = false;
 /** 'loading' until the first answer, then 'ok' or 'error' (never "0 alerts" by mistake). */
@@ -4738,7 +4740,11 @@ async function loadLiveAlerts(confirmingEmpty = false) {
   })}`;
   try {
     const answers = await Promise.all(boxes.map(q => fetchJsonWithTimeout(urlFor(q))));
-    if (seq !== liveAlertsSeq || !liveAlertsOn) return;    // a newer view, or switched off
+    // Switched off, or a newer answer is already drawn. An older view's answer that
+    // beats the newer one is still drawn (it only replaces its own box), so a user
+    // who keeps nudging the map sees alerts arrive instead of none at all.
+    if (seq <= liveAppliedSeq || !liveAlertsOn) return;
+    const newest = seq === liveAlertsSeq;
     answers.forEach(({ response, data }) => {
       if (!response.ok || !Array.isArray(data?.features)) throw new Error(`HTTP ${response.status}`);
     });
@@ -4758,11 +4764,14 @@ async function loadLiveAlerts(confirmingEmpty = false) {
     // NOAA briefly answers "nothing" while it renumbers its records. An empty
     // answer that would clear areas already drawn here is checked again in 5 s
     // before it is believed.
+    // (An older view's doubtful empty answer is simply skipped: the newer one follows.)
     if (!features.length && confirmingEmpty !== true &&
         [...livePieces].some(piece => queried.some(q => q.intersects(piece.bounds)))) {
-      liveRetryTimer = setTimeout(() => loadLiveAlerts(true), 5000);
+      if (newest) liveRetryTimer = setTimeout(() => loadLiveAlerts(true), 5000);
       return;
     }
+    liveAppliedSeq = seq;
+    if (newest) liveViewPending = false;
     replaceLivePieces(features, queried, nearLon);
     // The service stops at 4,000 pieces; say so rather than silently showing part.
     const truncated = answers.some(({ data }) =>
@@ -4776,7 +4785,9 @@ async function loadLiveAlerts(confirmingEmpty = false) {
     liveState = 'error';
     if (!liveFailureShown) showToast('Live alerts couldn\'t load — retrying');
     liveFailureShown = true;
-    liveRetryTimer = setTimeout(() => loadLiveAlerts(), 30_000);   // don't wait for a pan or the 2-min tick
+    // Don't wait for a pan or the 2-min tick — but, like that tick, wait while the
+    // page is hidden (it catches up when shown) instead of retrying in the background.
+    liveRetryTimer = setTimeout(refreshLiveAlerts, 30_000);
   }
   renderLiveLegend();
 }
@@ -4868,8 +4879,10 @@ function renderLiveLegend() {
   const rows = [...liveAlertsInView().entries()].sort((a, b) =>
     (LIVE_SIG_RANK[b[1].sig] ?? 0) - (LIVE_SIG_RANK[a[1].sig] ?? 0) || b[1].ids.size - a[1].ids.size);
   const total = rows.reduce((n, [, v]) => n + v.ids.size, 0);
+  // While the view's own answer is on its way the count would leave out what just
+  // came into view: show "…" then too (the rows already known stay listed).
   liveAlertsCount.textContent = !liveAlertsOn ? '' : liveState === 'loading' ? '· …'
-    : liveState === 'error' ? '· !' : `· ${total}`;
+    : liveState === 'error' ? '· !' : liveViewPending ? '· …' : `· ${total}`;
   liveAlertsBtn.title = liveState === 'error'
     ? 'Live alerts couldn\'t be loaded — retrying'
     : 'Show every watch, warning and advisory in the map view';
@@ -4883,7 +4896,10 @@ function renderLiveLegend() {
   };
   if (liveState === 'loading') { note('Loading alerts…'); return; }
   if (liveState === 'error') note('Couldn\'t load live alerts — retrying…');
-  if (!rows.length) { if (liveState === 'ok') note('No active alerts in this view.'); return; }
+  if (!rows.length) {
+    if (liveState === 'ok') note(liveViewPending ? 'Loading alerts…' : 'No active alerts in this view.');
+    return;
+  }
   rows.forEach(([event, { ids }]) => {
     const li = document.createElement('li');
     const button = document.createElement('button');
@@ -4944,6 +4960,7 @@ function setLiveAlerts(on) {
   clearTimeout(liveMoveTimer);
   clearTimeout(liveRetryTimer);
   liveRefreshMissed = false;
+  liveViewPending = false;
   if (livePopup) map.closePopup(livePopup);
   // The searched area's own polygons would be drawn twice: hide them with a CSS
   // class (not by removing their layer), so their labels, popups and stacking
@@ -4957,6 +4974,7 @@ function setLiveAlerts(on) {
     liveRefreshTimer = setInterval(refreshLiveAlerts, ALERTS_REFRESH_MS);
   } else {
     liveAlertsSeq++;                 // ignore any answer still on its way
+    liveAppliedSeq = liveAlertsSeq;
     liveAlertsLayer.clearLayers();
     livePieces.clear();
     liveState = 'off';
@@ -4983,6 +5001,7 @@ document.addEventListener('visibilitychange', () => {
 // Moving the map loads what came into view — one request per pause, not per frame.
 map.on('moveend', () => {
   if (!liveAlertsOn) return;
+  liveViewPending = true;          // what came into view isn't counted until its answer is in
   renderLiveLegend();
   clearTimeout(liveMoveTimer);
   liveMoveTimer = setTimeout(() => loadLiveAlerts(), 350);

@@ -4596,14 +4596,15 @@ const LIVE_ALERT_COLORS = {
 };
 /** Colour of an alert type on the map (the NWS colour, or a stable hashed one). */
 function liveAlertColor(event) {
-  return LIVE_ALERT_COLORS[event] || `hsl(${alertHue(event)}, 70%, 60%)`;
+  // Own keys only: a type named like a built-in ("constructor") must not match.
+  return Object.hasOwn(LIVE_ALERT_COLORS, event) ? LIVE_ALERT_COLORS[event] : `hsl(${alertHue(event)}, 70%, 60%)`;
 }
 /**
  * A readable text colour for an alert type on the dark popup: the NWS colour
  * mixed halfway with white, so dark reds and blues (#8B0000, #0000FF) stay legible.
  */
 function liveAlertTextColor(event) {
-  const hex = LIVE_ALERT_COLORS[event];
+  const hex = Object.hasOwn(LIVE_ALERT_COLORS, event) && LIVE_ALERT_COLORS[event];
   if (!hex) return `hsl(${alertHue(event)}, 85%, 72%)`;
   const mix = i => Math.round((parseInt(hex.slice(i, i + 2), 16) + 255) / 2);
   return `rgb(${mix(1)}, ${mix(3)}, ${mix(5)})`;
@@ -4644,10 +4645,14 @@ function liveAlertTolerance(zoom) {
 /**
  * Whether an alert has ended: its hazard end (`ends`) when it has one — the
  * message's own `expiration` comes much sooner for long hazards (a river flood,
- * a multi-day gale) whose messages are simply re-issued.
+ * a multi-day gale) whose messages are simply re-issued. A warning, watch or
+ * advisory with no hazard end lasts "until further notice" (as its popup says):
+ * it stays until the service stops listing it, even if a follow-up is late.
  */
 function liveAlertEnded(props, now) {
-  return Date.parse(props.ends || props.expiration) < now;
+  if (props.ends) return Date.parse(props.ends) < now;
+  if (/(warning|watch|advisory)$/i.test(props.prod_type || '')) return false;
+  return Date.parse(props.expiration) < now;
 }
 
 /** A map-service text field, or undefined when empty (the service sends " " for none). */
@@ -4812,27 +4817,30 @@ function replaceLivePieces(features, queried, nearLon) {
       livePieces.delete(piece);
     }
   }
-  // (An area whose alert has already ended is not drawn at all.)
-  features.filter(f => f?.geometry && !liveAlertEnded({
-    ends: liveField(f.properties?.ends), expiration: liveField(f.properties?.expiration) }, now)).forEach(f => {
+  features.forEach(f => {
+    if (!f?.geometry) return;
     const p = f.properties || {};
     const props = {
       prod_type: liveField(p.prod_type) || 'Weather alert', sig: liveField(p.sig),
       onset: liveField(p.onset), ends: liveField(p.ends), expiration: liveField(p.expiration),
       issuance: liveField(p.issuance), url: liveField(p.url), cap_id: liveField(p.cap_id)
     };
+    if (liveAlertEnded(props, now)) return;     // already over: not drawn at all
     const color = liveAlertColor(props.prod_type);
     const layer = L.geoJSON(f.geometry, {
       renderer: liveAlertsRenderer,
       style: { color, weight: 1.2, opacity: 0.95, fillColor: color, fillOpacity: 0.28 }
     });
+    // An empty outline has no bounds; kept, it would break every later box test.
+    const bounds = layer.getBounds();
+    if (!bounds.isValid()) return;
     layer.on('click', e => {
       // Pin mode: the tap places the pin (the map's own click handler), no popup.
       if (!tapModeActive) openLiveAlertPopup(props, e.latlng, e.originalEvent);
     });
     layer.on('mouseover', () => highlightLiveAlert(props.cap_id, true));
     layer.on('mouseout',  () => highlightLiveAlert(props.cap_id, false));
-    livePieces.add({ layer, props, bounds: layer.getBounds() });
+    livePieces.add({ layer, props, bounds });
     if (!liveHiddenEvents.has(props.prod_type)) liveAlertsLayer.addLayer(layer);
   });
   restackLivePieces();

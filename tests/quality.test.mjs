@@ -2424,6 +2424,9 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.equal(colours.liveAlertColor('Tornado Warning'), '#FF0000');
   assert.equal(colours.liveAlertColor('Extreme Heat Warning'), '#C71585');
   assert.match(colours.liveAlertColor('Something New'), /^hsl\(\d+, 70%, 60%\)$/);
+  // A type named like a built-in object key gets a hashed colour, not a function.
+  assert.match(colours.liveAlertColor('constructor'), /^hsl\(/);
+  assert.match(colours.liveAlertTextColor('toString'), /^hsl\(/);
   // Dark NWS colours are lightened for text on the dark popup.
   assert.equal(colours.liveAlertTextColor('Flash Flood Warning'), 'rgb(197, 128, 128)');
 
@@ -2454,10 +2457,11 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
 test('live alerts: each answer replaces what was drawn in its box (NOAA renumbers records)', () => {
   // A tiny stand-in for Leaflet: bounds are [west, south, east, north] boxes.
   const box = (w, s, e, n) => ({ w, s, e, n, intersects: o => !(o.e < w || o.w > e || o.n < s || o.s > n),
-    getCenter: () => ({ lat: (s + n) / 2, lng: (w + e) / 2 }) });
+    getCenter: () => ({ lat: (s + n) / 2, lng: (w + e) / 2 }), isValid: () => true });
   const drawn = new Set();
   const fake = {
-    L: { geoJSON: g => ({ g, on() {}, getBounds: () => box(...g.box), bringToFront() {}, setStyle() {} }) },
+    L: { geoJSON: g => ({ g, on() {}, bringToFront() {}, setStyle() {},
+      getBounds: () => (g.box ? box(...g.box) : { isValid: () => false }) }) },
     liveAlertsLayer: { addLayer: l => drawn.add(l), removeLayer: l => drawn.delete(l), hasLayer: l => drawn.has(l) },
     livePieces: new Set(), liveHiddenEvents: new Set(), liveAlertsRenderer: {}, tapModeActive: false,
     LIVE_SIG_RANK: { S: 0, Y: 1, A: 2, W: 3 }, liveAlertColor: () => '#fff', Date
@@ -2485,10 +2489,22 @@ test('live alerts: each answer replaces what was drawn in its box (NOAA renumber
   // An answer for a box elsewhere leaves this one's pieces alone…
   replace([piece('Gale Warning', [20, 20, 21, 21])], [box(19, 19, 25, 25)], 0);
   assert.equal(fake.livePieces.size, 2);
-  // …but an alert that has ended is dropped anywhere.
-  replace([piece('Heat Advisory', [40, 40, 41, 41], { expiration: new Date(Date.now() - 1000).toISOString() })], [box(39, 39, 45, 45)], 0);
+  // …but an alert that has ended is dropped anywhere: by its hazard end, or for a
+  // statement without one, by its message's expiration.
+  const past = new Date(Date.now() - 1000).toISOString();
+  replace([piece('Heat Advisory', [40, 40, 41, 41], { ends: past }),
+           piece('Special Weather Statement', [42, 42, 43, 43], { expiration: past })], [box(39, 39, 45, 45)], 0);
   replace([], [box(60, 60, 61, 61)], 0);
-  assert.ok(![...fake.livePieces].some(p => p.props.prod_type === 'Heat Advisory'));
+  assert.ok(![...fake.livePieces].some(p => ['Heat Advisory', 'Special Weather Statement'].includes(p.props.prod_type)));
+  // A warning with no hazard end lasts "until further notice": a late follow-up
+  // message (expiration passed) doesn't take it off the map.
+  replace([piece('River Flood Warning', [50, 50, 51, 51], { expiration: past })], [box(49, 49, 55, 55)], 0);
+  replace([], [box(60, 60, 61, 61)], 0);
+  assert.ok([...fake.livePieces].some(p => p.props.prod_type === 'River Flood Warning'));
+  // A piece with an empty outline (no bounds) is skipped, not kept to break later loads.
+  const before = fake.livePieces.size;
+  replace([{ geometry: { type: 'Polygon', coordinates: [] }, properties: { prod_type: 'Gale Warning', ends: later } }], [box(90, 90, 91, 91)], 0);
+  assert.equal(fake.livePieces.size, before);
   // A long hazard whose MESSAGE has lapsed but whose hazard hasn't ended (a river
   // flood, a multi-day gale) stays: "ended" is the hazard's end, not the message's.
   const hourAgo = new Date(Date.now() - 3_600_000).toISOString();

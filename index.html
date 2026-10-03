@@ -6609,7 +6609,11 @@ async function doSearch(knownPlace) {
       throw new Error('Not a valid ZIP code or coordinates — e.g. 78201 or 29.42, -98.49');
 
     } else if (knownPlace) {
-      place = knownPlace;   // a picked suggestion: already located
+      // A picked suggestion: already located, so straight to its stations (with
+      // the same loading overlay as every other search).
+      setStatus('loading', 'LOCATING…');
+      showOverlay('Fetching weather stations…');
+      place = knownPlace;
 
     } else {
       // Street address — free-form, geocoded by Nominatim and Photon (no API key
@@ -6651,8 +6655,10 @@ zipInput.addEventListener('keydown', e => {
   if (!suggestList.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
     e.preventDefault();   // keep the caret where it is
     moveSuggestionHighlight(e.key === 'ArrowDown' ? 1 : -1);
-  } else if (!suggestList.hidden && e.key === 'Escape') {
-    e.preventDefault();   // one Esc closes the list and nothing else
+  } else if (e.key === 'Escape' && (!suggestList.hidden || suggestTimer)) {
+    // One Esc closes the list and nothing else — or, before it has appeared,
+    // stops the lookup on its way so it never opens.
+    e.preventDefault();
     closeSuggestions();
   } else if (e.key === 'Enter' && !e.repeat) {
     // !e.repeat: a held-down Enter must not fire a geocoder request per key repeat
@@ -6674,12 +6680,13 @@ const suggestList = document.getElementById('addr-suggest');
 const SUGGEST_DELAY_MS  = 300;   // typing pause before asking
 const SUGGEST_MIN_CHARS = 3;     // of the street or place name
 const SUGGEST_MAX       = 6;
-// Photon's bbox filter (west,south,east,north): the 50 states, Puerto Rico and the
-// Virgin Islands. Guam and American Samoa lie outside it; a full search still finds them.
+// Photon's bbox filter (west,south,east,north): the states, Puerto Rico and the
+// Virgin Islands. Guam, the Northern Mariana Islands, American Samoa and the far
+// western Aleutians lie outside it; a full search (FIND) still finds them.
 const SUGGEST_US_BBOX = '-180,15,-64,72';
 
-let suggestTimer   = 0;
-let suggestRequest = 0;    // id of the newest lookup; an older answer is dropped
+let suggestTimer   = 0;    // the lookup pending (typing pause, then request); 0 = none
+let suggestRequest = 0;    // id of the newest lookup; an older answer is ignored
 let suggestions    = [];   // [{ main, sub, text, place }] as listed
 let suggestActive  = -1;   // the row highlighted from the keyboard; -1 = none
 
@@ -6765,9 +6772,10 @@ function renderSuggestions() {
   }
 }
 
-/** Close the list and drop any lookup still waiting or on its way. */
+/** Close the list; a lookup still waiting is cancelled, and one already sent is ignored. */
 function closeSuggestions() {
   clearTimeout(suggestTimer);
+  suggestTimer = 0;
   suggestRequest++;
   suggestions = [];
   suggestActive = -1;
@@ -6802,7 +6810,11 @@ zipInput.addEventListener('input', () => {
     try { list = await fetchSuggestions(text); } catch { /* offline or blocked: no list; FIND still works */ }
     // Typed on, searched or left the field meanwhile: this answer is stale.
     if (request !== suggestRequest || document.activeElement !== zipInput) return;
+    suggestTimer = 0;     // nothing pending any more
     suggestions = list;
+    // The arrow keys may have moved through the old list while this one loaded:
+    // that highlight pointed at a row of the old list, not of this one.
+    suggestActive = -1;
     renderSuggestions();
   }, SUGGEST_DELAY_MS);
 });
@@ -7061,6 +7073,9 @@ map.on('click', e => {
 function triggerPinSearch(lat, lng) {
   const gen = ++searchGeneration;
   const coordStr = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  // The field now holds the pin's coordinates: an address list for the old text
+  // (open, or still on its way) no longer belongs to it.
+  closeSuggestions();
   zipInput.value = coordStr;
   setStatus('loading', 'LOCATING…');
   showOverlay('Fetching stations for pin location…');

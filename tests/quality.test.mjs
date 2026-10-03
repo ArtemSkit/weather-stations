@@ -2020,7 +2020,7 @@ test('address suggestions: wiring, keyboard and stale answers', () => {
   const onInput = html.slice(html.indexOf("zipInput.addEventListener('input'"));
   assert.match(onInput, /if \(detectInputType\(text\) !== 'address'\) \{ closeSuggestions\(\); return; \}/);
   assert.match(onInput, /if \(request !== suggestRequest \|\| document\.activeElement !== zipInput\) return;/);
-  assert.match(extractFunction('closeSuggestions'), /clearTimeout\(suggestTimer\);\s*suggestRequest\+\+;/);
+  assert.match(extractFunction('closeSuggestions'), /clearTimeout\(suggestTimer\);\s*suggestTimer = 0;\s*suggestRequest\+\+;/);
   assert.match(extractFunction('doSearch'), /^function doSearch\(knownPlace\) \{\s*\/\/.*\s*closeSuggestions\(\);/);
   assert.match(html, /zipInput\.addEventListener\('blur', closeSuggestions\);/);
   // A click on a row lands before the field loses focus.
@@ -2029,6 +2029,14 @@ test('address suggestions: wiring, keyboard and stale answers', () => {
   assert.match(html, /searchBtn\.addEventListener\('click', \(\) => doSearch\(\)\);/);
   // Enter picks the highlighted row, else searches the text as typed.
   assert.match(html, /if \(suggestActive >= 0\) pickSuggestion\(suggestActive\);\s*else doSearch\(\);/);
+  // A fresh answer drops a highlight moved through the old list meanwhile (it would
+  // point past the new rows: a crash in renderSuggestions, and Enter doing nothing).
+  assert.match(onInput, /suggestTimer = 0;[^\n]*\s*suggestions = list;[\s\S]{0,200}?suggestActive = -1;\s*renderSuggestions\(\);/);
+  // Esc also stops a lookup that hasn't shown its list yet; a closed list leaves none pending.
+  assert.match(html, /\} else if \(e\.key === 'Escape' && \(!suggestList\.hidden \|\| suggestTimer\)\) \{/);
+  assert.match(extractFunction('closeSuggestions'), /suggestTimer = 0;/);
+  // A pin or Locate Me search replaces the field's text, so it closes the list too.
+  assert.match(extractFunction('triggerPinSearch'), /closeSuggestions\(\);\s*zipInput\.value = coordStr;/);
 
   // Arrow keys cycle through the rows and back to "none" at either end.
   const move = vm.runInNewContext(`(() => {
@@ -2047,8 +2055,9 @@ test('address suggestions: wiring, keyboard and stale answers', () => {
 test('a found address is marked with the search pin', () => {
   const search = extractFunction('doSearch');
   assert.match(search, /if \(type === 'address'\) showSearchPin\(place\.lat, place\.lon\);\s*else removeDragPin\(\);/);
-  // A picked suggestion that is already placed skips the second lookup.
-  assert.match(search, /\} else if \(knownPlace\) \{\s*place = knownPlace;/);
+  // A picked suggestion that is already placed skips the second lookup, but still
+  // shows the loading overlay like every other search.
+  assert.match(search, /\} else if \(knownPlace\) \{[\s\S]{0,200}?showOverlay\([^)]*\);\s*place = knownPlace;/);
 });
 
 test('station panel shows readings promptly and formats them cleanly', () => {

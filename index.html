@@ -6420,7 +6420,8 @@ function forecastHourLabel(hour) {
  * (−0.833°: the top of the disc, allowing for the air bending its light) and civil
  * twilight (−6°). The usual low-precision solar formulas (as in NOAA's and
  * SunCalc's calculators): within a minute of the US Naval Observatory's times,
- * two in the far north.
+ * two in the far north, where the first or last day of the polar night can come
+ * out a day off (a few minutes of sun on a day the Observatory gives none).
  * @param {string} dayKey - the place's own date, "2026-10-03"
  * @returns {{sun: (Object|string), light: (Object|string)}|null} each { rise, set }
  *          (ms since 1970), or 'up' (it never sinks that low that day) or 'down'
@@ -6642,17 +6643,36 @@ function forecastRowExtras(parts, extras, point) {
         ? durationLabel(morning.sun.rise - evening.sun.set) + ' from sunset to sunrise'
         : durationLabel(evening.sun.set - morning.sun.rise) + ' of sun';
       facts.push('<p><b>Daylight:</b> ' + steps + ' (' + span + ')</p>');
+    } else if (nightOnly && (typeof evening.sun === 'object' || typeof morning.sun === 'object')) {
+      // The night the midnight sun or polar night starts or ends: one side of it has
+      // a sunset or sunrise and the other doesn't, so each half is told as it is
+      // (Utqiaġvik, May 10: "Sunset 1:50 AM (after midnight) · then the sun stays up").
+      const dusk = typeof evening.sun === 'object';
+      const dawn = typeof morning.sun === 'object';
+      out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>' +
+        (dusk ? 'Sunset ' + atDusk(evening.sun.set) : 'No sunset') + '</span> · ' +
+        (dawn ? '<span aria-hidden="true">🌅 </span>Sunrise ' + atDawn(morning.sun.rise)
+          : morning.sun === 'up' ? 'then the sun stays up' : 'No sunrise');
+      const halves = [
+        ...(dusk ? ['sunset ' + atDusk(evening.sun.set),
+                    typeof evening.light === 'object' && 'last light ' + atDusk(evening.light.set)]
+          : ['no sunset']),
+        ...(dawn ? [typeof morning.light === 'object' && 'first light ' + atDawn(morning.light.rise),
+                    'sunrise ' + atDawn(morning.sun.rise)]
+          : morning.sun === 'up' ? ['then the sun stays up all day']
+          : ['no sunrise: the sun stays down all day' + (typeof morning.light === 'object'
+              ? ', with twilight from ' + atDawn(morning.light.rise) + ' to ' + atDawn(morning.light.set) : '')])
+      ].filter(Boolean).join(' · ');
+      facts.push('<p><b>Daylight:</b> ' + halves + '.</p>');
     } else {
-      // Midnight sun or polar night (on the day, or either side of the night).
-      const sun = typeof evening.sun === 'object' ? morning : evening;
-      const clockOf = sun === evening ? atDusk : atDawn;
-      if (sun.sun === 'up') {
+      // Midnight sun or polar night (all day, or on both sides of the night).
+      if (evening.sun === 'up') {
         out.sun = '<span class="fc-sunset"><span aria-hidden="true">☀️ </span>No sunset</span> — the sun stays up all day';
         facts.push('<p><b>Daylight:</b> the sun stays up all day.</p>');
       } else {
         out.sun = '<span aria-hidden="true">🌑 </span>No sunrise — the sun stays down all day';
-        facts.push('<p><b>Daylight:</b> the sun stays down all day' + (typeof sun.light === 'object'
-          ? '; twilight from ' + clockOf(sun.light.rise) + ' to ' + clockOf(sun.light.set) : '') + '.</p>');
+        facts.push('<p><b>Daylight:</b> the sun stays down all day' + (typeof evening.light === 'object'
+          ? '; twilight from ' + atDusk(evening.light.rise) + ' to ' + atDusk(evening.light.set) : '') + '.</p>');
       }
     }
   }

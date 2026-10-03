@@ -2540,16 +2540,24 @@ async function addressViaNominatim(address, near) {
   // so the user's exact position (e.g. a Locate Me fix) never leaves the device.
   const box = [near.lon - 1, near.lat + 1, near.lon + 1, near.lat - 1].map(n => n.toFixed(1)).join(',');
   const url = `https://nominatim.openstreetmap.org/search`
-            + `?q=${encodeURIComponent(address)}&format=json&limit=1`
+            + `?q=${encodeURIComponent(address)}&format=json&limit=10`
             // Nominatim gives the territories their own country codes (Photon calls them US).
             + `&countrycodes=us,pr,vi,gu,as,mp&viewbox=${box}`;
   // A shorter limit than usual, so a slow Nominatim still leaves Photon time to answer.
   const { response: res, data } = await fetchJsonWithTimeout(
     url, { headers: { 'Accept-Language': 'en' } }, 8000);
   if (!res.ok) throw new Error('Address geocoding request failed');
-  const lat = parseFloat(data?.[0]?.lat);
-  const lon = parseFloat(data?.[0]?.lon);
-  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+  const places = (Array.isArray(data) ? data : [])
+    .map(r => ({ lat: parseFloat(r?.lat), lon: parseFloat(r?.lon) }))
+    .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+  if (!places.length) return null;
+  // Nominatim ranks by fame, not distance, so its first answer to an address
+  // without a town can be across the country ("100 Main St" → Cambridge, MA, with
+  // the map on San Antonio). Take the candidate nearest the map instead.
+  // (Flat-map distance, with longitude shrunk by latitude: plenty to rank them.)
+  const shrink = Math.cos(near.lat * Math.PI / 180);
+  const distance = p => (p.lat - near.lat) ** 2 + ((p.lon - near.lon) * shrink) ** 2;
+  return places.reduce((best, p) => (distance(p) < distance(best) ? p : best));
 }
 
 /**

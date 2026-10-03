@@ -1931,6 +1931,14 @@ test('house numbers go to Nominatim first, names to Photon first, each backed by
   // US and territories only; the map bias is a coarse box, never the exact position.
   assert.match(s.calls[0].url, /&countrycodes=us,pr,vi,gu,as,mp&viewbox=-99\.5,30\.5,-97\.5,28\.5$/);
 
+  // Nominatim ranks by fame: of its candidates, the one nearest the map wins
+  // ("100 Main St" with the map on San Antonio: not Cambridge, MA). Bad rows are skipped.
+  s = make({ nominatim: () => ({ data: [
+    { lat: '42.36', lon: '-71.08' }, { lat: 'x', lon: '-98.4' }, { lat: '28.92', lon: '-98.55' },
+    { lat: '29.70', lon: '-98.12' }] }), photon: street });
+  assert.deepEqual({ ...await s.fn('100 Main St', near) }, { lat: 29.70, lon: -98.12 });
+  assert.match(s.calls[0].url, /&limit=10&/);
+
   // A plain name: Photon first.
   s = make({ nominatim: house, photon: street });
   assert.deepEqual({ ...await s.fn('Enchantment, San Antonio', near) }, { lat: 29.49, lon: -98.37 });

@@ -6703,11 +6703,12 @@ let suggestActive  = -1;   // the row highlighted from the keyboard; -1 = none
  *
  * @param   {Object} feature     - Photon GeoJSON feature
  * @param   {string} houseNumber - The house number typed ('' if none)
+ * @param   {string} query       - The rest of the text, as sent to Photon
  * @returns {{main: string, sub: string, text: string, place: ?{lat: number, lon: number}}|null}
  *          `text` goes into the search field; `place` is null when the house still
  *          has to be looked up (a street with the typed house number)
  */
-function suggestionFromFeature(feature, houseNumber) {
+function suggestionFromFeature(feature, houseNumber, query) {
   const p = feature?.properties || {};
   const [lon, lat] = feature?.geometry?.coordinates || [];
   if (p.countrycode !== 'US' || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
@@ -6716,8 +6717,12 @@ function suggestionFromFeature(feature, houseNumber) {
 
   const isStreet = p.type === 'street';
   const address  = p.housenumber && p.street ? p.housenumber + ' ' + p.street : '';
-  // A street's name is the street itself: give it the house number typed.
-  const houseOnStreet = isStreet && p.name && houseNumber;
+  // What looked like a house number can be the start of the road's own name, typed
+  // in part ("8 Mile Ro…", "8 Mile Detroit" → 8 Mile Road): then this is the road.
+  const nameStart = (houseNumber + ' ' + query.split(/\s+/)[0]).toLowerCase();
+  const isNumberedRoad = Boolean(houseNumber && p.name?.toLowerCase().startsWith(nameStart));
+  // Any other street's name is the street itself: give it the house number typed.
+  const houseOnStreet = isStreet && p.name && houseNumber && !isNumberedRoad;
   const main = houseOnStreet ? houseNumber + ' ' + p.name : (p.name || address);
   if (!main) return null;
   // Photon's postcode belongs to one stretch of the street, not necessarily to the
@@ -6749,7 +6754,7 @@ async function fetchSuggestions(text) {
   if (!response.ok) return [];
   const seen = new Set();
   return (data?.features || [])
-    .map(f => suggestionFromFeature(f, houseNumber))
+    .map(f => suggestionFromFeature(f, houseNumber, query))
     // Photon often lists a street once per piece of road: show it once.
     .filter(s => {
       if (!s || seen.has(s.text)) return false;

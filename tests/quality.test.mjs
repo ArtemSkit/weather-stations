@@ -2037,6 +2037,17 @@ test('address suggestions: US places from Photon, with the typed house number ke
   features = [];
   await fetchSuggestions('8 Mile Rd');
   assert.match(requested.at(-1), /\?q=8%20Mile%20Rd&/);
+  // Typed in part ("8 Mile Ro" reads like house 8), the road is still the road —
+  // never "8 8 Mile Road" — while a house on it keeps its own number.
+  features = [feature({ type: 'street', name: '8 Mile Road', city: 'Detroit', state: 'Michigan', postcode: '48203' })];
+  for (const typed of ['8 Mile Ro', '8 Mile Detroit']) {
+    const [road] = await fetchSuggestions(typed);
+    assert.equal(road.text, '8 Mile Road, Detroit, Michigan 48203', typed);
+    assert.ok(road.place, typed);
+  }
+  const [onRoad] = await fetchSuggestions('1200 8 Mile');
+  assert.equal(onRoad.text, '1200 8 Mile Road, Detroit, Michigan');
+  assert.equal(onRoad.place, null);
 
   // Without a house number a street is placed directly; too little text asks nothing.
   features = [feature({ type: 'street', name: 'El Capitan Street', city: 'San Antonio', state: 'Texas' })];

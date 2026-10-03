@@ -995,6 +995,9 @@ test('the sky row shows the main cloud deck, not just the lowest layer', () => {
 // escapeHtml's regexes contain quote characters that extractFunction's simple
 // tokenizer would read as strings, so take it with a plain match instead.
 const escapeHtmlSource = html.match(/function escapeHtml\(s\) \{[\s\S]*?\r?\n\}/)[0];
+/** The forecast rows' sun, air and pressure helpers, to run in a vm alongside the renderers. */
+const forecastExtrasSource = ['sunTimes', 'isoOffsetMinutes', 'clockLabel', 'durationLabel', 'utcHourKey',
+  'hasAirOrPressure', 'aqiCategory', 'aqiHtml', 'hpaToInHg', 'forecastRowExtras'].map(extractFunction).join('\n');
 
 test('station panel shows what weather.gov would: rounding, calm, clear, feels-like, pressure', () => {
   // Run the real renderWeather (and its helpers) against a stub page.
@@ -3207,6 +3210,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
 
   // The loader follows only NOAA's own /gridpoints/ links and reads both forecasts.
   const requested = [];
+  let extrasAsked = 0;
   const answers = {
     'https://api.weather.gov/points/32.7600,-97.8000': { properties: {
       forecast: 'https://api.weather.gov/gridpoints/FWD/52,104/forecast',
@@ -3223,19 +3227,29 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     ${extractFunction('setBoundedCache')}
     ${extractFunction('degToCompass')}
     ${extractFunction('forecastPlaceLabel')}
+    ${extractFunction('hasAirOrPressure')}
     async ${extractFunction('fetchAreaForecast')}
     return fetchAreaForecast;
   })()`, { URL, Date, fetchJsonWithTimeout: async url => {
     requested.push(url);
     return { response: { ok: url in answers, status: url in answers ? 200 : 500 }, data: answers[url] };
+  }, fetchAirAndPressure: async () => {
+    extrasAsked++;   // the first answer fails entirely; later ones bring the air quality now
+    return { aqi: new Map(), pressure: new Map(), aqiNow: extrasAsked === 1 ? null : 12 };
   } });
   const forecast = await load(32.76, -97.8);
+  assert.equal(forecast.extras.aqiNow, null, 'air and pressure ride along (here: unavailable)');
   // Where it is: distance and direction from the NWS's nearest named place.
   assert.equal(forecast.place, '8 mi NE of Weatherford, TX');
   assert.equal(forecast.days.length, 1);
   assert.equal(forecast.hours.length, 2);
   await load(32.76, -97.8);
   assert.equal(requested.length, 3, 'a second open within minutes reuses the answer');
+  // …but air and pressure missing last time are asked for again, not kept missing.
+  assert.equal(extrasAsked, 2);
+  assert.equal(forecast.extras.aqiNow, 12);
+  await load(32.76, -97.8);
+  assert.equal(extrasAsked, 2, 'once they are in, they are reused too');
   const label = vm.runInNewContext(`(() => { ${extractFunction('degToCompass')} ${extractFunction('forecastPlaceLabel')} return forecastPlaceLabel; })()`);
   const at = (value, bearing, unitCode = 'wmoUnit:m') => ({ properties: { city: 'Boerne', state: 'TX',
     distance: { unitCode, value }, bearing: { value: bearing } } });
@@ -3267,6 +3281,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     ${extractFunction('forecastDayPairs')}
     ${extractFunction('forecastLocalTime')}
     ${extractFunction('forecastHourLabel')}
+    ${forecastExtrasSource}
     ${extractFunction('renderForecastDays')}
     ${extractFunction('renderForecastHours')}
     return { renderForecastDays, renderForecastHours, forecastEmoji, forecastTemp };
@@ -3303,6 +3318,15 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.match(gaps[0], /<span class="fc-temps"><span class="fc-lo">[^]*?Low <\/span>61°<\/span><small>16°C<\/small><\/span>/);
   assert.doesNotMatch(gaps[0], /fc-hi/);
   assert.match(gaps[1], /<span class="fc-temps">—<\/span>/);
+  // Given the place and Open-Meteo's data, the sun line (sunset first) and the air
+  // line close the summary, and their details follow the forecaster's words.
+  const sat = r.renderForecastDays(
+    [day('Saturday', 90, { startTime: '2026-10-03T06:00:00-05:00', endTime: '2026-10-03T18:00:00-05:00' })],
+    { aqi: new Map(Array.from({ length: 12 }, (_, i) => ['2026-10-03T' + (11 + i), { value: 120, pollutant: 'ozone' }])), pressure: new Map() },
+    { lat: 29.42, lon: -98.49 });
+  assert.match(sat, /<span class="fc-sun"><span class="fc-sunset">[^<]*<span aria-hidden="true">🌇 <\/span>Sunset 7:1\d PM<\/span>[^]*?<\/span><span class="fc-air"><span class="fc-aqi fc-aqi-3">AQI 120 Unhealthy for sensitive groups<\/span><\/span><\/summary><p><b>Saturday:<\/b> Saturday details\.<\/p><p><b>Daylight:<\/b>/);
+  // Without them (no place, no data) a row is as before.
+  assert.doesNotMatch(days, /fc-sun|fc-air|Daylight/);
   const now = Date.parse('2026-10-01T22:30:00-05:00');
   const hour = (start, end) => ({ startTime: start, endTime: end, temperature: 70, temperatureUnit: 'F',
     shortForecast: 'Clear', isDaytime: false, probabilityOfPrecipitation: { value: 0 } });
@@ -3316,6 +3340,11 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.deepEqual([...hours.matchAll(/fc-hour-day">([^<]+)</g)].map(m => m[1]), ['Thursday, Oct 1', 'Friday, Oct 2']);
   assert.match(hours, /fc-hour-time">10 PM</);
   assert.match(hours, /fc-hour-time">12 AM</);
+  assert.doesNotMatch(hours, /fc-hour-air/);
+  // Each hour gets its air quality and pressure, matched by UTC hour (23:00 CDT = 04 UTC).
+  const aired = r.renderForecastHours([hour('2026-10-01T23:00:00-05:00', '2026-10-02T00:00:00-05:00')], now,
+    { aqi: new Map([['2026-10-02T04', { value: 44, pollutant: 'ozone' }]]), pressure: new Map([['2026-10-02T04', 1013.25]]) });
+  assert.match(aired, /<span class="fc-hour-air"><span class="fc-aqi fc-aqi-1">AQI 44 Good<\/span> · 29\.92 inHg<\/span>/);
   assert.equal(r.forecastEmoji('Mostly Sunny', true), '⛅');
   assert.equal(r.forecastEmoji('Clear', false), '🌙');
   assert.equal(r.forecastTemp({ temperature: null }), '—');
@@ -3333,11 +3362,12 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   // focus on the search box (FIND on touch screens) instead of the hidden button.
   const panels = { days: { innerHTML: 'old' }, hours: { innerHTML: 'old' } };
   const fctx = { forecastPoint: null, forecastSeq: 3, forecastDialog: { open: true },
-                 fcDays: panels.days, fcHours: panels.hours,
+                 fcDays: panels.days, fcHours: panels.hours, forecastNow: { hidden: false },
                  forecastPlace: { textContent: 'Near Weatherford, TX' }, forecastFoot: { textContent: 'updated' } };
   await vm.runInNewContext(`(async ${extractFunction('openForecast')})`, fctx)();
   assert.match(panels.days.innerHTML, /no area on the map anymore — search for a place first/);
   assert.equal(fctx.forecastPlace.textContent, '', 'no "Near …" for a place that is gone');
+  assert.equal(fctx.forecastNow.hidden, true, '…nor its air quality');
   assert.equal(fctx.forecastFoot.textContent, 'National Weather Service');
   assert.equal(panels.hours.innerHTML, panels.days.innerHTML);
   assert.equal(fctx.forecastSeq, 4);
@@ -3346,6 +3376,156 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   // Phones: the home-bar room is inside the sheet, so a tap there doesn't close it.
   assert.match(html, /\.fc-foot \{ padding-bottom: calc\(8px \+ var\(--safe-bottom\)\); \}/);
   assert.doesNotMatch(html.match(/#forecast-dialog \{\s*width: 100vw;[^}]*\}/)[0], /padding-bottom/);
+});
+
+/** The forecast row helpers (sun, air, pressure) in a vm, with what they lean on. */
+function forecastExtrasKit() {
+  return vm.runInNewContext(`(() => {
+    ${extractFunction('forecastLocalTime')}
+    ${extractFunction('forecastHourLabel')}
+    ${forecastExtrasSource}
+    return { sunTimes, clockLabel, isoOffsetMinutes, durationLabel, aqiCategory, forecastRowExtras };
+  })()`, { Date });
+}
+
+test('sun times match the US Naval Observatory to within a minute', () => {
+  const k = forecastExtrasKit();
+  // Reference times from aa.usno.navy.mil (rise/set and civil twilight), local clock.
+  const near = (ms, offset, hhmm, what) => {
+    const [, h, m, ampm] = /^(\d+):(\d\d) (AM|PM)$/.exec(k.clockLabel(ms, offset));
+    const got = (+h % 12 + (ampm === 'PM' ? 12 : 0)) * 60 + +m;
+    const [H, M] = hhmm.split(':').map(Number);
+    assert.ok(Math.abs(got - (H * 60 + M)) <= 1, `${what}: ${k.clockLabel(ms, offset)} vs ${hhmm}`);
+  };
+  let s = k.sunTimes('2026-10-03', 29.42, -98.49);   // San Antonio, CDT
+  near(s.light.rise, -300, '07:05', 'first light'); near(s.sun.rise, -300, '07:28', 'sunrise');
+  near(s.sun.set, -300, '19:17', 'sunset');          near(s.light.set, -300, '19:41', 'last light');
+  s = k.sunTimes('2026-03-08', 40.71, -74.01);       // New York, the day daylight saving starts
+  near(s.sun.rise, -240, '07:19', 'sunrise'); near(s.sun.set, -240, '18:55', 'sunset');
+  near(s.light.set, -240, '19:23', 'last light');
+  // Utqiaġvik, Alaska: midnight sun in June; in December the sun stays down,
+  // with three hours of twilight around noon.
+  s = k.sunTimes('2026-06-21', 71.29, -156.79);
+  assert.equal(s.sun, 'up'); assert.equal(s.light, 'up');
+  s = k.sunTimes('2026-12-21', 71.29, -156.79);
+  assert.equal(s.sun, 'down');
+  near(s.light.rise, -540, '11:56', 'twilight start'); near(s.light.set, -540, '14:55', 'twilight end');
+  // Next to the date line the times still belong to the date asked for (American Samoa, UTC−11).
+  s = k.sunTimes('2026-10-03', -14.28, -170.7);
+  assert.equal(new Date(s.sun.rise - 660 * 60_000).toISOString().slice(0, 10), '2026-10-03');
+  assert.equal(new Date(s.sun.set - 660 * 60_000).toISOString().slice(0, 10), '2026-10-03');
+  assert.equal(k.sunTimes('soon', 29, -98), null);
+  assert.equal(k.isoOffsetMinutes('2026-10-03T06:00:00-05:00'), -300);
+  assert.equal(k.isoOffsetMinutes('2026-10-03T06:00:00+05:30'), 330);
+  assert.equal(k.isoOffsetMinutes('2026-10-03T06:00:00Z'), 0);
+  assert.equal(k.isoOffsetMinutes('2026-10-03T06:00'), null);
+  assert.equal(k.durationLabel(11 * 3600e3 + 49 * 60e3 + 40e3), '11 h 50 min');
+});
+
+test('forecast rows: sunset first at a glance, then air quality and pressure', () => {
+  const k = forecastExtrasKit();
+  const sa = { lat: 29.42, lon: -98.49 };
+  const parts = [
+    { startTime: '2026-10-03T06:00:00-05:00', endTime: '2026-10-03T18:00:00-05:00' },
+    { startTime: '2026-10-03T18:00:00-05:00', endTime: '2026-10-04T06:00:00-05:00' }
+  ];
+  // Open-Meteo's hours are UTC keys: the row (06:00 CDT to 06:00 CDT next day) is
+  // 2026-10-03T11 … 2026-10-04T10. `hours(n, from, value)` fills n of them.
+  const hours = (n, from, value) => new Map(Array.from({ length: n }, (_, i) =>
+    [new Date(Date.parse(from + ':00:00Z') + i * 3600e3).toISOString().slice(0, 13), value(i)]));
+  const aqi = hours(24, '2026-10-03T11', () => ({ value: 30, pollutant: 'fine particles (PM2.5)' }));
+  aqi.set('2026-10-03T20', { value: 58, pollutant: 'ozone' });     // 3 PM CDT
+  aqi.set('2026-10-03T10', { value: 200, pollutant: 'ozone' });    // 5 AM: before the row
+  aqi.set('2026-10-04T11', { value: 300, pollutant: 'ozone' });    // the next row's
+  const pressure = hours(24, '2026-10-03T11', i => 1020 - i * 0.27);   // 1020 → ~1013.8
+  pressure.set('2026-10-04T08', 1013.4);                             // 3 AM CDT: the low
+  pressure.set('2026-10-04T11', 990);                                // the next row's
+  const extras = { aqi, pressure };
+  const row = k.forecastRowExtras(parts, extras, sa);
+  // Sunset leads, highlighted; sunrise follows.
+  assert.match(row.sun, /^<span class="fc-sunset"><span aria-hidden="true">🌇 <\/span>Sunset 7:1\d PM<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 7:2\d AM$/);
+  assert.match(row.air, /^<span class="fc-aqi fc-aqi-2">AQI 58 Moderate<\/span> · Pressure falling sharply, 30\.12 → 29\.94 inHg$/);
+  // Opened: the whole day in order, twilight included; the air at its worst and why
+  // (at the place's 3 PM, not UTC's); the pressure swing in both units and its low.
+  assert.match(row.facts, /<p><b>Daylight:<\/b> first light 7:0\d AM · sunrise 7:2\d AM · sunset 7:1\d PM · last light 7:4\d PM \(11 h \d+ min of sun\)<\/p>/);
+  assert.match(row.facts, /<p><b>Air quality:<\/b> up to 58, moderate — mostly ozone, worst around 3 PM\. Unusually sensitive people/);
+  assert.match(row.facts, /<p><b>Pressure:<\/b> 30\.12 → 29\.94 inHg \(1020 → 1014 hPa\), falling sharply by 6 hPa; lowest 29\.93 inHg around 3 AM\.<\/p>/);
+
+  // An air-quality forecast ending inside the row: with half the row or more it is
+  // shown and says where it stops; with less, it isn't passed off as the whole day.
+  const half = k.forecastRowExtras(parts, { aqi: hours(13, '2026-10-03T11', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, sa);
+  assert.match(half.facts, /worst around 6 AM; the air-quality forecast runs to 6 PM\./);
+  const few = k.forecastRowExtras(parts, { aqi: hours(3, '2026-10-03T11', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, sa);
+  assert.equal(few.air, '');
+  assert.doesNotMatch(few.facts, /Air quality/);
+  // A small change is "steady", shown as one value; no air data, no air line.
+  const calm = k.forecastRowExtras(parts, { aqi: new Map(), pressure: hours(24, '2026-10-03T11', i => 1016 + i / 23) }, sa);
+  assert.equal(calm.air, 'Pressure steady, 30.02 inHg');
+  assert.match(calm.facts, /\(1016 → 1017 hPa\), steady; lowest/);
+  // The change adds up with the rounded ends shown beside it (2.2 hPa, shown 1013 → 1016).
+  const up = k.forecastRowExtras(parts, { aqi: new Map(), pressure: hours(24, '2026-10-03T11', i => 1013.4 + i * 2.2 / 23) }, sa);
+  assert.match(up.facts, /\(1013 → 1016 hPa\), rising by 3 hPa;/);
+  // The fall-back day: the hours after 2 AM are on CST, so 3 PM CST is 21:00 UTC.
+  const fallBack = [{ startTime: '2026-11-01T06:00:00-06:00', endTime: '2026-11-01T18:00:00-06:00' }];
+  const nov = hours(12, '2026-11-01T12', () => ({ value: 20, pollutant: 'ozone' }));
+  nov.set('2026-11-01T21', { value: 70, pollutant: 'ozone' });
+  assert.match(k.forecastRowExtras(fallBack, { aqi: nov, pressure: new Map() }, sa).facts, /up to 70, moderate — mostly ozone, worst around 3 PM/);
+  // Fairbanks in June: the sunset comes after midnight, and says so.
+  const fairbanks = k.forecastRowExtras([{ startTime: '2026-06-21T06:00:00-08:00', endTime: '2026-06-21T18:00:00-08:00' }], null, { lat: 64.84, lon: -147.72 });
+  assert.match(fairbanks.sun, /Sunset 12:\d\d AM \(after midnight\)<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 2:\d\d AM$/);
+  // Polar summer and winter (Utqiaġvik).
+  const pole = { lat: 71.29, lon: -156.79 };
+  const june = k.forecastRowExtras([{ startTime: '2026-06-21T06:00:00-08:00', endTime: '2026-06-21T18:00:00-08:00' }], null, pole);
+  assert.match(june.sun, /No sunset<\/span> — the sun stays up all day/);
+  const dec = k.forecastRowExtras([{ startTime: '2026-12-21T06:00:00-09:00', endTime: '2026-12-21T18:00:00-09:00' }], null, pole);
+  assert.match(dec.sun, /No sunrise — the sun stays down all day/);
+  assert.match(dec.facts, /twilight from 11:5\d AM to 2:5\d PM/);
+  // Nothing to go on (no place, or a timestamp without its offset): nothing shown.
+  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '' });
+  assert.equal(k.forecastRowExtras([{ startTime: '2026-10-03T06:00', endTime: '2026-10-03T18:00' }], null, sa).sun, '');
+  // EPA categories at their edges.
+  assert.deepEqual([50, 51, 101, 151, 201, 301].map(v => k.aqiCategory(v).level), [1, 2, 3, 4, 5, 6]);
+});
+
+test('air quality and pressure: Open-Meteo, rounded position, never fatal', async () => {
+  const requested = [];
+  let answer = () => ({ ok: true, data: {} });
+  const fetchAirAndPressure = vm.runInNewContext(`(() => {
+    ${html.match(/const OPEN_METEO_AIR\s+= '[^']+';/)[0]}
+    ${html.match(/const OPEN_METEO_FORECAST = '[^']+';/)[0]}
+    ${html.match(/const AQI_POLLUTANTS = \{[\s\S]*?\};/)[0]}
+    async ${extractFunction('fetchAirAndPressure')}
+    return fetchAirAndPressure;
+  })()`, { fetchJsonWithTimeout: async url => {
+    requested.push(url);
+    const r = answer(url);
+    if (r instanceof Error) throw r;
+    return { response: { ok: r.ok }, data: r.data };
+  } });
+  answer = url => url.includes('air-quality')
+    ? { ok: true, data: { current: { us_aqi: 35.6 }, hourly: {
+        time: ['2026-10-03T00:00', '2026-10-03T01:00', '2026-10-03T02:00'],
+        us_aqi: [42, null, 61], us_aqi_pm2_5: [42, null, 20], us_aqi_ozone: [30, null, 61] } } }
+    : { ok: true, data: { hourly: { time: ['2026-10-03T00:00', '2026-10-03T01:00'], pressure_msl: [1016.2, null] } } };
+  const got = await fetchAirAndPressure(29.5312, -98.4712);
+  // About 11 km of rounding: never the exact spot.
+  // …and in UTC hours, which line up with the NWS's across daylight-saving changes
+  // and time-zone lines (the rounded point may fall in the next zone).
+  assert.match(requested[0], /^https:\/\/air-quality-api\.open-meteo\.com\/v1\/air-quality\?latitude=29\.5&longitude=-98\.5&timezone=GMT&/);
+  assert.match(requested[1], /^https:\/\/api\.open-meteo\.com\/v1\/forecast\?latitude=29\.5&longitude=-98\.5&timezone=GMT&forecast_days=8&hourly=pressure_msl$/);
+  assert.equal(got.aqiNow, 36);
+  assert.deepEqual([...got.aqi.keys()], ['2026-10-03T00', '2026-10-03T02'], 'hours without a value are left out');
+  assert.equal(got.aqi.get('2026-10-03T00').pollutant, 'fine particles (PM2.5)');
+  assert.equal(got.aqi.get('2026-10-03T02').pollutant, 'ozone');
+  assert.equal(JSON.stringify([...got.pressure]), '[["2026-10-03T00",1016.2]]');
+  // Credited as the licences ask (Open-Meteo, and CAMS for the air data), or said
+  // to be unavailable when nothing came.
+  assert.match(extractFunction('openForecast'), /hasAirOrPressure\(extras\)\s*\? ' · Air quality &amp; pressure: <a href="https:\/\/open-meteo\.com\/"[^\n]*\n[^\n]*Copernicus CAMS<\/a>\)'\s*: ' · Air quality and pressure are unavailable right now'\);/);
+  // A part that fails is simply empty; nothing throws.
+  answer = url => (url.includes('air-quality') ? new TypeError('Failed to fetch') : { ok: false });
+  const none = await fetchAirAndPressure(29.5, -98.5);
+  assert.equal(none.aqi.size + none.pressure.size, 0);
+  assert.equal(none.aqiNow, null);
 });
 
 test('live alerts: a whole-world view replaces every piece, and date-line zones are drawn once', () => {

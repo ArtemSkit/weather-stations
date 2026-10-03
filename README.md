@@ -40,7 +40,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Dangerous-weather alerts** | Active NWS watches/warnings/advisories for the area in a severity-ranked banner; each alert's footprint drawn on the map; a pulsing red ring on stations inside a warning polygon |
 | **Alert map areas** | Every alert's area drawn as a uniquely-coloured polygon with an event label and a click/tap popup (severity + in-effect time window) |
 | **Live alerts** | One button shows every watch, warning and advisory in the map view, in the NWS map colours, and keeps adding new ones as you pan or zoom |
-| **Forecast** | The **FORECAST** button shows the National Weather Service 7-day and hourly forecast for the searched area |
+| **Forecast** | The **FORECAST** button shows the National Weather Service 7-day and hourly forecast for the searched area, with sunset and sunrise, air quality and pressure |
 | **Sky conditions** | Cloud layer amount and base altitude |
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
@@ -206,8 +206,13 @@ The **RADIUS** button next to LIVE ALERTS (shown while a circle is drawn) turns 
 
 Once an area is loaded, a **FORECAST** button appears in the header. It opens the National Weather Service forecast for the searched point (or, for a `?station=` link, the station's spot) — not a station's: the NWS forecasts on a grid of ~2.5 km squares, and this is the square that point falls in. Its header says where that is the NWS way, from the nearest named place: "8 mi NW of Bulverde, TX" (measured to the place's edge), or "Near San Antonio, TX" within a mile of it or inside it:
 
-- **7 DAYS** — one row per day with the day's **high and the night's low** (↑ 73° ↓ 63°, with °C beneath), the day's sky and the night's ("Night: Mostly Clear"), the higher of the two chances of rain and the wind. A forecast that starts at night ("Tonight") shows that night's low on its own first. Tap a day for the forecaster's full wording for the day and the night ("A slight chance of showers and thunderstorms between 10pm and 1am…").
-- **HOURLY** — the next 48 hours, grouped by day: temperature, chance of rain, sky and wind. Times are the searched place's own clock, even when it is in another time zone than your device.
+- **7 DAYS** — one row per day with the day's **high and the night's low** (↑ 73° ↓ 63°, with °C beneath), the day's sky and the night's ("Night: Mostly Clear"), the higher of the two chances of rain and the wind. Below that, at a glance, the **sunset** (highlighted) and sunrise, then the day's worst **air quality** (US AQI, with the EPA's colour) and the **pressure** trend ("Pressure falling, 30.09 → 29.96 inHg"; "sharply" for a swing of 6 hPa or more). A forecast that starts at night ("Tonight") shows that night's low on its own first. Tap a day for the forecaster's full wording for the day and the night ("A slight chance of showers and thunderstorms between 10pm and 1am…"), then:
+  - **Daylight** — first light, sunrise, sunset and last light (civil twilight: the sun 6° below the horizon, about when it gets too dark to see outdoors without lights), and the hours of sun. Worked out on the device from the date and place, within a minute of the US Naval Observatory's times (two in the far north); the far north's midnight sun and polar night are handled, and a summer sunset after midnight says so.
+  - **Air quality** — the day's highest AQI, which pollutant drives it (ozone, fine particles…), when it peaks, and the EPA's advice for that level.
+  - **Pressure** — from start to end of the day in inHg and hPa, how much it changes, and when it is lowest: useful if pressure swings affect you (headaches, joint pain, blood pressure).
+- **HOURLY** — the next 48 hours, grouped by day: temperature, chance of rain, sky and wind, plus that hour's AQI and pressure. Times are the searched place's own clock, even when it is in another time zone than your device.
+
+The header also shows the **air quality now**. Air quality (about 5 days ahead) and the pressure forecast (8 days) come from [Open-Meteo](https://open-meteo.com/) (free for non-commercial use, no key; credited in the dialog's footer together with Copernicus CAMS, the source of its air data, as their licences ask); the NWS forecast includes neither. They load alongside the NWS forecast with a short timeout; if Open-Meteo can't be reached they are left out, the footer says so, and the next opening asks again. Their hours are matched to the NWS's in UTC, so they line up across daylight-saving changes. A day's air quality is shown only when the forecast covers at least half of it (and says where it stops). The **current** pressure a station measured is in its station panel. Pollen counts aren't included: no free, sign-up-free source covers the US (Open-Meteo's pollen data is Europe-only).
 
 It comes straight from the NWS (free, no key): `/points/{lat},{lon}` names the forecast grid cell, and its two forecast links (only ever NOAA's own) are fetched. A forecast is reused for 10 minutes; when the NWS forecast service hiccups (it sometimes answers an error for a minute or two), a **Try again** button reloads it. On phones it opens as a sheet from the bottom of the screen; Esc, the ✕ or a tap outside closes it.
 
@@ -455,10 +460,11 @@ weather-stations/
 | [NOAA watch/warning/advisory map service](https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer) | Live alerts: every alert area inside the map view, one request per view | No |
 | [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates; house-numbered address → coordinates (+ fallback for other addresses) | No |
 | [Photon (komoot)](https://photon.komoot.io/) | Address suggestions while typing; other addresses → coordinates (+ ZIP and house-number fallback) | No |
+| [Open-Meteo](https://open-meteo.com/) | Forecast air quality (US AQI) and sea-level pressure, sent the map position rounded to ~11 km | No |
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |
 | [Browser Geolocation API](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation_API) | Device GPS | User permission |
 
-> **Resilience:** every network request (geocoding and weather) is capped by a **15-second timeout** (8 seconds for the Nominatim ZIP and address lookups, so their Photon fallback still answers promptly, and for suggestions; 4 seconds for the optional exact-location lookup of a `?station=` link) — a slow or unreachable API aborts cleanly with an error toast instead of leaving the app stuck "loading". Rapid repeat searches are generation-guarded, so a slow earlier request can never overwrite the results of a newer one.
+> **Resilience:** every network request (geocoding and weather) is capped by a **15-second timeout** (8 seconds for the Nominatim ZIP and address lookups, so their Photon fallback still answers promptly, and for suggestions and the Open-Meteo air and pressure data; 4 seconds for the optional exact-location lookup of a `?station=` link) — a slow or unreachable API aborts cleanly with an error toast instead of leaving the app stuck "loading". Rapid repeat searches are generation-guarded, so a slow earlier request can never overwrite the results of a newer one.
 
 ---
 

@@ -164,8 +164,12 @@
   }
   #addr-suggest li .sub { display: block; font-size: 0.68rem; color: var(--text-muted); }
   #addr-suggest li:hover { background: var(--surface2); }
-  /* The keyboard highlight: an accent edge too, so it isn't told by colour alone. */
-  #addr-suggest li[aria-selected="true"] { background: var(--surface2); box-shadow: inset 3px 0 0 var(--accent); }
+  /* The keyboard highlight: an accent edge too, so it isn't told by colour alone.
+     Windows High Contrast drops both, but paints the transparent outline. */
+  #addr-suggest li[aria-selected="true"] {
+    background: var(--surface2); box-shadow: inset 3px 0 0 var(--accent);
+    outline: 2px solid transparent; outline-offset: -2px;
+  }
 
   .search-bar input {
     flex: 1;
@@ -2496,8 +2500,9 @@ async function zipToCoordsViaPhoton(zip5, zipAsTyped) {
 }
 
 /** A leading house number ("6016 Enchantment" → "6016", Queens' "37-12 75th St" →
-    "37-12"), but not "3rd Street". */
-const HOUSE_NUMBER_RE = /^\s*(\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?)\s+(?=\S)/;
+    "37-12", with any dash normalizeSearchText knows), but not "3rd Street", nor
+    the number that starts a road name like Detroit's "8 Mile Rd". */
+const HOUSE_NUMBER_RE = /^\s*(\d+[A-Za-z]?(?:[-‐-―−﹣－]\d+[A-Za-z]?)?)\s+(?!mile\b)(?=\S)/i;
 
 /**
  * Convert a free-form street address to coordinates with the two free, key-less

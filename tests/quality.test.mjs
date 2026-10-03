@@ -1956,6 +1956,17 @@ test('house numbers go to Nominatim first, names to Photon first, each backed by
   s = make({ nominatim: house, photon: street });
   await s.fn('37-12 75th St, Queens, NY', near);
   assert.deepEqual(s.calls.map(c => c.which), ['nominatim']);
+  s = make({ nominatim: house, photon: street });
+  await s.fn('37‐12 75th St, Queens, NY', near);   // a pasted typographic hyphen
+  assert.deepEqual(s.calls.map(c => c.which), ['nominatim']);
+  // Detroit's "8 Mile Rd" is a road name, not house 8 on "Mile Rd"…
+  s = make({ nominatim: house, photon: street });
+  await s.fn('8 Mile Rd, Detroit', near);
+  assert.deepEqual(s.calls.map(c => c.which), ['photon']);
+  // …but a house on it still counts.
+  s = make({ nominatim: house, photon: street });
+  await s.fn('1200 8 Mile Rd, Detroit', near);
+  assert.deepEqual(s.calls.map(c => c.which), ['nominatim']);
 
   // Nothing at the first, or the first unreachable: the other one answers.
   s = make({ nominatim: () => ({ data: [] }), photon: street });
@@ -2009,6 +2020,11 @@ test('address suggestions: US places from Photon, with the typed house number ke
   // The street still needs its house found (by the normal search); the rest are placed.
   assert.equal(list[0].place, null);
   assert.deepEqual({ ...list[1].place }, { lat: 29.46, lon: -98.47 });
+
+  // "8 Mile" is the road's own name: the whole of it is asked for.
+  features = [];
+  await fetchSuggestions('8 Mile Rd');
+  assert.match(requested.at(-1), /\?q=8%20Mile%20Rd&/);
 
   // Without a house number a street is placed directly; too little text asks nothing.
   features = [feature({ type: 'street', name: 'El Capitan Street', city: 'San Antonio', state: 'Texas' })];
@@ -2131,7 +2147,19 @@ test('address suggestions: a typing session, run for real', async () => {
   await done;
   assert.deepEqual(state(), { pending: false, rows: 0, active: -1 });
 
-  // A ZIP asks nothing and leaves nothing pending (so Esc isn't held back).
+  // Focus moved away without a blur reaching the field: the answer is still dropped.
+  type('Oak');
+  done = pause();
+  ctx.document.activeElement = {};
+  pending.shift().answer(rows(4));
+  await done;
+  assert.equal(state().rows, 0);
+  ctx.document.activeElement = zipInput;
+
+  // Turning the text into a ZIP cancels the lookup waiting for its pause, and
+  // leaves nothing pending (so Esc isn't held back).
+  type('Pine');
+  assert.equal(state().pending, true);
   type('78218');
   assert.deepEqual(state(), { pending: false, rows: 0, active: -1 });
   assert.equal(timers.size, 0);

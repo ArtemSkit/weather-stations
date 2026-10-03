@@ -11,6 +11,7 @@
   ║  • NOAA Weather.gov public API — station list + live observations.          ║
   ║  • Nominatim (OSM) — free ZIP and house-number geocoding (no key).          ║
   ║  • Photon (OSM) — free, typo-tolerant address geocoding and suggestions.    ║
+  ║  • Open-Meteo — free air-quality and pressure forecasts (no key).           ║
   ║  • Service Worker (external sw.js) — offline caching for the app shell      ║
   ║    so it loads even without a network connection; also delivers updates.    ║
   ║  • Web App Manifest (external manifest.json) — enables the browser's        ║
@@ -859,7 +860,7 @@
   .fc-day.fc-night { background: rgba(255,255,255,0.025); }
   .fc-day summary {
     display: grid; grid-template-columns: 32px 1fr auto;
-    grid-template-areas: "icon name temp" "icon short short" "icon meta meta";
+    grid-template-areas: "icon name temp" "icon short short" "icon meta meta" "icon sun sun" "icon air air";
     gap: 2px 10px; padding: 10px 16px; cursor: pointer; list-style: none;
   }
   .fc-day summary::-webkit-details-marker { display: none; }
@@ -882,6 +883,22 @@
   }
   .fc-night-sky { display: block; color: var(--text-muted); font-size: 0.7rem; }
   .fc-meta { grid-area: meta; font-size: 0.66rem; color: var(--text-muted); }
+  /* Sun, air and pressure lines: the sunset stands out (warm, bold), the rest is quiet. */
+  .fc-sun, .fc-air { font-size: 0.66rem; color: var(--text-muted); }
+  .fc-sun { grid-area: sun; }
+  .fc-air { grid-area: air; }
+  .fc-sunset { color: #ffb37a; font-weight: 700; font-size: 0.74rem; }
+  /* AQI: a dot in the EPA's colour for the category (the words say it too). */
+  .fc-aqi::before {
+    content: ''; display: inline-block; width: 0.6em; height: 0.6em; margin-right: 4px;
+    border-radius: 50%; vertical-align: 0.02em; background: var(--aqi);
+    outline: 1px solid rgba(255,255,255,0.35);   /* the dark purple and maroon need an edge here */
+  }
+  .fc-aqi-1 { --aqi: #00e400; } .fc-aqi-2 { --aqi: #ffff00; } .fc-aqi-3 { --aqi: #ff7e00; }
+  .fc-aqi-4 { --aqi: #ff0000; } .fc-aqi-5 { --aqi: #8f3f97; } .fc-aqi-6 { --aqi: #7e0023; }
+  .fc-now { margin-top: 3px; font-size: 0.7rem; }
+  .fc-foot a { color: var(--accent); white-space: nowrap; }   /* not split at "Open-|Meteo" */
+  .fc-hour-air { display: block; font-size: 0.66rem; }
   .fc-day p { margin: 0; padding: 0 16px 12px 58px; font-size: 0.74rem; line-height: 1.55; color: var(--text-muted); }
   .fc-day p b { color: var(--text); font-weight: 700; }
   /* Hourly: a day heading that stays in view, then one line per hour. */
@@ -1674,7 +1691,8 @@
 
 <!--
   Forecast for the searched area (section 14D): the National Weather Service's
-  7-day forecast (a day and a night period each) and its hourly forecast. A modal
+  7-day forecast (a day and a night period each) and its hourly forecast, with
+  sunset/sunrise, air quality and pressure, and the air quality now. A modal
   dialog: Esc, the ✕ or a click outside closes it, and focus returns to FORECAST.
 -->
 <dialog id="forecast-dialog" aria-labelledby="forecast-title">
@@ -1683,6 +1701,7 @@
       <div>
         <h2 id="forecast-title">FORECAST</h2>
         <div class="fc-place" id="forecast-place"></div>
+        <div class="fc-now" id="forecast-now" hidden></div>
       </div>
       <button type="button" class="fc-close" id="forecast-close" aria-label="Close the forecast">✕</button>
     </div>
@@ -6217,7 +6236,8 @@ try {
    forecast (14 day and night periods in words) and an hourly forecast (~6.5
    days). Both are free and key-less: /points/{lat},{lon} names the forecast grid
    cell, whose two forecast URLs are then fetched. FORECAST in the header opens
-   them for the searched point (or a ?station link's station).
+   them for the searched point (or a ?station link's station), with the sun times
+   (computed here), air quality and pressure (Open-Meteo) added to them.
    ───────────────────────────────────────────────────────────────────────────── */
 
 /** How long a loaded forecast is reused: NWS refreshes its grids about hourly. */
@@ -6233,6 +6253,7 @@ let forecastSeq = 0;
 const forecastBtn    = document.getElementById('forecast-btn');
 const forecastDialog = document.getElementById('forecast-dialog');
 const forecastPlace  = document.getElementById('forecast-place');
+const forecastNow    = document.getElementById('forecast-now');
 const forecastFoot   = document.getElementById('forecast-foot');
 const fcTabDays      = document.getElementById('fc-tab-days');
 const fcTabHours     = document.getElementById('fc-tab-hours');
@@ -6254,14 +6275,22 @@ function clearForecastPoint() {
 /**
  * Load the 7-day and hourly forecasts for a point (cached for a few minutes).
  * Only follows NOAA's own /gridpoints/ links from the /points answer.
- * @returns {Promise<{at:number, place:string, days:Object[], hours:Object[], updated:string}>}
+ * @returns {Promise<{at:number, place:string, days:Object[], hours:Object[], updated:string, extras:Object}>}
  * @throws {Error} with a short, readable reason
  */
 async function fetchAreaForecast(lat, lon) {
   const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
   const hit = forecastViewCache.get(key);
-  if (hit && Date.now() - hit.at < FORECAST_VIEW_TTL_MS) return hit;
+  if (hit && Date.now() - hit.at < FORECAST_VIEW_TTL_MS) {
+    // Air and pressure that couldn't be had last time are asked for again,
+    // rather than kept missing for as long as the NWS forecast is reused.
+    if (!hasAirOrPressure(hit.extras)) hit.extras = await fetchAirAndPressure(lat, lon);
+    return hit;
+  }
 
+  // Air quality and pressure (Open-Meteo) load alongside the NWS forecast. They
+  // never fail it: a part that can't be had is just left out (see the function).
+  const extrasLoad = fetchAirAndPressure(lat, lon);
   const { response: ptRes, data: point } = await fetchJsonWithTimeout(`https://api.weather.gov/points/${key}`);
   if (ptRes.status === 404) throw new Error('the NWS has no forecast here — coverage is US only');
   if (!ptRes.ok) throw new Error(`the NWS answered HTTP ${ptRes.status}`);
@@ -6280,7 +6309,8 @@ async function fetchAreaForecast(lat, lon) {
   const result = {
     at: Date.now(), days, hours,
     place: forecastPlaceLabel(props.relativeLocation),
-    updated: answers[0].data?.properties?.updateTime || ''
+    updated: answers[0].data?.properties?.updateTime || '',
+    extras: await extrasLoad
   };
   setBoundedCache(forecastViewCache, key, result, FORECAST_VIEW_CACHE_LIMIT);
   return result;
@@ -6376,13 +6406,284 @@ function forecastHourLabel(hour) {
   return `${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'}`;
 }
 
+/* ── Sun, air quality and pressure ───────────────────────────────────────────
+   Sunrise, sunset and civil twilight — "first light" and "last light", when the
+   sun is 6° below the horizon and it is still light enough to see outdoors — are
+   worked out on the device from the date and the place: nothing to download.
+   Air quality (the US AQI) and the pressure forecast come from Open-Meteo (free,
+   no key), since the NWS forecast has neither. */
+
+/**
+ * When the sun crosses two altitudes on a local date at a place: rise and set
+ * (−0.833°: the top of the disc, allowing for the air bending its light) and civil
+ * twilight (−6°). The usual low-precision solar formulas (as in NOAA's and
+ * SunCalc's calculators): within a minute of the US Naval Observatory's times,
+ * two in the far north.
+ * @param {string} dayKey - the place's own date, "2026-10-03"
+ * @returns {{sun: (Object|string), light: (Object|string)}|null} each { rise, set }
+ *          (ms since 1970), or 'up' (it never sinks that low that day) or 'down'
+ *          (it never climbs that high: polar night, or no twilight)
+ */
+function sunTimes(dayKey, lat, lon) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey || '');
+  if (!m || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const rad = Math.PI / 180, dayMs = 864e5;
+  const j2000 = 10957.5;   // 2000-01-01 12:00 UTC, in days since 1970
+  const lw = -lon * rad, phi = lat * rad;
+  // Days from J2000 to the place's mean noon on that date (its clock aside), so
+  // the solar noon found below always falls on that date, even near ±180°.
+  const days = Date.UTC(+m[1], +m[2] - 1, +m[3], 12) / dayMs - lon / 360 - j2000;
+  const cycle = Math.round(days - lw / (2 * Math.PI));
+  // (SunCalc adds 0.0009 day here too; that put every time ~1 min later than the
+  // US Naval Observatory's. The sunrise equation proper uses it for the day count only.)
+  const approxNoon = lw / (2 * Math.PI) + cycle;
+  const anomaly = rad * (357.5291 + 0.98560028 * approxNoon);
+  const centre = rad * (1.9148 * Math.sin(anomaly) + 0.02 * Math.sin(2 * anomaly) + 0.0003 * Math.sin(3 * anomaly));
+  const eclipticLon = anomaly + centre + rad * 102.9372 + Math.PI;
+  const declination = Math.asin(Math.sin(rad * 23.4397) * Math.sin(eclipticLon));
+  const noon = approxNoon + 0.0053 * Math.sin(anomaly) - 0.0069 * Math.sin(2 * eclipticLon);
+  const toMs = d => (d + j2000) * dayMs;
+  const crossing = altitude => {
+    const cosHour = (Math.sin(altitude * rad) - Math.sin(phi) * Math.sin(declination)) /
+                    (Math.cos(phi) * Math.cos(declination));
+    if (cosHour < -1) return 'up';
+    if (cosHour > 1) return 'down';
+    const half = Math.acos(cosHour) / (2 * Math.PI);   // half the time above it, in days
+    return { rise: toMs(noon - half), set: toMs(noon + half) };
+  };
+  return { sun: crossing(-0.833), light: crossing(-6) };
+}
+
+/** A timestamp's offset from UTC in minutes ("…-05:00" → -300), or null without one. */
+function isoOffsetMinutes(iso) {
+  const m = /(?:([+-])(\d{2}):?(\d{2})|Z)$/.exec(iso || '');
+  if (!m) return null;
+  return m[1] ? (m[1] === '-' ? -1 : 1) * (+m[2] * 60 + +m[3]) : 0;
+}
+
+/**
+ * "7:24 AM": a moment on the place's own clock, `offset` minutes from UTC (taken
+ * from the forecast's timestamps, so daylight saving time is already in it).
+ */
+function clockLabel(ms, offset) {
+  const t = new Date(Math.round(ms / 60_000) * 60_000 + offset * 60_000);
+  const h = t.getUTCHours();
+  return (h % 12 || 12) + ':' + String(t.getUTCMinutes()).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+}
+
+/** "11 h 48 min" for a span of time. */
+function durationLabel(ms) {
+  const minutes = Math.round(ms / 60_000);
+  return Math.floor(minutes / 60) + ' h ' + (minutes % 60) + ' min';
+}
+
+const OPEN_METEO_AIR      = 'https://air-quality-api.open-meteo.com/v1/air-quality';
+const OPEN_METEO_FORECAST = 'https://api.open-meteo.com/v1/forecast';
+/** The pollutants Open-Meteo rates on the US AQI scale; the worst one sets the AQI. */
+const AQI_POLLUTANTS = {
+  us_aqi_pm2_5: 'fine particles (PM2.5)', us_aqi_pm10: 'coarse particles (PM10)',
+  us_aqi_ozone: 'ozone', us_aqi_nitrogen_dioxide: 'nitrogen dioxide',
+  us_aqi_sulphur_dioxide: 'sulfur dioxide', us_aqi_carbon_monoxide: 'carbon monoxide'
+};
+
+/** Whether fetchAirAndPressure's answer has anything in it. */
+function hasAirOrPressure(extras) {
+  return Boolean(extras && (extras.aqiNow != null || extras.aqi.size || extras.pressure.size));
+}
+
+/** The UTC hour a timestamp falls in, as a key ("2026-10-03T20"); '' if unreadable. */
+function utcHourKey(iso) {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 13) : '';
+}
+
+/**
+ * Air quality (US AQI, about 5 days ahead) and sea-level pressure (8 days ahead)
+ * for a point, by UTC hour ("2026-10-03T20", as utcHourKey gives for the NWS's
+ * times). Never throws: either part that fails is simply empty, and the NWS
+ * forecast shows without it.
+ * @returns {Promise<{aqi: Map<string,{value:number, pollutant:string}>,
+ *                    pressure: Map<string,number>, aqiNow: ?number}>}
+ */
+async function fetchAirAndPressure(lat, lon) {
+  // Rounded to ~11 km like every other third-party request (and both grids are coarser).
+  // UTC times, not the place's clock: Open-Meteo gives a whole answer one UTC offset
+  // (today's, wrong across a daylight-saving change), and the rounded point can
+  // even fall in the next time zone. UTC hours always line up with the NWS's.
+  const where = '?latitude=' + lat.toFixed(1) + '&longitude=' + lon.toFixed(1) + '&timezone=GMT';
+  const get = url => fetchJsonWithTimeout(url, {}, 8000)
+    .then(({ response, data }) => (response.ok ? data : null), () => null);
+  const [air, sky] = await Promise.all([
+    get(OPEN_METEO_AIR + where + '&forecast_days=7&current=us_aqi&hourly=us_aqi,' + Object.keys(AQI_POLLUTANTS).join(',')),
+    get(OPEN_METEO_FORECAST + where + '&forecast_days=8&hourly=pressure_msl')
+  ]);
+  // Open-Meteo lists each hour as "2026-10-03T20:00" (UTC, as asked).
+  const byHour = (data, read) => {
+    const hourly = data?.hourly, out = new Map();
+    (Array.isArray(hourly?.time) ? hourly.time : []).forEach((time, i) => {
+      const value = read(hourly, i);
+      if (value != null) out.set(String(time).slice(0, 13), value);
+    });
+    return out;
+  };
+  const aqi = byHour(air, (hourly, i) => {
+    const value = hourly.us_aqi?.[i];
+    if (!Number.isFinite(value)) return null;
+    // The pollutant with the highest index of its own is the one setting the AQI.
+    let worst = '', worstValue = -1;
+    for (const key of Object.keys(AQI_POLLUTANTS)) {
+      const own = hourly[key]?.[i];
+      if (Number.isFinite(own) && own > worstValue) { worst = AQI_POLLUTANTS[key]; worstValue = own; }
+    }
+    return { value: Math.round(value), pollutant: worst };
+  });
+  const pressure = byHour(sky, (hourly, i) =>
+    (Number.isFinite(hourly.pressure_msl?.[i]) ? hourly.pressure_msl[i] : null));
+  const now = air?.current?.us_aqi;
+  return { aqi, pressure, aqiNow: Number.isFinite(now) ? Math.round(now) : null };
+}
+
+/**
+ * The EPA's AQI category for a value: its name, a level for the colour (1–6) and
+ * the EPA's own advice, shortened.
+ */
+function aqiCategory(value) {
+  const levels = [
+    [50, 'Good', 'Air quality is fine for everyone.'],
+    [100, 'Moderate', 'Unusually sensitive people should consider less long or heavy exertion outdoors.'],
+    [150, 'Unhealthy for sensitive groups', 'People with heart or lung disease (asthma included), older adults and children should cut down on long or heavy exertion outdoors.'],
+    [200, 'Unhealthy', 'Everyone should cut down on long or heavy exertion outdoors; sensitive groups should avoid it.'],
+    [300, 'Very unhealthy', 'Sensitive groups should avoid all activity outdoors; everyone else should avoid long or heavy exertion.'],
+    [Infinity, 'Hazardous', 'Everyone should avoid all exertion outdoors.']
+  ];
+  const index = levels.findIndex(([top]) => value <= top);
+  return { label: levels[index][1], level: index + 1, advice: levels[index][2] };
+}
+
+/** "AQI 42 Good" as HTML, with a dot in the EPA's colour for the category. */
+function aqiHtml(value) {
+  const category = aqiCategory(value);
+  return '<span class="fc-aqi fc-aqi-' + category.level + '">AQI ' + value + ' ' + category.label + '</span>';
+}
+
+/** Sea-level pressure in hPa as inHg ("30.01"), the unit the station panel shows. */
+function hpaToInHg(hpa) {
+  return (hpa / 33.86389).toFixed(2);
+}
+
+/**
+ * A forecast row's sun, air and pressure facts: the summary lines (a glance) and
+ * the paragraphs shown when the row is opened.
+ * @param {Object[]} parts   - the row's NWS periods (a day and its night, or one)
+ * @param {Object}  [extras] - fetchAirAndPressure's answer
+ * @param {{lat:number, lon:number}} [point] - where the forecast is
+ * @returns {{sun: string, air: string, facts: string}} HTML ('' where nothing is known)
+ */
+function forecastRowExtras(parts, extras, point) {
+  const first = parts[0], last = parts[parts.length - 1];
+  const out = { sun: '', air: '', facts: '' };
+  const facts = [];
+
+  // Sun: for the date the row starts on, on the place's own clock.
+  const when = forecastLocalTime(first?.startTime);
+  const offset = isoOffsetMinutes(first?.startTime);
+  const sun = when && offset != null && point && sunTimes(when.dayKey, point.lat, point.lon);
+  if (sun) {
+    // In the far north a summer sunset can come after midnight: say so.
+    const clock = ms => {
+      const date = new Date(ms + offset * 60_000).toISOString().slice(0, 10);
+      return clockLabel(ms, offset) +
+        (date > when.dayKey ? ' (after midnight)' : date < when.dayKey ? ' (the evening before)' : '');
+    };
+    const twilight = typeof sun.light === 'object';
+    if (typeof sun.sun === 'object') {
+      // Sunset first and brightest: the time most people look for at a glance.
+      out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>Sunset ' + clock(sun.sun.set) +
+                '</span> · <span aria-hidden="true">🌅 </span>Sunrise ' + clock(sun.sun.rise);
+      // Opened: the whole day in order, twilight included ("last light" is when it
+      // gets too dark to see outdoors without lights, some 25 minutes after sunset).
+      const steps = [
+        twilight && 'first light ' + clock(sun.light.rise),
+        'sunrise ' + clock(sun.sun.rise),
+        'sunset ' + clock(sun.sun.set),
+        twilight ? 'last light ' + clock(sun.light.set) : sun.light === 'up' && 'light all night'
+      ].filter(Boolean).join(' · ');
+      facts.push('<p><b>Daylight:</b> ' + steps + ' (' + durationLabel(sun.sun.set - sun.sun.rise) +
+        ' of sun)</p>');
+    } else if (sun.sun === 'up') {
+      out.sun = '<span class="fc-sunset"><span aria-hidden="true">☀️ </span>No sunset</span> — the sun stays up all day';
+      facts.push('<p><b>Daylight:</b> the sun stays up all day.</p>');
+    } else {
+      out.sun = '<span aria-hidden="true">🌑 </span>No sunrise — the sun stays down all day';
+      facts.push('<p><b>Daylight:</b> the sun stays down all day' + (twilight
+        ? '; twilight from ' + clock(sun.light.rise) + ' to ' + clock(sun.light.set) : '') + '.</p>');
+    }
+  }
+
+  // Air and pressure: the hours the row covers, from its first period's start to
+  // its last one's end, as UTC hour keys (in which string order is time order).
+  const from = utcHourKey(first?.startTime), to = utcHourKey(last?.endTime);
+  const rowHours = (Date.parse(last?.endTime) - Date.parse(first?.startTime)) / 3_600_000;
+  // A forecast that runs out early in the row would pass a few hours off as the
+  // whole day (the afternoon's ozone peak missing): it needs half the row or more.
+  const within = map => {
+    const hours = [...(map || new Map())].filter(([key]) => key >= from && key < to);
+    return hours.length * 2 >= rowHours ? hours : [];
+  };
+  // "3 PM": a UTC hour key on the place's clock (the offset of the period it is in).
+  const hourOf = key => {
+    const ms = Date.parse(key + ':00:00Z');
+    const part = parts.find(p => ms >= Date.parse(p.startTime) && ms < Date.parse(p.endTime)) || first;
+    const partOffset = isoOffsetMinutes(part?.startTime) ?? offset ?? 0;
+    return forecastHourLabel(new Date(ms + partOffset * 60_000).getUTCHours());
+  };
+  // "; the air-quality forecast runs to 8 AM" when it ends inside the row.
+  const runsOut = (hours, what) => (hours.length < rowHours
+    ? '; the ' + what + ' forecast runs to ' + hourOf(hours[hours.length - 1][0]) : '');
+
+  const air = within(extras?.aqi);
+  if (air.length) {
+    const [worstKey, worst] = air.reduce((a, b) => (b[1].value > a[1].value ? b : a));
+    const category = aqiCategory(worst.value);
+    out.air = aqiHtml(worst.value);
+    facts.push('<p><b>Air quality:</b> up to ' + worst.value + ', ' + category.label.toLowerCase() +
+      (worst.pollutant ? ' — mostly ' + worst.pollutant : '') + ', worst around ' + hourOf(worstKey) +
+      runsOut(air, 'air-quality') + '. ' + category.advice + '</p>');
+  }
+
+  const pressure = within(extras?.pressure);
+  if (pressure.length) {
+    const start = pressure[0][1], end = pressure[pressure.length - 1][1];
+    const change = end - start;
+    // Over a day, a couple of hPa is the normal ebb and flow; 6 or more is a big swing.
+    const trend = Math.abs(change) < 2 ? 'steady' : (change > 0 ? 'rising' : 'falling') +
+      (Math.abs(change) >= 6 ? ' sharply' : '');
+    const [lowKey, low] = pressure.reduce((a, b) => (b[1] < a[1] ? b : a));
+    const span = trend === 'steady' ? hpaToInHg((start + end) / 2) + ' inHg'
+      : hpaToInHg(start) + ' → ' + hpaToInHg(end) + ' inHg';
+    out.air += (out.air ? ' · ' : '') + 'Pressure ' + trend + ', ' + span;
+    // The change is told from the rounded ends, so it adds up with the numbers beside it.
+    facts.push('<p><b>Pressure:</b> ' + hpaToInHg(start) + ' → ' + hpaToInHg(end) + ' inHg (' +
+      Math.round(start) + ' → ' + Math.round(end) + ' hPa), ' + trend +
+      (trend === 'steady' ? '' : ' by ' + Math.abs(Math.round(end) - Math.round(start)) + ' hPa') +
+      '; lowest ' + hpaToInHg(low) + ' inHg around ' + hourOf(lowKey) + runsOut(pressure, 'pressure') + '.</p>');
+  }
+
+  out.facts = facts.join('');
+  return out;
+}
+
 /**
  * The 7-day forecast as one row per day: the day's sky, its high and the night's
  * low (↑ 73° ↓ 63°, with °C below), the night's sky, the higher of the two rain
- * chances and the day's wind. Each row opens to the forecaster's full wording
- * for the day and the night.
+ * chances and the day's wind, then the sunset and sunrise, and the air quality
+ * and pressure where known. Each row opens to the forecaster's full wording for
+ * the day and the night, then the daylight, air and pressure in detail.
+ * @param {Object[]} periods - the NWS 7-day periods
+ * @param {Object}  [extras] - fetchAirAndPressure's answer
+ * @param {{lat:number, lon:number}} [point] - where the forecast is (for the sun)
  */
-function renderForecastDays(periods) {
+function renderForecastDays(periods, extras, point) {
   if (!periods.length) return '<p class="fc-empty">The NWS sent no forecast periods.</p>';
   return forecastDayPairs(periods).map(({ day, night }) => {
     const main = day || night;   // the day's own period, or a night on its own
@@ -6402,18 +6703,25 @@ function renderForecastDays(periods) {
       ? '<span class="fc-night-sky">Night: ' + escapeHtml(night.shortForecast) + '</span>' : '';
     const words = [day, night].filter(Boolean).map(p =>
       '<p><b>' + escapeHtml(p.name || '') + ':</b> ' + escapeHtml(p.detailedForecast || '') + '</p>').join('');
+    const more = forecastRowExtras([day, night].filter(Boolean), extras, point);
     return '<details class="fc-day' + (day ? '' : ' fc-night') + '"><summary>' +
         '<span class="fc-icon" aria-hidden="true">' + forecastEmoji(main.shortForecast, !!day) + '</span>' +
         '<span class="fc-name">' + escapeHtml(main.name || '') + '</span>' +
         '<span class="fc-temps">' + (temps.length ? temps.join('') + '<small>' + celsius + 'C</small>' : '—') + '</span>' +
         '<span class="fc-short">' + escapeHtml(main.shortForecast || '') + nightSky + '</span>' +
         (meta ? '<span class="fc-meta">' + meta + '</span>' : '') +
-      '</summary>' + words + '</details>';
+        (more.sun ? '<span class="fc-sun">' + more.sun + '</span>' : '') +
+        (more.air ? '<span class="fc-air">' + more.air + '</span>' : '') +
+      '</summary>' + words + more.facts + '</details>';
   }).join('');
 }
 
-/** The next 48 hours (hours already over are skipped), under a heading per day. */
-function renderForecastHours(periods, now = Date.now()) {
+/**
+ * The next 48 hours (hours already over are skipped), under a heading per day;
+ * each hour with its air quality and pressure where known.
+ * @param {Object}  [extras] - fetchAirAndPressure's answer
+ */
+function renderForecastHours(periods, now = Date.now(), extras) {
   const upcoming = periods.filter(period => Date.parse(period?.endTime) > now).slice(0, 48);
   if (!upcoming.length) return '<p class="fc-empty">The NWS sent no hourly forecast.</p>';
   let lastDay = '';
@@ -6427,12 +6735,19 @@ function renderForecastHours(periods, now = Date.now()) {
     const pop = period.probabilityOfPrecipitation?.value;
     const wind = [period.windDirection, period.windSpeed].filter(Boolean).join(' ');
     const popText = pop != null ? '💧' + Math.round(pop) + '%' : '';
+    // The same hour in Open-Meteo's lists, by UTC ("2026-10-03T20").
+    const key = utcHourKey(period.startTime);
+    const air = extras?.aqi?.get(key);
+    const hpa = extras?.pressure?.get(key);
+    const more = [air ? aqiHtml(air.value) : '', hpa != null ? hpaToInHg(hpa) + ' inHg' : '']
+      .filter(Boolean).join(' · ');
     return `${heading}<li class="fc-hour">
       <span class="fc-hour-time">${when ? forecastHourLabel(when.hour) : ''}</span>
       <span class="fc-icon" aria-hidden="true">${forecastEmoji(period.shortForecast, period.isDaytime)}</span>
       <span class="fc-temp">${forecastTemp(period)}</span>
       <span class="fc-hour-pop">${popText}</span>
-      <span class="fc-hour-short">${escapeHtml([period.shortForecast, wind].filter(Boolean).join(' · '))}</span>
+      <span class="fc-hour-short">${escapeHtml([period.shortForecast, wind].filter(Boolean).join(' · '))}` +
+        (more ? '<span class="fc-hour-air">' + more + '</span>' : '') + `</span>
     </li>`;
   });
   return `<ul class="fc-hours">${rows.join('')}</ul>`;
@@ -6468,26 +6783,40 @@ async function openForecast() {
     if (forecastDialog.open) {
       forecastSeq++;   // and ignore the answer still on its way for the old area
       forecastPlace.textContent = '';   // no "Near …" for a place that's gone
+      forecastNow.hidden = true;        // …nor its air quality
       forecastFoot.textContent = 'National Weather Service';
       fcDays.innerHTML = fcHours.innerHTML =
         '<p class="fc-empty">There is no area on the map anymore — search for a place first.</p>';
     }
     return;
   }
-  const { lat, lon } = forecastPoint;
+  const point = forecastPoint;
+  const { lat, lon } = point;
   const seq = ++forecastSeq;
   forecastPlace.textContent = `Near ${lat.toFixed(3)}, ${lon.toFixed(3)}`;
   forecastFoot.textContent = 'National Weather Service';
+  forecastNow.hidden = true;   // the last place's air doesn't describe this one
   fcDays.innerHTML = fcHours.innerHTML = '<p class="fc-empty">Loading the forecast…</p>';
   if (!forecastDialog.open) forecastDialog.showModal();
   try {
     const forecast = await fetchAreaForecast(lat, lon);
     if (seq !== forecastSeq || !forecastDialog.open) return;   // closed, or opened again
     if (forecast.place) forecastPlace.textContent = forecast.place;
-    fcDays.innerHTML = renderForecastDays(forecast.days);
-    fcHours.innerHTML = renderForecastHours(forecast.hours);
-    forecastFoot.textContent = 'National Weather Service' +
-      (forecast.updated ? ` · updated ${formatWhen(forecast.updated)}` : '');
+    const extras = forecast.extras;
+    fcDays.innerHTML = renderForecastDays(forecast.days, extras, point);
+    fcHours.innerHTML = renderForecastHours(forecast.hours, Date.now(), extras);
+    if (extras?.aqiNow != null) {
+      forecastNow.innerHTML = 'Air quality now: ' + aqiHtml(extras.aqiNow);
+      forecastNow.hidden = false;
+    }
+    // Open-Meteo's data is free for non-commercial use, credited (CC BY 4.0), and
+    // its air-quality data is to be credited to Copernicus's CAMS as well.
+    forecastFoot.innerHTML = 'National Weather Service' +
+      (forecast.updated ? ' · updated ' + escapeHtml(formatWhen(forecast.updated)) : '') +
+      (hasAirOrPressure(extras)
+        ? ' · Air quality &amp; pressure: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>' +
+          ' (air data: <a href="https://atmosphere.copernicus.eu/" target="_blank" rel="noopener">Copernicus CAMS</a>)'
+        : ' · Air quality and pressure are unavailable right now');
   } catch (error) {
     if (seq !== forecastSeq || !forecastDialog.open) return;
     fcDays.innerHTML = fcHours.innerHTML =

@@ -379,6 +379,7 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
       keys: async () => [
         'wxmap-v3',
         'wxmap-v1.0.6',
+        'wxmap-weather-stations-v1.13.3',
         'wxmap-weather-stations-v1.13.2',
         'wxmap-weather-stations-v1.13.1',
         'wxmap-weather-stations-v1.13.0',
@@ -528,7 +529,8 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
     'wxmap-weather-stations-v1.12.0',
     'wxmap-weather-stations-v1.12.1',
     'wxmap-weather-stations-v1.13.0',
-    'wxmap-weather-stations-v1.13.1'
+    'wxmap-weather-stations-v1.13.1',
+    'wxmap-weather-stations-v1.13.2'
   ].sort());
 
   const routed = request => {

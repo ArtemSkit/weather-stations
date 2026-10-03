@@ -3493,6 +3493,19 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   // A day row keeps that day's own sunrise and sunset (Oct 4: 7:15 AM, 6:49 PM).
   assert.match(k.forecastRowExtras([{ isDaytime: true, startTime: '2026-10-04T06:00:00-05:00', endTime: '2026-10-04T18:00:00-05:00' }], null, msp).sun,
     /Sunset 6:49 PM<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 7:15 AM$/);
+  // The nights the midnight sun or polar night starts or ends (Utqiaġvik): each
+  // half as it is, never a whole "no sunset" for a night that has one.
+  const polarNight = (startTime, endTime) =>
+    k.forecastRowExtras([{ isDaytime: false, startTime, endTime }], null, { lat: 71.29, lon: -156.79 });
+  const may10 = polarNight('2026-05-10T18:00:00-08:00', '2026-05-11T06:00:00-08:00');   // midnight sun from May 11
+  assert.match(may10.sun, /Sunset 1:\d\d AM \(after midnight\)<\/span> · then the sun stays up$/);
+  assert.match(may10.facts, /<p><b>Daylight:<\/b> sunset 1:\d\d AM \(after midnight\) · then the sun stays up all day\.<\/p>/);
+  const nov19 = polarNight('2026-11-19T18:00:00-09:00', '2026-11-20T06:00:00-09:00');   // polar night from Nov 20
+  assert.match(nov19.sun, /Sunset 1:2\d PM<\/span> · No sunrise$/);
+  assert.match(nov19.facts, /sunset 1:2\d PM · last light 4:1\d PM · no sunrise: the sun stays down all day, with twilight from 10:\d\d AM to 4:\d\d PM\./);
+  const jan22 = polarNight('2027-01-22T18:00:00-09:00', '2027-01-23T06:00:00-09:00');   // the sun is back Jan 23
+  assert.match(jan22.sun, /No sunset<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 1:1\d PM$/);
+  assert.match(jan22.facts, /no sunset · first light 10:3\d AM · sunrise 1:1\d PM\./);
   // Fairbanks in June: the sunset comes after midnight, and says so.
   const fairbanks = k.forecastRowExtras([{ startTime: '2026-06-21T06:00:00-08:00', endTime: '2026-06-21T18:00:00-08:00' }], null, { lat: 64.84, lon: -147.72 });
   assert.match(fairbanks.sun, /Sunset 12:\d\d AM \(after midnight\)<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 2:\d\d AM$/);

@@ -1302,7 +1302,8 @@
       flex-shrink: 0;
     }
 
-    /* Suggestions: finger-sized rows, and short enough to stay above the keyboard. */
+    /* Suggestions: finger-sized rows, and a shorter list, so less of it ends up
+       under the on-screen keyboard (the rest scrolls into view). */
     #addr-suggest { max-height: 40vh; max-height: 40dvh; }
     #addr-suggest li { padding: 10px 14px; font-size: 0.85rem; }
     #addr-suggest li .sub { font-size: 0.75rem; }
@@ -2494,8 +2495,9 @@ async function zipToCoordsViaPhoton(zip5, zipAsTyped) {
   return { lat, lon };
 }
 
-/** A leading house number ("6016 Enchantment" → "6016"), but not "3rd Street". */
-const HOUSE_NUMBER_RE = /^\s*(\d+[A-Za-z]?)\s+(?=\S)/;
+/** A leading house number ("6016 Enchantment" → "6016", Queens' "37-12 75th St" →
+    "37-12"), but not "3rd Street". */
+const HOUSE_NUMBER_RE = /^\s*(\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?)\s+(?=\S)/;
 
 /**
  * Convert a free-form street address to coordinates with the two free, key-less
@@ -6709,15 +6711,20 @@ function suggestionFromFeature(feature, houseNumber) {
   const isStreet = p.type === 'street';
   const address  = p.housenumber && p.street ? p.housenumber + ' ' + p.street : '';
   // A street's name is the street itself: give it the house number typed.
-  const main = isStreet && p.name && houseNumber ? houseNumber + ' ' + p.name : (p.name || address);
+  const houseOnStreet = isStreet && p.name && houseNumber;
+  const main = houseOnStreet ? houseNumber + ' ' + p.name : (p.name || address);
   if (!main) return null;
-  const area = [p.type === 'city' ? '' : p.city, [p.state, p.postcode].filter(Boolean).join(' ')];
+  // Photon's postcode belongs to one stretch of the street, not necessarily to the
+  // house typed (6016 Enchantment is 78218; Photon's piece of it says 78244), so
+  // it is left off there: never shown as the house's ZIP, nor searched with.
+  const postcode = houseOnStreet ? '' : p.postcode;
+  const area = [p.type === 'city' ? '' : p.city, [p.state, postcode].filter(Boolean).join(' ')];
   // A named place ("San Antonio Zoo") also shows its street address.
   const sub = [main === address ? '' : address, ...area].filter(Boolean).join(', ');
   return {
     main, sub,
     text: [main, sub].filter(Boolean).join(', '),
-    place: isStreet && houseNumber ? null : { lat, lon }
+    place: houseOnStreet ? null : { lat, lon }
   };
 }
 

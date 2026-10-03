@@ -1947,10 +1947,13 @@ test('house numbers go to Nominatim first, names to Photon first, each backed by
   s = make({ nominatim: house, photon: street });
   assert.deepEqual({ ...await s.fn('Enchantment, San Antonio', near) }, { lat: 29.49, lon: -98.37 });
   assert.deepEqual(s.calls.map(c => c.which), ['photon']);
-  // "3rd Street" doesn't start with a house number.
+  // "3rd Street" doesn't start with a house number; Queens' "37-12 75th St" does.
   s = make({ nominatim: house, photon: street });
   await s.fn('3rd Street, Austin', near);
   assert.deepEqual(s.calls.map(c => c.which), ['photon']);
+  s = make({ nominatim: house, photon: street });
+  await s.fn('37-12 75th St, Queens, NY', near);
+  assert.deepEqual(s.calls.map(c => c.which), ['nominatim']);
 
   // Nothing at the first, or the first unreachable: the other one answers.
   s = make({ nominatim: () => ({ data: [] }), photon: street });
@@ -1996,7 +1999,8 @@ test('address suggestions: US places from Photon, with the typed house number ke
   // the bias is coarse and the search box is the US.
   assert.match(requested[0], /\?q=Ench&limit=10&lang=en&lat=29\.5&lon=-98\.5&bbox=-180,15,-64,72$/);
   assert.deepEqual(list.map(s => s.text), [
-    '6016 Enchantment, San Antonio, Texas 78244',
+    // Photon's postcode is for its piece of the street, not the house: left off.
+    '6016 Enchantment, San Antonio, Texas',
     "San Antonio Zoo, 3903 North Saint Mary's Street, San Antonio, Texas 78212",
     'Boerne, Texas'
   ]);
@@ -2036,7 +2040,6 @@ test('address suggestions: wiring, keyboard and stale answers', () => {
   assert.match(onInput, /suggestTimer = 0;[^\n]*\s*suggestions = list;[\s\S]{0,200}?suggestActive = -1;\s*renderSuggestions\(\);/);
   // Esc also stops a lookup that hasn't shown its list yet; a closed list leaves none pending.
   assert.match(html, /\} else if \(e\.key === 'Escape' && \(!suggestList\.hidden \|\| suggestTimer\)\) \{/);
-  assert.match(extractFunction('closeSuggestions'), /suggestTimer = 0;/);
   // A pin or Locate Me search replaces the field's text, so it closes the list too.
   assert.match(extractFunction('triggerPinSearch'), /closeSuggestions\(\);\s*zipInput\.value = coordStr;/);
 
@@ -2052,6 +2055,84 @@ test('address suggestions: wiring, keyboard and stale answers', () => {
 
   // The list hangs over the map: the header rises above the banners only while it's open.
   assert.match(html, /header:has\(#addr-suggest:not\(\[hidden\]\)\) \{ z-index: 1160; \}/);
+});
+
+test('address suggestions: a typing session, run for real', async () => {
+  // The real input handler, closeSuggestions and arrow-key code, with the network
+  // and the typing-pause timer under the test's control.
+  const handlers = {};
+  const zipInput = { value: '', addEventListener: (type, fn) => { handlers[type] = fn; } };
+  const timers = new Map();
+  let timerId = 0;
+  const pending = [];   // suggestion requests still on their way: { text, answer }
+  const ctx = vm.createContext({
+    zipInput,
+    suggestList: { hidden: true },
+    document: { activeElement: zipInput },
+    detectInputType: text => (/^\d{5}$/.test(text) ? 'zip' : 'address'),
+    fetchSuggestions: text => new Promise(answer => pending.push({ text, answer })),
+    setTimeout: fn => { timers.set(++timerId, fn); return timerId; },
+    clearTimeout: id => timers.delete(id)
+  });
+  const start = html.indexOf("zipInput.addEventListener('input'");
+  vm.runInContext(`
+    ${html.match(/const SUGGEST_DELAY_MS\s+= \d+;/)[0]}
+    let suggestTimer = 0, suggestRequest = 0, suggestions = [], suggestActive = -1;
+    function renderSuggestions() { suggestList.hidden = !suggestions.length; }
+    ${extractFunction('closeSuggestions')}
+    ${extractFunction('moveSuggestionHighlight')}
+    ${html.slice(start, html.indexOf("zipInput.addEventListener('blur'", start))}
+    this.state = () => ({ pending: suggestTimer !== 0, rows: suggestions.length, active: suggestActive });
+    this.move = moveSuggestionHighlight;
+    this.blur = closeSuggestions;
+  `, ctx);
+  const type = text => { zipInput.value = text; handlers.input(); };
+  // The typing pause ends: its request goes out (and waits in `pending`).
+  const pause = () => { const [id, fn] = [...timers][timers.size - 1]; timers.delete(id); return fn(); };
+  // A copy made here: objects from the vm context fail deepEqual's prototype check.
+  const state = () => ({ ...ctx.state() });
+  const rows = n => Array.from({ length: n }, (_, i) => ({ text: 'row ' + i }));
+
+  type('Main');
+  assert.equal(state().pending, true, 'a lookup waits for the typing pause');
+  let done = pause();
+  pending.shift().answer(rows(6));
+  await done;
+  assert.deepEqual(state(), { pending: false, rows: 6, active: -1 });
+
+  // Typing on keeps the old list up; arrows move through it while the next loads.
+  type('Main S');
+  ctx.move(1); ctx.move(1); ctx.move(1);
+  assert.equal(state().active, 2);
+  done = pause();
+  pending.shift().answer(rows(2));
+  await done;
+  assert.deepEqual(state(), { pending: false, rows: 2, active: -1 }, 'the old highlight must not survive');
+
+  // An answer overtaken by newer typing is ignored; the newer lookup stays pending.
+  type('Main St');
+  const older = pause();
+  type('Main Str');
+  pending.shift().answer(rows(5));
+  await older;
+  assert.deepEqual(state(), { pending: true, rows: 2, active: -1 });
+  done = pause();
+  pending.shift().answer(rows(3));
+  await done;
+  assert.deepEqual(state(), { pending: false, rows: 3, active: -1 });
+
+  // Leaving the field mid-lookup: the late answer never opens the list.
+  type('Elm');
+  done = pause();
+  ctx.blur();
+  pending.shift().answer(rows(4));
+  await done;
+  assert.deepEqual(state(), { pending: false, rows: 0, active: -1 });
+
+  // A ZIP asks nothing and leaves nothing pending (so Esc isn't held back).
+  type('78218');
+  assert.deepEqual(state(), { pending: false, rows: 0, active: -1 });
+  assert.equal(timers.size, 0);
 });
 
 test('a found address is marked with the search pin', () => {

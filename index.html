@@ -2501,8 +2501,9 @@ async function zipToCoordsViaPhoton(zip5, zipAsTyped) {
 
 /** A leading house number ("6016 Enchantment" → "6016", Queens' "37-12 75th St" →
     "37-12", with any dash normalizeSearchText knows), but not "3rd Street", nor
-    the number that starts a road name like Detroit's "8 Mile Rd". */
-const HOUSE_NUMBER_RE = /^\s*(\d+[A-Za-z]?(?:[-‐-―−﹣－]\d+[A-Za-z]?)?)\s+(?!mile\b)(?=\S)/i;
+    the number that starts a road name like Detroit's "8 Mile Rd" (only "Mile
+    Rd/Road" or a bare "Mile": "45 Mile Creek Rd" is house 45). */
+const HOUSE_NUMBER_RE = /^\s*(\d+[A-Za-z]?(?:[-‐-―−﹣－]\d+[A-Za-z]?)?)\s+(?!mile(?:\s+(?:rd|road)\b|\s*(?:,|$)))(?=\S)/i;
 
 /**
  * Convert a free-form street address to coordinates with the two free, key-less

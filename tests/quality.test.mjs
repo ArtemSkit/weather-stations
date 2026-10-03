@@ -1965,10 +1965,18 @@ test('house numbers go to Nominatim first, names to Photon first, each backed by
   s = make({ nominatim: house, photon: street });
   await s.fn('8 Mile Rd, Detroit', near);
   assert.deepEqual(s.calls.map(c => c.which), ['photon']);
-  // …but a house on it still counts.
-  s = make({ nominatim: house, photon: street });
-  await s.fn('1200 8 Mile Rd, Detroit', near);
-  assert.deepEqual(s.calls.map(c => c.which), ['nominatim']);
+  for (const road of ['12 Mile Road', '7 Mile, Detroit', '8 Mile']) {
+    s = make({ nominatim: house, photon: street });
+    await s.fn(road, near);
+    assert.deepEqual(s.calls.map(c => c.which), ['photon'], road);
+  }
+  // …but a house on it still counts, and so does one on a street merely
+  // starting with "Mile".
+  for (const home of ['1200 8 Mile Rd, Detroit', '45 Mile Creek Rd, Old Lyme, CT', '8 Miles Ave']) {
+    s = make({ nominatim: house, photon: street });
+    await s.fn(home, near);
+    assert.deepEqual(s.calls.map(c => c.which), ['nominatim'], home);
+  }
 
   // Nothing at the first, or the first unreachable: the other one answers.
   s = make({ nominatim: () => ({ data: [] }), photon: street });

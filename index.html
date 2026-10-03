@@ -2502,8 +2502,9 @@ async function zipToCoordsViaPhoton(zip5, zipAsTyped) {
 /** A leading house number ("6016 Enchantment" → "6016", Queens' "37-12 75th St" →
     "37-12", with any dash normalizeSearchText knows), but not "3rd Street", nor
     the number that starts a road name like Detroit's "8 Mile Rd" (only "Mile
-    Rd/Road" or a bare "Mile": "45 Mile Creek Rd" is house 45). */
-const HOUSE_NUMBER_RE = /^\s*(\d+[A-Za-z]?(?:[-‐-―−﹣－]\d+[A-Za-z]?)?)\s+(?!mile(?:\s+(?:rd|road)\b|\s*(?:,|$)))(?=\S)/i;
+    Rd/Road", a "Mile R…" still being typed, or a bare "Mile": "45 Mile Creek
+    Rd" is house 45). */
+const HOUSE_NUMBER_RE = /^\s*(\d+[A-Za-z]?(?:[-‐-―−﹣－]\d+[A-Za-z]?)?)\s+(?!mile(?:\s+(?:rd|road)\b|\s+r(?:oa?)?\s*$|\s*(?:,|$)))(?=\S)/i;
 
 /**
  * Convert a free-form street address to coordinates with the two free, key-less
@@ -6717,10 +6718,12 @@ function suggestionFromFeature(feature, houseNumber, query) {
 
   const isStreet = p.type === 'street';
   const address  = p.housenumber && p.street ? p.housenumber + ' ' + p.street : '';
-  // What looked like a house number can be the start of the road's own name, typed
-  // in part ("8 Mile Ro…", "8 Mile Detroit" → 8 Mile Road): then this is the road.
+  // What looked like a house number can be the start of the road's own name
+  // ("8 Mile Detroit" → 8 Mile Road, or West 8 Mile Road: a leading direction
+  // doesn't count): then this is the road.
   const nameStart = (houseNumber + ' ' + query.split(/\s+/)[0]).toLowerCase();
-  const isNumberedRoad = Boolean(houseNumber && p.name?.toLowerCase().startsWith(nameStart));
+  const roadName = (p.name || '').toLowerCase().replace(/^(?:north|south|east|west|[nsew])\.?\s+/, '');
+  const isNumberedRoad = Boolean(houseNumber && roadName.startsWith(nameStart));
   // Any other street's name is the street itself: give it the house number typed.
   const houseOnStreet = isStreet && p.name && houseNumber && !isNumberedRoad;
   const main = houseOnStreet ? houseNumber + ' ' + p.name : (p.name || address);

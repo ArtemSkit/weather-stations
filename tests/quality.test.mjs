@@ -1969,7 +1969,7 @@ test('house numbers go to Nominatim first, names to Photon first, each backed by
   s = make({ nominatim: house, photon: street });
   await s.fn('8 Mile Rd, Detroit', near);
   assert.deepEqual(s.calls.map(c => c.which), ['photon']);
-  for (const road of ['12 Mile Road', '7 Mile, Detroit', '8 Mile']) {
+  for (const road of ['12 Mile Road', '7 Mile, Detroit', '8 Mile', '8 Mile Ro', '8 Mile R']) {
     s = make({ nominatim: house, photon: street });
     await s.fn(road, near);
     assert.deepEqual(s.calls.map(c => c.which), ['photon'], road);
@@ -2047,6 +2047,15 @@ test('address suggestions: US places from Photon, with the typed house number ke
     assert.equal(road.text, '8 Mile Road, Detroit, Michigan 48203', typed);
     assert.ok(road.place, typed);
   }
+  // Half-typed, the road's whole name is asked for (so Photon finds 8 Mile, not 7 Mile)…
+  await fetchSuggestions('8 Mile Ro');
+  assert.match(requested.at(-1), /\?q=8%20Mile%20Ro&/);
+  // …and OSM's "West 8 Mile Road" is that road too, not house 8 on it.
+  features = [feature({ type: 'street', name: 'West 8 Mile Road', city: 'Ferndale', state: 'Michigan' })];
+  const [west] = await fetchSuggestions('8 Mile Detroit');
+  assert.equal(west.text, 'West 8 Mile Road, Ferndale, Michigan');
+  assert.ok(west.place);
+  features = [feature({ type: 'street', name: '8 Mile Road', city: 'Detroit', state: 'Michigan', postcode: '48203' })];
   const [onRoad] = await fetchSuggestions('1200 8 Mile');
   assert.equal(onRoad.text, '1200 8 Mile Road, Detroit, Michigan');
   assert.equal(onRoad.place, null);

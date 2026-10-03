@@ -212,7 +212,7 @@ test('the search pin never blocks clicks on a station next to it', () => {
   assert.match(html, /\.leaflet-marker-icon\.dropped-pin-marker\.leaflet-interactive \{ pointer-events: none; \}\s*\.dropped-pin-icon \{ pointer-events: auto; \}/);
   assert.match(html, /#map\.tap-mode \.dropped-pin-icon \{ pointer-events: none; \}/);
   // Station badges are drawn above the pin: one under the 📍 is still clickable.
-  assert.match(extractFunction('placeDragPin'), /draggable: true,[\s\S]*?zIndexOffset: -1000,/);
+  assert.match(extractFunction('showSearchPin'), /draggable: true,[\s\S]*?zIndexOffset: -1000,/);
   assert.match(html, /\.dropped-pin-coords \{[^}]*pointer-events: none;/);
 });
 
@@ -226,9 +226,12 @@ test('search pin works by drop, click, tap, and keyboard', () => {
   assert.match(pinSection, /setData\('text\/plain', ''\)/, 'Firefox needs drag data to start a drag');
 
   // Leaflet fires 'add' inside addTo(), so the key handler must bind directly.
-  const place = extractFunction('placeDragPin');
-  assert.doesNotMatch(place, /\.on\('add'/);
-  assert.match(place, /getElement\(\)\.addEventListener\('keydown'/);
+  const pin = extractFunction('showSearchPin');
+  assert.doesNotMatch(pin, /\.on\('add'/);
+  assert.match(pin, /getElement\(\)\.addEventListener\('keydown'/);
+  // Placing a pin searches there; showing one (for a found address) doesn't.
+  assert.match(extractFunction('placeDragPin'), /showSearchPin\(lat, lng\);\s*triggerPinSearch\(lat, lng\);/);
+  assert.doesNotMatch(pin.slice(0, pin.indexOf("on('dragend'")), /triggerPinSearch/);
 
   // Click/tap-to-place is wired for both pin buttons and passes through alert areas.
   assert.match(pinSection, /dragPinBtn\.addEventListener\('click'/);
@@ -724,7 +727,7 @@ test('shared coordinate links never use exponent notation', () => {
 
 test('Enter that confirms an IME composition does not start a search', () => {
   // Safari ends the composition before keydown, so keyCode 229 is checked too.
-  assert.match(html, /e\.key === 'Enter' && !e\.repeat && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
+  assert.match(html, /zipInput\.addEventListener\('keydown', e => \{\s*if \(e\.isComposing \|\| e\.keyCode === 229\) return;/);
 });
 
 test('the alert banner stays clear of the map controls and the station panel', () => {
@@ -1847,9 +1850,9 @@ test('search URLs round-trip once-encoded and only after a successful lookup', (
 test('longitudes from a neighbouring world copy are wrapped before use', () => {
   // Leaflet reports e.g. 261.6 after panning sideways; Photon (400) and NOAA (404) reject it.
   assert.match(extractFunction('doSearch'), /map\.getCenter\(\)\.wrap\(\)/);
-  const place = extractFunction('placeDragPin');
-  assert.match(place, /\(\{ lat, lng \} = L\.latLng\(lat, lng\)\.wrap\(\)\);/);
-  assert.match(place, /getLatLng\(\)\.wrap\(\)/);
+  assert.match(extractFunction('placeDragPin'), /\(\{ lat, lng \} = L\.latLng\(lat, lng\)\.wrap\(\)\);/);
+  assert.match(extractFunction('showSearchPin'), /getLatLng\(\)\.wrap\(\)/);
+  assert.match(extractFunction('fetchSuggestions'), /map\.getCenter\(\)\.wrap\(\)/);
 });
 
 test('station panel state survives junk input and overlapping requests', () => {
@@ -1869,7 +1872,7 @@ test('address lookup uses key-less Photon and keeps only US matches', async () =
   const requested = [];
   let features = [];
   // extractFunction() starts at the `function` keyword, so restore `async`.
-  const addressToCoords = vm.runInNewContext(`(async ${extractFunction('addressToCoords')})`, {
+  const addressViaPhoton = vm.runInNewContext(`(async ${extractFunction('addressViaPhoton')})`, {
     encodeURIComponent,
     Number,
     fetchJsonWithTimeout: async url => {
@@ -1884,14 +1887,156 @@ test('address lookup uses key-less Photon and keeps only US matches', async () =
     { properties: { countrycode: 'US' }, geometry: { coordinates: [-95.55, 33.66] } }
   ];
   const near = { lat: 39.5, lon: -98.35 };
-  assert.deepEqual({ ...await addressToCoords('paris tx', near) }, { lat: 33.66, lon: -95.55 });
+  assert.deepEqual({ ...await addressViaPhoton('paris tx', near) }, { lat: 33.66, lon: -95.55 });
   assert.match(requested[0], /^https:\/\/photon\.komoot\.io\/api\/\?q=paris%20tx&/);
   // Results are biased toward the map, or common names return no US match at all.
   // …but only coarsely (1 decimal, about 11 km): never the exact position.
   assert.match(requested[0], /&lat=39\.5&lon=-98\.[34]$/);
 
   features = [{ properties: { countrycode: 'FR' }, geometry: { coordinates: [2.35, 48.85] } }];
-  await assert.rejects(addressToCoords('paris', near), /not found/);
+  assert.equal(await addressViaPhoton('paris', near), null);
+});
+
+test('house numbers go to Nominatim first, names to Photon first, each backed by the other', async () => {
+  // Photon misses most US house numbers (and drops "6016 Enchantment … 78218"
+  // entirely), while Nominatim has the Census ranges; Photon ranks names better.
+  const make = ({ nominatim, photon }) => {
+    const calls = [];
+    const fn = new Function('fetchJsonWithTimeout', `
+      ${html.match(/const HOUSE_NUMBER_RE = .*;/)[0]}
+      async ${extractFunction('addressViaNominatim')}
+      async ${extractFunction('addressViaPhoton')}
+      async ${extractFunction('addressToCoords')}
+      return addressToCoords;
+    `)(async url => {
+      const which = url.includes('nominatim') ? 'nominatim' : 'photon';
+      calls.push({ which, url });
+      const r = (which === 'nominatim' ? nominatim : photon)();
+      return { response: { ok: r.ok !== false, status: r.status }, data: r.data };
+    });
+    return { fn, calls };
+  };
+  const house  = () => ({ data: [{ lat: '29.4938247', lon: '-98.3675119' }] });
+  const street = () => ({ data: { features: [{ properties: { countrycode: 'US' }, geometry: { coordinates: [-98.37, 29.49] } }] } });
+  const none   = { nominatim: () => ({ data: [] }), photon: () => ({ data: { features: [] } }) };
+  const near   = { lat: 29.53, lon: -98.47 };
+
+  // A house number: Nominatim's exact house, and Photon isn't asked at all.
+  let s = make({ nominatim: house, photon: street });
+  assert.deepEqual({ ...await s.fn('6016 Enchantment, San Antonio, Texas, 78218', near) },
+    { lat: 29.4938247, lon: -98.3675119 });
+  assert.deepEqual(s.calls.map(c => c.which), ['nominatim']);
+  // US and territories only; the map bias is a coarse box, never the exact position.
+  assert.match(s.calls[0].url, /&countrycodes=us,pr,vi,gu,as,mp&viewbox=-99\.5,30\.5,-97\.5,28\.5$/);
+
+  // A plain name: Photon first.
+  s = make({ nominatim: house, photon: street });
+  assert.deepEqual({ ...await s.fn('Enchantment, San Antonio', near) }, { lat: 29.49, lon: -98.37 });
+  assert.deepEqual(s.calls.map(c => c.which), ['photon']);
+  // "3rd Street" doesn't start with a house number.
+  s = make({ nominatim: house, photon: street });
+  await s.fn('3rd Street, Austin', near);
+  assert.deepEqual(s.calls.map(c => c.which), ['photon']);
+
+  // Nothing at the first, or the first unreachable: the other one answers.
+  s = make({ nominatim: () => ({ data: [] }), photon: street });
+  assert.deepEqual({ ...await s.fn('1109 n highlnd st arlington va', near) }, { lat: 29.49, lon: -98.37 });
+  assert.deepEqual(s.calls.map(c => c.which), ['nominatim', 'photon']);
+  s = make({ nominatim: () => ({ ok: false, status: 429 }), photon: street });
+  assert.ok(await s.fn('5118 El Capitan St', near));
+
+  // Neither finds it → "not found"; a failure that may have hidden it → that failure.
+  await assert.rejects(make(none).fn('99999 Nowhere Rd', near), /not found/);
+  await assert.rejects(make({ ...none, nominatim: () => ({ ok: false, status: 503 }) }).fn('1 Main St', near),
+    /request failed/);
+});
+
+test('address suggestions: US places from Photon, with the typed house number kept', async () => {
+  const feature = (properties, coordinates = [-98.37, 29.49]) =>
+    ({ properties: { countrycode: 'US', ...properties }, geometry: { coordinates } });
+  let features = [];
+  const requested = [];
+  const fetchSuggestions = new Function('fetchJsonWithTimeout', 'map', `
+    ${html.match(/const HOUSE_NUMBER_RE = .*;/)[0]}
+    ${html.match(/const SUGGEST_MIN_CHARS = \d+;/)[0]}
+    ${html.match(/const SUGGEST_MAX\s+= \d+;/)[0]}
+    ${html.match(/const SUGGEST_US_BBOX = '[^']+';/)[0]}
+    ${extractFunction('suggestionFromFeature')}
+    async ${extractFunction('fetchSuggestions')}
+    return fetchSuggestions;
+  `)(async url => { requested.push(url); return { response: { ok: true }, data: { features } }; },
+     { getCenter: () => ({ wrap: () => ({ lat: 29.5312, lng: -98.4712 }) }) });
+
+  features = [
+    feature({ type: 'street', osm_key: 'highway', name: 'Enchantment', city: 'San Antonio', state: 'Texas', postcode: '78244' }),
+    // Photon lists one street per piece of road: shown once.
+    feature({ type: 'street', osm_key: 'highway', name: 'Enchantment', city: 'San Antonio', state: 'Texas', postcode: '78244' }),
+    feature({ type: 'house', osm_key: 'highway', osm_value: 'bus_stop', name: 'Enchantment at Main' }),   // stop: noise
+    feature({ type: 'street', name: 'Enchantment', countrycode: 'MX' }),                                   // not US
+    feature({ type: 'house', osm_key: 'tourism', name: 'San Antonio Zoo', housenumber: '3903',
+      street: "North Saint Mary's Street", city: 'San Antonio', state: 'Texas', postcode: '78212' }, [-98.47, 29.46]),
+    feature({ type: 'city', osm_key: 'place', name: 'Boerne', state: 'Texas' }, [-98.73, 29.79])
+  ];
+  const list = await fetchSuggestions('6016 Ench');
+  // The house number stays out of the request (it drowns Photon's street match);
+  // the bias is coarse and the search box is the US.
+  assert.match(requested[0], /\?q=Ench&limit=10&lang=en&lat=29\.5&lon=-98\.5&bbox=-180,15,-64,72$/);
+  assert.deepEqual(list.map(s => s.text), [
+    '6016 Enchantment, San Antonio, Texas 78244',
+    "San Antonio Zoo, 3903 North Saint Mary's Street, San Antonio, Texas 78212",
+    'Boerne, Texas'
+  ]);
+  // The street still needs its house found (by the normal search); the rest are placed.
+  assert.equal(list[0].place, null);
+  assert.deepEqual({ ...list[1].place }, { lat: 29.46, lon: -98.47 });
+
+  // Without a house number a street is placed directly; too little text asks nothing.
+  features = [feature({ type: 'street', name: 'El Capitan Street', city: 'San Antonio', state: 'Texas' })];
+  assert.equal((await fetchSuggestions('El Capitan'))[0].main, 'El Capitan Street');
+  assert.ok((await fetchSuggestions('El Capitan'))[0].place);
+  requested.length = 0;
+  assert.deepEqual(await fetchSuggestions('12 El'), []);
+  assert.equal(requested.length, 0);
+});
+
+test('address suggestions: wiring, keyboard and stale answers', () => {
+  // A combobox: the list is announced and steered from the field.
+  assert.match(html, /role="combobox"\s+aria-autocomplete="list"\s+aria-expanded="false"\s+aria-controls="addr-suggest"/);
+  assert.match(html, /<ul id="addr-suggest" role="listbox"[^>]*hidden><\/ul>/);
+  assert.match(extractFunction('renderSuggestions'), /aria-activedescendant/);
+  // Only addresses ask, after a pause; a newer keystroke, search or blur drops the answer.
+  const onInput = html.slice(html.indexOf("zipInput.addEventListener('input'"));
+  assert.match(onInput, /if \(detectInputType\(text\) !== 'address'\) \{ closeSuggestions\(\); return; \}/);
+  assert.match(onInput, /if \(request !== suggestRequest \|\| document\.activeElement !== zipInput\) return;/);
+  assert.match(extractFunction('closeSuggestions'), /clearTimeout\(suggestTimer\);\s*suggestRequest\+\+;/);
+  assert.match(extractFunction('doSearch'), /^function doSearch\(knownPlace\) \{\s*\/\/.*\s*closeSuggestions\(\);/);
+  assert.match(html, /zipInput\.addEventListener\('blur', closeSuggestions\);/);
+  // A click on a row lands before the field loses focus.
+  assert.match(html, /suggestList\.addEventListener\('mousedown', e => e\.preventDefault\(\)\);/);
+  // FIND must not hand its click event to doSearch as a place.
+  assert.match(html, /searchBtn\.addEventListener\('click', \(\) => doSearch\(\)\);/);
+  // Enter picks the highlighted row, else searches the text as typed.
+  assert.match(html, /if \(suggestActive >= 0\) pickSuggestion\(suggestActive\);\s*else doSearch\(\);/);
+
+  // Arrow keys cycle through the rows and back to "none" at either end.
+  const move = vm.runInNewContext(`(() => {
+    let suggestions = [1, 2, 3], suggestActive = -1;
+    const renderSuggestions = () => {};
+    ${extractFunction('moveSuggestionHighlight')}
+    return step => { moveSuggestionHighlight(step); return suggestActive; };
+  })()`);
+  assert.deepEqual([1, 1, 1, 1, 1].map(step => move(step)), [0, 1, 2, -1, 0]);
+  assert.deepEqual([-1, -1, -1].map(step => move(step)), [-1, 2, 1]);
+
+  // The list hangs over the map: the header rises above the banners only while it's open.
+  assert.match(html, /header:has\(#addr-suggest:not\(\[hidden\]\)\) \{ z-index: 1160; \}/);
+});
+
+test('a found address is marked with the search pin', () => {
+  const search = extractFunction('doSearch');
+  assert.match(search, /if \(type === 'address'\) showSearchPin\(place\.lat, place\.lon\);\s*else removeDragPin\(\);/);
+  // A picked suggestion that is already placed skips the second lookup.
+  assert.match(search, /\} else if \(knownPlace\) \{\s*place = knownPlace;/);
 });
 
 test('station panel shows readings promptly and formats them cleanly', () => {
@@ -2554,7 +2699,7 @@ test('keyboard: the focused map shows a ring and a held Enter searches once', ()
   assert.match(html, /#map:focus-visible::after \{[^}]*z-index: 799;[^}]*box-shadow: inset 0 0 0 2px var\(--accent\);/);
   // High Contrast mode drops box-shadow; the transparent outline becomes the ring.
   assert.match(html, /#map:focus-visible::after \{[^}]*outline: 2px solid transparent; outline-offset: -2px;/);
-  assert.match(html, /if \(e\.key === 'Enter' && !e\.repeat && !e\.isComposing && e\.keyCode !== 229\) doSearch\(\);/);
+  assert.match(html, /\} else if \(e\.key === 'Enter' && !e\.repeat\) \{[\s\S]{0,200}?else doSearch\(\);/);
 });
 
 test('search radius: nearby stations only, and the circle edge keeps clear of markers where the gaps allow', () => {

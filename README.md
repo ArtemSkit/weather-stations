@@ -45,7 +45,7 @@ A **Progressive Web App** for exploring real-time NOAA weather observation stati
 | **Draggable pin** | Drop a pin anywhere on the map to search that location |
 | **Locate Me FAB** | One-tap GPS location → instant station search |
 | **Shareable URLs** | Every successful search updates the address bar — bookmark or share |
-| **Address lookup** | Free, typo-tolerant street-address geocoding via Photon — no API key or sign-up |
+| **Address lookup** | Free house-exact and typo-tolerant address geocoding via Nominatim and Photon, with suggestions while you type — no API key or sign-up |
 | **PWA** | Installable and offline-capable, with user-controlled updates via Service Worker |
 | **Version badge** | Running app version shown in the bottom-left corner, reported live by the active Service Worker; tap it to open this GitHub repository |
 
@@ -117,9 +117,16 @@ Enter any US street address:
 300 E Green St, Pasadena, CA
 ```
 
-Geocoded via **[Photon](https://photon.komoot.io/)**, a free OpenStreetMap geocoder — no API key required. Photon tolerates typos and missing punctuation (`1109 n highlnd st arlington va` still finds the right building). It searches worldwide, so WX.MAP biases results toward the area currently on the map and takes the best match inside the US (including US territories), since NOAA data covers only the US.
+Geocoded by two free OpenStreetMap geocoders, both without an API key or sign-up, each used where it is stronger:
 
-> **Fair use:** the public Photon server is free but has no uptime guarantee and throttles heavy use. That suits one-search-at-a-time traffic like this app's. If it ever becomes a problem, Photon is open source and can be self-hosted.
+- **[Nominatim](https://nominatim.openstreetmap.org/)** also holds the US Census house-number ranges, so it places most houses exactly. An address that starts with a house number goes here first.
+- **[Photon](https://photon.komoot.io/)** tolerates typos and missing punctuation (`1109 n highlnd st arlington va` still finds the right building) and ranks plain street and place names by distance from the map. Anything else goes here first.
+
+If the first finds nothing (or can't be reached), the other is asked. Both are biased toward the area currently on the map (rounded to about 11 km, never your exact position) and only US results (including US territories) are used, since NOAA data covers only the US. The spot found is marked with the search pin, which can then be dragged like a dropped one.
+
+**Suggestions while typing:** after a short pause, a list of matching US streets and places from Photon opens under the search bar (never for a ZIP or coordinates). Pick one with the mouse, a tap, or the arrow keys and `Enter`; `Esc` closes it. Photon knows few US house numbers, so the number you typed is kept on the matching streets, and picking one looks the house up through Nominatim to find its exact spot.
+
+> **Fair use:** the public Photon and Nominatim servers are free but have no uptime guarantee and throttle heavy use (Nominatim allows one request a second and forbids search-as-you-type, which is why suggestions come from Photon only). Suggestions wait for a typing pause and drop out-of-date requests, so traffic stays light. Both are open source and can be self-hosted if that ever becomes a problem.
 
 > **Upgrading from 1.0.x:** older releases asked for a Geocodio API key and stored it in the browser. That key is no longer used, and 1.1.0 deletes any stored copy (localStorage and legacy cookie) on startup.
 
@@ -413,7 +420,7 @@ weather-stations/
 │           ├── UI helpers
 │           ├── Refresh-interval editor
 │           ├── Input-type detection
-│           ├── Geocoding (ZIP via Nominatim / address via Photon)
+│           ├── Geocoding (ZIP via Nominatim / address via Nominatim + Photon, suggestions via Photon)
 │           ├── Legacy API-key cleanup
 │           ├── NOAA Weather API
 │           ├── Unit conversion
@@ -446,12 +453,12 @@ weather-stations/
 |---|---|---|
 | [NOAA Weather.gov](https://api.weather.gov/) | Station list, live observations, 7-day and hourly forecasts (and the current hour's chance of rain), active alerts, alert-area zone geometry | No |
 | [NOAA watch/warning/advisory map service](https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer) | Live alerts: every alert area inside the map view, one request per view | No |
-| [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates | No |
-| [Photon (komoot)](https://photon.komoot.io/) | Street address → coordinates (+ ZIP fallback) | No |
+| [Nominatim (OpenStreetMap)](https://nominatim.openstreetmap.org/) | ZIP → coordinates; house-numbered address → coordinates (+ fallback for other addresses) | No |
+| [Photon (komoot)](https://photon.komoot.io/) | Address suggestions while typing; other addresses → coordinates (+ ZIP and house-number fallback) | No |
 | [OpenStreetMap Tile Servers](https://tile.openstreetmap.org/) | Map tiles | No |
 | [Browser Geolocation API](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation_API) | Device GPS | User permission |
 
-> **Resilience:** every network request (geocoding and weather) is capped by a **15-second timeout** (8 seconds for the Nominatim ZIP lookup, so its Photon fallback still answers promptly; 4 seconds for the optional exact-location lookup of a `?station=` link) — a slow or unreachable API aborts cleanly with an error toast instead of leaving the app stuck "loading". Rapid repeat searches are generation-guarded, so a slow earlier request can never overwrite the results of a newer one.
+> **Resilience:** every network request (geocoding and weather) is capped by a **15-second timeout** (8 seconds for the Nominatim ZIP and address lookups, so their Photon fallback still answers promptly, and for suggestions; 4 seconds for the optional exact-location lookup of a `?station=` link) — a slow or unreachable API aborts cleanly with an error toast instead of leaving the app stuck "loading". Rapid repeat searches are generation-guarded, so a slow earlier request can never overwrite the results of a newer one.
 
 ---
 
@@ -475,7 +482,7 @@ The repository includes dependency-free regression tests using Node's built-in t
 node --test
 ```
 
-These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifest and version consistency, atomic service-worker installation/routing/cache isolation, vendored Leaflet assets, alert-popup overlap/dismissal/readability contracts, warning-polygon holes, URL encoding, key-less US-only address lookup, alert-text unwrapping, and stale-response guards.
+These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifest and version consistency, atomic service-worker installation/routing/cache isolation, vendored Leaflet assets, alert-popup overlap/dismissal/readability contracts, warning-polygon holes, URL encoding, key-less US-only address lookup and suggestions, alert-text unwrapping, and stale-response guards.
 
 ---
 

@@ -999,7 +999,7 @@ test('the sky row shows the main cloud deck, not just the lowest layer', () => {
 const escapeHtmlSource = html.match(/function escapeHtml\(s\) \{[\s\S]*?\r?\n\}/)[0];
 /** The forecast rows' sun, air and pressure helpers, to run in a vm alongside the renderers. */
 const forecastExtrasSource = ['sunTimes', 'isoOffsetMinutes', 'clockLabel', 'durationLabel', 'utcHourKey',
-  'hasAirOrPressure', 'aqiCategory', 'aqiHtml', 'hpaToInHg', 'forecastRowExtras'].map(extractFunction).join('\n');
+  'hasAir', 'hasPressure', 'aqiCategory', 'aqiHtml', 'hpaToInHg', 'forecastRowExtras'].map(extractFunction).join('\n');
 
 test('station panel shows what weather.gov would: rounding, calm, clear, feels-like, pressure', () => {
   // Run the real renderWeather (and its helpers) against a stub page.
@@ -3213,6 +3213,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   // The loader follows only NOAA's own /gridpoints/ links and reads both forecasts.
   const requested = [];
   let extrasAsked = 0;
+  const extrasHad = [];
   const answers = {
     'https://api.weather.gov/points/32.7600,-97.8000': { properties: {
       forecast: 'https://api.weather.gov/gridpoints/FWD/52,104/forecast',
@@ -3229,15 +3230,18 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     ${extractFunction('setBoundedCache')}
     ${extractFunction('degToCompass')}
     ${extractFunction('forecastPlaceLabel')}
-    ${extractFunction('hasAirOrPressure')}
+    ${extractFunction('hasAir')}
+    ${extractFunction('hasPressure')}
     async ${extractFunction('fetchAreaForecast')}
     return fetchAreaForecast;
   })()`, { URL, Date, fetchJsonWithTimeout: async url => {
     requested.push(url);
     return { response: { ok: url in answers, status: url in answers ? 200 : 500 }, data: answers[url] };
-  }, fetchAirAndPressure: async () => {
-    extrasAsked++;   // the first answer fails entirely; later ones bring the air quality now
-    return { aqi: new Map(), pressure: new Map(), aqiNow: extrasAsked === 1 ? null : 12 };
+  }, fetchAirAndPressure: async (lat, lon, have) => {
+    extrasAsked++;   // the first answer fails entirely; the next brings both parts
+    extrasHad.push(have);
+    return extrasAsked === 1 ? { aqi: new Map(), pressure: new Map(), aqiNow: null }
+      : { aqi: new Map(), pressure: new Map([['2026-10-03T20', 1015]]), aqiNow: 12 };
   } });
   const forecast = await load(32.76, -97.8);
   assert.equal(forecast.extras.aqiNow, null, 'air and pressure ride along (here: unavailable)');
@@ -3247,8 +3251,10 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.equal(forecast.hours.length, 2);
   await load(32.76, -97.8);
   assert.equal(requested.length, 3, 'a second open within minutes reuses the answer');
-  // …but air and pressure missing last time are asked for again, not kept missing.
+  // …but air and pressure missing last time are asked for again, not kept missing
+  // (handing over what there is, so only the missing part is fetched).
   assert.equal(extrasAsked, 2);
+  assert.equal(extrasHad[1].aqiNow, null);
   assert.equal(forecast.extras.aqiNow, 12);
   await load(32.76, -97.8);
   assert.equal(extrasAsked, 2, 'once they are in, they are reused too');
@@ -3472,6 +3478,19 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   const nov = hours(12, '2026-11-01T12', () => ({ value: 20, pollutant: 'ozone' }));
   nov.set('2026-11-01T21', { value: 70, pollutant: 'ozone' });
   assert.match(k.forecastRowExtras(fallBack, { aqi: nov, pressure: new Map() }, sa).facts, /up to 70, moderate — mostly ozone, worst around 3 PM/);
+  // A night on its own: the sunset it starts with and the NEXT morning's sunrise
+  // (Minneapolis: Oct 3's sunrise was 7:13 AM, Oct 4's is 7:15 AM) — the same for
+  // "Tonight" (from 6 PM) and "Overnight" (from midnight). Opened: in time order.
+  const msp = { lat: 44.98, lon: -93.27 };
+  const nightRow = (startTime, endTime) => k.forecastRowExtras([{ isDaytime: false, startTime, endTime }], null, msp);
+  for (const night of [nightRow('2026-10-03T18:00:00-05:00', '2026-10-04T06:00:00-05:00'),
+                       nightRow('2026-10-04T00:00:00-05:00', '2026-10-04T06:00:00-05:00')]) {
+    assert.match(night.sun, /Sunset 6:51 PM<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 7:15 AM$/);
+    assert.match(night.facts, /<p><b>Daylight:<\/b> sunset 6:51 PM · last light 7:2\d PM · first light 6:4\d AM · sunrise 7:15 AM \(12 h 2\d min from sunset to sunrise\)<\/p>/);
+  }
+  // A day row keeps that day's own sunrise and sunset (Oct 4: 7:15 AM, 6:49 PM).
+  assert.match(k.forecastRowExtras([{ isDaytime: true, startTime: '2026-10-04T06:00:00-05:00', endTime: '2026-10-04T18:00:00-05:00' }], null, msp).sun,
+    /Sunset 6:49 PM<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 7:15 AM$/);
   // Fairbanks in June: the sunset comes after midnight, and says so.
   const fairbanks = k.forecastRowExtras([{ startTime: '2026-06-21T06:00:00-08:00', endTime: '2026-06-21T18:00:00-08:00' }], null, { lat: 64.84, lon: -147.72 });
   assert.match(fairbanks.sun, /Sunset 12:\d\d AM \(after midnight\)<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 2:\d\d AM$/);
@@ -3496,6 +3515,8 @@ test('air quality and pressure: Open-Meteo, rounded position, never fatal', asyn
     ${html.match(/const OPEN_METEO_AIR\s+= '[^']+';/)[0]}
     ${html.match(/const OPEN_METEO_FORECAST = '[^']+';/)[0]}
     ${html.match(/const AQI_POLLUTANTS = \{[\s\S]*?\};/)[0]}
+    ${extractFunction('hasAir')}
+    ${extractFunction('hasPressure')}
     async ${extractFunction('fetchAirAndPressure')}
     return fetchAirAndPressure;
   })()`, { fetchJsonWithTimeout: async url => {
@@ -3520,9 +3541,30 @@ test('air quality and pressure: Open-Meteo, rounded position, never fatal', asyn
   assert.equal(got.aqi.get('2026-10-03T00').pollutant, 'fine particles (PM2.5)');
   assert.equal(got.aqi.get('2026-10-03T02').pollutant, 'ozone');
   assert.equal(JSON.stringify([...got.pressure]), '[["2026-10-03T00",1016.2]]');
-  // Credited as the licences ask (Open-Meteo, and CAMS for the air data), or said
-  // to be unavailable when nothing came.
-  assert.match(extractFunction('openForecast'), /hasAirOrPressure\(extras\)\s*\? ' · Air quality &amp; pressure: <a href="https:\/\/open-meteo\.com\/"[^\n]*\n[^\n]*Copernicus CAMS<\/a>\)'\s*: ' · Air quality and pressure are unavailable right now'\);/);
+  // Credited as the licences ask — Open-Meteo, and CAMS for the air data — for
+  // what is shown, and what couldn't be had is said to be missing.
+  const credit = vm.runInNewContext(`(() => {
+    ${extractFunction('hasAir')} ${extractFunction('hasPressure')} ${extractFunction('airSourcesHtml')}
+    return airSourcesHtml;
+  })()`);
+  const text = html => html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&');
+  const both = { aqi: new Map([['k', {}]]), aqiNow: 30, pressure: new Map([['k', 1015]]) };
+  assert.equal(text(credit(both)), ' · Air quality & pressure: Open-Meteo (air data: Copernicus CAMS)');
+  assert.equal(text(credit({ ...both, aqi: new Map(), aqiNow: null })),
+    ' · Pressure: Open-Meteo · Air quality is unavailable right now', 'no CAMS credit without its data');
+  assert.equal(text(credit({ ...both, pressure: new Map() })),
+    ' · Air quality: Open-Meteo (air data: Copernicus CAMS) · The pressure forecast is unavailable right now');
+  assert.equal(credit(null), ' · Air quality and pressure are unavailable right now');
+  assert.match(credit(both), /<a href="https:\/\/open-meteo\.com\/" target="_blank" rel="noopener">Open-Meteo<\/a>/);
+  assert.match(extractFunction('openForecast'), /forecast\.updated[^\n]*\n\s*airSourcesHtml\(extras\);/);
+  // Given an earlier answer that has the pressure, only the air quality is asked
+  // for again, and the pressure is kept as it was.
+  requested.length = 0;
+  const again = await fetchAirAndPressure(29.5, -98.5, { aqi: new Map(), aqiNow: null, pressure: got.pressure });
+  assert.equal(requested.length, 1);
+  assert.match(requested[0], /air-quality/);
+  assert.equal(again.pressure, got.pressure);
+  assert.equal(again.aqiNow, 36);
   // A part that fails is simply empty; nothing throws.
   answer = url => (url.includes('air-quality') ? new TypeError('Failed to fetch') : { ok: false });
   const none = await fetchAirAndPressure(29.5, -98.5);

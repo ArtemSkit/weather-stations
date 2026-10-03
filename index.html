@@ -6282,9 +6282,11 @@ async function fetchAreaForecast(lat, lon) {
   const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
   const hit = forecastViewCache.get(key);
   if (hit && Date.now() - hit.at < FORECAST_VIEW_TTL_MS) {
-    // Air and pressure that couldn't be had last time are asked for again,
-    // rather than kept missing for as long as the NWS forecast is reused.
-    if (!hasAirOrPressure(hit.extras)) hit.extras = await fetchAirAndPressure(lat, lon);
+    // Air quality or pressure that couldn't be had last time is asked for again
+    // (only what's missing), rather than kept missing as long as the NWS forecast is reused.
+    if (!hasAir(hit.extras) || !hasPressure(hit.extras)) {
+      hit.extras = await fetchAirAndPressure(lat, lon, hit.extras);
+    }
     return hit;
   }
 
@@ -6486,9 +6488,14 @@ const AQI_POLLUTANTS = {
   us_aqi_sulphur_dioxide: 'sulfur dioxide', us_aqi_carbon_monoxide: 'carbon monoxide'
 };
 
-/** Whether fetchAirAndPressure's answer has anything in it. */
-function hasAirOrPressure(extras) {
-  return Boolean(extras && (extras.aqiNow != null || extras.aqi.size || extras.pressure.size));
+/** Whether fetchAirAndPressure's answer has air quality in it. */
+function hasAir(extras) {
+  return Boolean(extras && (extras.aqiNow != null || extras.aqi.size));
+}
+
+/** Whether fetchAirAndPressure's answer has the pressure forecast in it. */
+function hasPressure(extras) {
+  return Boolean(extras && extras.pressure.size);
 }
 
 /** The UTC hour a timestamp falls in, as a key ("2026-10-03T20"); '' if unreadable. */
@@ -6502,10 +6509,12 @@ function utcHourKey(iso) {
  * for a point, by UTC hour ("2026-10-03T20", as utcHourKey gives for the NWS's
  * times). Never throws: either part that fails is simply empty, and the NWS
  * forecast shows without it.
+ * @param {Object} [have] - an earlier answer: only the parts missing from it are
+ *        asked for again, and the rest is kept
  * @returns {Promise<{aqi: Map<string,{value:number, pollutant:string}>,
  *                    pressure: Map<string,number>, aqiNow: ?number}>}
  */
-async function fetchAirAndPressure(lat, lon) {
+async function fetchAirAndPressure(lat, lon, have = null) {
   // Rounded to ~11 km like every other third-party request (and both grids are coarser).
   // UTC times, not the place's clock: Open-Meteo gives a whole answer one UTC offset
   // (today's, wrong across a daylight-saving change), and the rounded point can
@@ -6513,9 +6522,11 @@ async function fetchAirAndPressure(lat, lon) {
   const where = '?latitude=' + lat.toFixed(1) + '&longitude=' + lon.toFixed(1) + '&timezone=GMT';
   const get = url => fetchJsonWithTimeout(url, {}, 8000)
     .then(({ response, data }) => (response.ok ? data : null), () => null);
+  const keepAir = hasAir(have), keepPressure = hasPressure(have);
   const [air, sky] = await Promise.all([
-    get(OPEN_METEO_AIR + where + '&forecast_days=7&current=us_aqi&hourly=us_aqi,' + Object.keys(AQI_POLLUTANTS).join(',')),
-    get(OPEN_METEO_FORECAST + where + '&forecast_days=8&hourly=pressure_msl')
+    keepAir ? null
+      : get(OPEN_METEO_AIR + where + '&forecast_days=7&current=us_aqi&hourly=us_aqi,' + Object.keys(AQI_POLLUTANTS).join(',')),
+    keepPressure ? null : get(OPEN_METEO_FORECAST + where + '&forecast_days=8&hourly=pressure_msl')
   ]);
   // Open-Meteo lists each hour as "2026-10-03T20:00" (UTC, as asked).
   const byHour = (data, read) => {
@@ -6540,7 +6551,11 @@ async function fetchAirAndPressure(lat, lon) {
   const pressure = byHour(sky, (hourly, i) =>
     (Number.isFinite(hourly.pressure_msl?.[i]) ? hourly.pressure_msl[i] : null));
   const now = air?.current?.us_aqi;
-  return { aqi, pressure, aqiNow: Number.isFinite(now) ? Math.round(now) : null };
+  return {
+    aqi: keepAir ? have.aqi : aqi,
+    aqiNow: keepAir ? have.aqiNow : (Number.isFinite(now) ? Math.round(now) : null),
+    pressure: keepPressure ? have.pressure : pressure
+  };
 }
 
 /**
@@ -6584,39 +6599,61 @@ function forecastRowExtras(parts, extras, point) {
   const out = { sun: '', air: '', facts: '' };
   const facts = [];
 
-  // Sun: for the date the row starts on, on the place's own clock.
+  // Sun, on the place's own clock. A day row: that day's sunrise and sunset. A
+  // night on its own ("Tonight", "Overnight"): the sunset it starts with and the
+  // sunrise it ends with — not its date's, whose sunrise is already over (or, for
+  // a night starting after midnight, whose sunset is still to come).
   const when = forecastLocalTime(first?.startTime);
   const offset = isoOffsetMinutes(first?.startTime);
-  const sun = when && offset != null && point && sunTimes(when.dayKey, point.lat, point.lon);
-  if (sun) {
-    // In the far north a summer sunset can come after midnight: say so.
-    const clock = ms => {
-      const date = new Date(ms + offset * 60_000).toISOString().slice(0, 10);
-      return clockLabel(ms, offset) +
-        (date > when.dayKey ? ' (after midnight)' : date < when.dayKey ? ' (the evening before)' : '');
+  const endOffset = isoOffsetMinutes(last?.endTime) ?? offset;
+  const dateAt = (ms, off) => new Date(ms + off * 60_000).toISOString().slice(0, 10);
+  const nightOnly = parts.length === 1 && first?.isDaytime === false;
+  const endMs = Date.parse(last?.endTime);
+  let eveningKey = when?.dayKey, morningKey = when?.dayKey;
+  if (nightOnly && Number.isFinite(endMs) && offset != null) {
+    eveningKey = dateAt(endMs - 12 * 3_600_000, offset);   // a night ends in the morning, ~12 h after dusk
+    morningKey = dateAt(endMs, endOffset);
+  }
+  const evening = when && offset != null && point && sunTimes(eveningKey, point.lat, point.lon);
+  const morning = evening && nightOnly ? sunTimes(morningKey, point.lat, point.lon) : evening;
+  if (evening && morning) {
+    // "7:24 AM" — and in the far north, where a summer sunset can come after
+    // midnight, the day it falls on when that isn't `dayKey`.
+    const clock = (ms, off, dayKey) => {
+      const date = dateAt(ms, off);
+      return clockLabel(ms, off) +
+        (date > dayKey ? ' (after midnight)' : date < dayKey ? ' (the evening before)' : '');
     };
-    const twilight = typeof sun.light === 'object';
-    if (typeof sun.sun === 'object') {
+    const atDusk = ms => clock(ms, offset, eveningKey);
+    const atDawn = ms => clock(ms, nightOnly ? endOffset : offset, morningKey);
+    if (typeof evening.sun === 'object' && typeof morning.sun === 'object') {
       // Sunset first and brightest: the time most people look for at a glance.
-      out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>Sunset ' + clock(sun.sun.set) +
-                '</span> · <span aria-hidden="true">🌅 </span>Sunrise ' + clock(sun.sun.rise);
-      // Opened: the whole day in order, twilight included ("last light" is when it
-      // gets too dark to see outdoors without lights, some 25 minutes after sunset).
-      const steps = [
-        twilight && 'first light ' + clock(sun.light.rise),
-        'sunrise ' + clock(sun.sun.rise),
-        'sunset ' + clock(sun.sun.set),
-        twilight ? 'last light ' + clock(sun.light.set) : sun.light === 'up' && 'light all night'
-      ].filter(Boolean).join(' · ');
-      facts.push('<p><b>Daylight:</b> ' + steps + ' (' + durationLabel(sun.sun.set - sun.sun.rise) +
-        ' of sun)</p>');
-    } else if (sun.sun === 'up') {
-      out.sun = '<span class="fc-sunset"><span aria-hidden="true">☀️ </span>No sunset</span> — the sun stays up all day';
-      facts.push('<p><b>Daylight:</b> the sun stays up all day.</p>');
+      out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>Sunset ' + atDusk(evening.sun.set) +
+                '</span> · <span aria-hidden="true">🌅 </span>Sunrise ' + atDawn(morning.sun.rise);
+      // Opened: in time order, twilight included ("last light" is when it gets too
+      // dark to see outdoors without lights, some 25 minutes after sunset).
+      const firstLight = typeof morning.light === 'object' && 'first light ' + atDawn(morning.light.rise);
+      const lastLight = typeof evening.light === 'object' ? 'last light ' + atDusk(evening.light.set)
+        : evening.light === 'up' && 'light all night';
+      const sunrise = 'sunrise ' + atDawn(morning.sun.rise), sunset = 'sunset ' + atDusk(evening.sun.set);
+      const steps = (nightOnly ? [sunset, lastLight, firstLight, sunrise] : [firstLight, sunrise, sunset, lastLight])
+        .filter(Boolean).join(' · ');
+      const span = nightOnly
+        ? durationLabel(morning.sun.rise - evening.sun.set) + ' from sunset to sunrise'
+        : durationLabel(evening.sun.set - morning.sun.rise) + ' of sun';
+      facts.push('<p><b>Daylight:</b> ' + steps + ' (' + span + ')</p>');
     } else {
-      out.sun = '<span aria-hidden="true">🌑 </span>No sunrise — the sun stays down all day';
-      facts.push('<p><b>Daylight:</b> the sun stays down all day' + (twilight
-        ? '; twilight from ' + clock(sun.light.rise) + ' to ' + clock(sun.light.set) : '') + '.</p>');
+      // Midnight sun or polar night (on the day, or either side of the night).
+      const sun = typeof evening.sun === 'object' ? morning : evening;
+      const clockOf = sun === evening ? atDusk : atDawn;
+      if (sun.sun === 'up') {
+        out.sun = '<span class="fc-sunset"><span aria-hidden="true">☀️ </span>No sunset</span> — the sun stays up all day';
+        facts.push('<p><b>Daylight:</b> the sun stays up all day.</p>');
+      } else {
+        out.sun = '<span aria-hidden="true">🌑 </span>No sunrise — the sun stays down all day';
+        facts.push('<p><b>Daylight:</b> the sun stays down all day' + (typeof sun.light === 'object'
+          ? '; twilight from ' + clockOf(sun.light.rise) + ' to ' + clockOf(sun.light.set) : '') + '.</p>');
+      }
     }
   }
 
@@ -6775,6 +6812,23 @@ function selectForecastTab(tab) {
   fcHours.hidden = days;
 }
 
+/**
+ * The footer's credit for the air quality and pressure, as HTML (" · …"). Open-Meteo's
+ * data is free for non-commercial use, credited (CC BY 4.0), and its air-quality
+ * data is to be credited to Copernicus's CAMS as well. Each is credited for what is
+ * actually shown; what couldn't be had is said to be missing.
+ */
+function airSourcesHtml(extras) {
+  const air = hasAir(extras), pressure = hasPressure(extras);
+  const shown = air && pressure ? 'Air quality &amp; pressure' : air ? 'Air quality' : 'Pressure';
+  const missing = !air && !pressure ? 'Air quality and pressure are' : !air ? 'Air quality is'
+    : !pressure ? 'The pressure forecast is' : '';
+  return (air || pressure
+    ? ' · ' + shown + ': <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>' +
+      (air ? ' (air data: <a href="https://atmosphere.copernicus.eu/" target="_blank" rel="noopener">Copernicus CAMS</a>)' : '')
+    : '') + (missing ? ' · ' + missing + ' unavailable right now' : '');
+}
+
 /** Open the forecast for the area on the map (or load it again: the Retry button). */
 async function openForecast() {
   if (!forecastPoint) {
@@ -6809,14 +6863,9 @@ async function openForecast() {
       forecastNow.innerHTML = 'Air quality now: ' + aqiHtml(extras.aqiNow);
       forecastNow.hidden = false;
     }
-    // Open-Meteo's data is free for non-commercial use, credited (CC BY 4.0), and
-    // its air-quality data is to be credited to Copernicus's CAMS as well.
     forecastFoot.innerHTML = 'National Weather Service' +
       (forecast.updated ? ' · updated ' + escapeHtml(formatWhen(forecast.updated)) : '') +
-      (hasAirOrPressure(extras)
-        ? ' · Air quality &amp; pressure: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>' +
-          ' (air data: <a href="https://atmosphere.copernicus.eu/" target="_blank" rel="noopener">Copernicus CAMS</a>)'
-        : ' · Air quality and pressure are unavailable right now');
+      airSourcesHtml(extras);
   } catch (error) {
     if (seq !== forecastSeq || !forecastDialog.open) return;
     fcDays.innerHTML = fcHours.innerHTML =

@@ -899,6 +899,10 @@
   .fc-now { margin-top: 3px; font-size: 0.7rem; }
   .fc-foot a { color: var(--accent); white-space: nowrap; }   /* not split at "Open-|Meteo" */
   .fc-hour-air { display: block; font-size: 0.66rem; }
+  /* Phones: "Sky · wind" on one line, "AQI · pressure" under it. */
+  .fc-hour-sky:not(:empty) + .fc-hour-wind:not(:empty)::before,
+  .fc-hour-aqi:not(:empty) + .fc-hour-press:not(:empty)::before { content: ' · '; }
+  .fc-hour.fc-hour-head { display: none; }   /* (outranks .fc-hour's grid) */
   .fc-day p { margin: 0; padding: 0 16px 12px 58px; font-size: 0.74rem; line-height: 1.55; color: var(--text-muted); }
   .fc-day p b { color: var(--text); font-weight: 700; }
   /* Hourly: a day heading that stays in view, then one line per hour. */
@@ -1506,6 +1510,187 @@
       #toast { bottom: calc(159px + var(--safe-bottom)); }
     }
   }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     FORECAST ON WIDE SCREENS — the week at a glance (section 14D)
+     From 960 × 600 px up the dialog grows to use the screen, and the 7-day list
+     gives way to a timeline: the days side by side over one continuous chart of
+     their hours, the nights shaded from sunset to sunrise. After the phone rules,
+     so a large touch screen (a tablet in landscape) gets it too.
+     ════════════════════════════════════════════════════════════════════════════ */
+  .fc-week { display: none; }
+  @media (min-width: 960px) and (min-height: 600px) {
+    #forecast-dialog {
+      width: min(1880px, calc(100vw - 64px));   /* big monitors: use them (text keeps its size, the chart widens) */
+      max-height: min(94vh, 1000px); max-height: min(94dvh, 1000px);
+      margin: auto; border-radius: 10px; border-bottom: 1px solid var(--border);
+    }
+    .fc-foot { padding-bottom: 8px; }
+    .fc-place, .fc-now { display: inline-block; margin-right: 18px; }   /* one line: room for the week */
+    .fc-now[hidden] { display: none; }
+    #fc-days > .fc-day { display: none; }   /* the phone list */
+    .fc-week { display: block; }
+    /* Hourly: a table — one row per hour, its readings in aligned columns. */
+    .fc-hour {
+      /* (Its minimums fit the 896 px dialog of a 960 px window.) */
+      grid-template-columns: 56px 26px 112px 92px minmax(110px, 1.1fr) minmax(90px, 0.7fr) minmax(140px, 0.8fr) minmax(96px, 0.7fr);
+      gap: 12px; padding: 8px 20px;
+    }
+    .fc-hour-short, .fc-hour-air { display: contents; }
+    /* (As specific as the phone rule it undoes: columns need no separators.) */
+    .fc-hour-sky:not(:empty) + .fc-hour-wind:not(:empty)::before,
+    .fc-hour-aqi:not(:empty) + .fc-hour-press:not(:empty)::before { content: none; }
+    /* The chance of rain as a bar behind its number: 100% fills the cell. */
+    .fc-hour:not(.fc-hour-head) .fc-hour-pop {
+      padding: 2px 6px; border-radius: 3px;
+      background: linear-gradient(90deg, rgba(90,169,255,0.32) var(--pop, 0%), rgba(90,169,255,0.06) 0);
+    }
+    .fc-hour-sky { color: var(--text); }
+    .fc-hour-air > span { font-size: 0.72rem; }
+    .fc-hour.fc-hour-head {
+      display: grid; padding-top: 10px; padding-bottom: 8px; border-top: 0;
+      font-size: 0.64rem; color: var(--text-muted);
+    }
+    .fc-hour-day { padding-left: 20px; }
+  }
+
+  /* The days: columns as wide as their hours, hairlines between, the picked one lit. */
+  .fc-wk-days { display: grid; border-bottom: 1px solid var(--border); }
+  .fc-wk-day {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0;
+    margin: 0; padding: 14px 12px 14px 14px; text-align: left; cursor: pointer;
+    background: none; color: var(--text); font: inherit; overflow-wrap: break-word;
+    border: 0; border-left: 1px solid var(--border); box-shadow: inset 0 3px 0 transparent;
+    overflow: hidden;   /* a column never spills into its neighbour (or scrolls the dialog) */
+    transition: background-color 0.15s;
+  }
+  .fc-wk-day:first-child { border-left: 0; }
+  .fc-wk-day:hover { background: rgba(255,255,255,0.03); }
+  .fc-wk-day[aria-selected="true"] { background: var(--surface2); box-shadow: inset 0 3px 0 var(--accent); }
+  .fc-wk-day:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+  .fc-wk-name {
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.88rem;
+  }
+  .fc-wk-short { display: none; }
+  /* Narrower windows: "Wed" in place of "Wednesday" (still read out in full). */
+  @media (max-width: 1279px) {
+    .fc-wk-short { display: inline; }
+    .fc-wk-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .fc-wk-day { padding-left: 11px; padding-right: 8px; }
+    .fc-wk-name { font-size: 0.8rem; }
+    .fc-wk-sunset { font-size: 0.74rem; }
+  }
+  .fc-wk-date { margin-top: -4px; font-size: 0.64rem; color: var(--text-muted); }
+  .fc-wk-main { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 2px; }
+  .fc-wk-icon { font-size: 1.8rem; line-height: 1; }
+  .fc-wk-temps {
+    display: flex; flex-wrap: wrap; column-gap: 8px;
+    font-family: 'Space Mono', monospace; font-weight: 700; font-size: 1.08rem;
+  }
+  .fc-wk-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+  .fc-wk-meta > span { white-space: nowrap; }   /* "7:17 PM" stays whole; the pair may wrap */
+  .fc-wk-sky {
+    min-height: 2.7em; font-size: 0.68rem; line-height: 1.35; color: var(--text-muted);
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  }
+  .fc-wk-pop, .fc-wk-aqi { font-size: 0.66rem; color: var(--text-muted); }
+  .fc-wk-sunset { font-size: 0.8rem; font-weight: 700; color: #ffb37a; }   /* sunset: the one to spot */
+
+  /* The chart: strips stacked on one time line, nights shaded behind all of them. */
+  .fc-wk-chart { position: relative; border-bottom: 1px solid var(--border); outline: none; cursor: crosshair; }
+  .fc-wk-chart:focus-visible { box-shadow: inset 0 0 0 2px var(--text); }
+  .fc-wk-back { position: absolute; inset: 0; pointer-events: none; }
+  .fc-wk-back > span { position: absolute; top: 0; bottom: 0; }
+  .fc-wk-night    { background: rgba(2,5,14,0.55); }
+  .fc-wk-dusk     { background: linear-gradient(90deg, rgba(2,5,14,0.12), rgba(2,5,14,0.55)); }
+  .fc-wk-dawn     { background: linear-gradient(90deg, rgba(2,5,14,0.55), rgba(2,5,14,0.12)); }
+  .fc-wk-twilight { background: rgba(2,5,14,0.3); }
+  .fc-wk-sep { width: 1px; background: var(--border); }
+  .fc-wk-sel { background: rgba(0,212,255,0.05); box-shadow: inset 1px 0 rgba(0,212,255,0.4), inset -1px 0 rgba(0,212,255,0.4); }
+  .fc-wk-now { width: 0; border-left: 1px solid var(--accent); }
+  /* Under the strip name, on a backing like the other labels. */
+  .fc-wk-now > span {
+    position: absolute; top: 28px; left: 5px; padding: 0 5px; border-radius: 3px;
+    background: rgba(17,24,39,0.92); font-size: 0.68rem; font-weight: 700; color: var(--accent);
+  }
+  .fc-wk-strip { position: relative; }
+  .fc-wk-strip + .fc-wk-strip { border-top: 1px solid rgba(30,58,95,0.55); }
+  .fc-wk-strip svg { display: block; width: 100%; overflow: visible; }
+  .fc-wk-label {
+    position: absolute; left: 14px; top: 7px; display: flex; flex-wrap: wrap; gap: 4px 12px;
+    font-size: 0.64rem; color: var(--text-muted); pointer-events: none;
+  }
+  .fc-wk-label .fc-aqi { color: var(--text-muted); }
+  .fc-wk-line {
+    fill: none; stroke: url(#fc-wk-heat); stroke-width: 2.5;
+    stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
+  }
+  .fc-wk-area { fill: url(#fc-wk-heat); fill-opacity: 0.12; }
+  .fc-wk-rain-area { fill: #5aa9ff; fill-opacity: 0.7; stroke: #5aa9ff; stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .fc-wk-base { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .fc-wk-air rect { fill: var(--aqi); fill-opacity: 0.85; shape-rendering: crispEdges; }
+  .fc-wk-pressure path { fill: none; stroke: #b9a7ff; stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  /* Labelled points: a dot (with a ring of the surface) and its value in text ink,
+     large and on a dark backing so it never blends into the curve or a day divider. */
+  .fc-wk-pt { position: absolute; width: 0; height: 0; pointer-events: none; }
+  .fc-wk-pt::before {
+    content: ''; position: absolute; left: -5px; top: -5px; width: 10px; height: 10px;
+    border-radius: 50%; box-shadow: 0 0 0 2px var(--surface);
+  }
+  .fc-wk-pt b {
+    position: absolute; left: 0; transform: translateX(-50%); white-space: nowrap;
+    padding: 1px 6px; border-radius: 4px; background: rgba(17,24,39,0.92);
+    font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.86rem; line-height: 1.35; color: var(--text);
+  }
+  .fc-wk-pt-hi::before { background: #ffb37a; }
+  .fc-wk-pt-lo::before { background: #8fd3ff; }
+  .fc-wk-pt-ph::before, .fc-wk-pt-pl::before { background: #b9a7ff; }
+  .fc-wk-pt-hi b { bottom: 9px; }
+  .fc-wk-pt-lo b { top: 9px; }
+  /* Pressure values sit beside their dot: the strip has no room above or below. */
+  .fc-wk-pt-ph b, .fc-wk-pt-pl b { top: 0; left: 10px; transform: translateY(-50%); font-size: 0.76rem; }
+  .fc-wk-pt-end.fc-wk-pt-ph b, .fc-wk-pt-end.fc-wk-pt-pl b { left: auto; right: 10px; }
+  /* At the chart's edges a label leans inwards instead of hanging off it. */
+  .fc-wk-pt-start.fc-wk-pt-hi b, .fc-wk-pt-start.fc-wk-pt-lo b { transform: translateX(-10px); }
+  .fc-wk-pt-end.fc-wk-pt-hi b, .fc-wk-pt-end.fc-wk-pt-lo b { transform: translateX(calc(-100% + 10px)); }
+  .fc-wk-gap {
+    position: absolute; top: 50%; transform: translate(-50%, -50%); max-width: 22%;
+    font-size: 0.66rem; color: var(--text-muted); text-align: center;
+  }
+  /* The hour under the pointer (or the keyboard's): a hairline, a dot, the numbers. */
+  .fc-wk-cursor { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid rgba(226,234,246,0.6); pointer-events: none; }
+  .fc-wk-dot {
+    position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
+    background: var(--text); box-shadow: 0 0 0 2px var(--surface); pointer-events: none;
+  }
+  .fc-wk-tip {
+    position: absolute; top: 30px; z-index: 2; display: grid; gap: 2px; min-width: 160px;
+    margin-left: 14px; padding: 9px 11px; pointer-events: none;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.55); font-size: 0.68rem; line-height: 1.45; color: var(--text);
+  }
+  .fc-wk-tip[hidden] { display: none; }
+  .fc-wk-tip-left { transform: translateX(calc(-100% - 28px)); }
+  .fc-wk-tip b { font-family: 'Syne', sans-serif; font-size: 0.76rem; }
+  .fc-wk-tip-temp { font-family: 'Space Mono', monospace; font-weight: 700; font-size: 1rem; color: var(--accent); }
+  .fc-wk-tip-temp small { margin-left: 6px; font-size: 0.66rem; font-weight: 400; color: var(--text-muted); }
+
+  /* Windows High Contrast drops backgrounds and shadows: outline the picked day and
+     the focused chart instead, and frame the labels. */
+  @media (forced-colors: active) {
+    .fc-wk-day[aria-selected="true"] { outline: 3px solid Highlight; outline-offset: -3px; }
+    .fc-wk-chart:focus-visible { outline: 2px solid Highlight; outline-offset: -2px; }
+    .fc-wk-pt b, .fc-wk-now > span { border: 1px solid CanvasText; }
+  }
+
+  /* The picked day in full: the forecaster's words beside its daylight, air and pressure. */
+  .fc-wk-detail { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 0 28px; padding: 16px 20px 6px; }
+  .fc-wk-title { margin: 0 0 8px; font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1rem; }
+  .fc-wk-detail p { margin: 0 0 10px; max-width: 72ch; font-size: 0.76rem; line-height: 1.6; color: var(--text-muted); }
+  .fc-wk-detail p b { color: var(--text); }
+  .fc-wk-facts { padding-left: 24px; border-left: 1px solid var(--border); }
+  .fc-wk-facts p:first-child { margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -6593,11 +6778,14 @@ function hpaToInHg(hpa) {
  * @param {Object[]} parts   - the row's NWS periods (a day and its night, or one)
  * @param {Object}  [extras] - fetchAirAndPressure's answer
  * @param {{lat:number, lon:number}} [point] - where the forecast is
- * @returns {{sun: string, air: string, facts: string}} HTML ('' where nothing is known)
+ * @returns {{sun: string, air: string, facts: string, sunsetAt: string, aqi: ?number}} HTML
+ *          ('' where nothing is known), plus the plain sunset time and worst AQI the
+ *          wide-screen week's day columns show
  */
 function forecastRowExtras(parts, extras, point) {
   const first = parts[0], last = parts[parts.length - 1];
-  const out = { sun: '', air: '', facts: '' };
+  // sunsetAt and aqi are plain values for the wide-screen week's day columns.
+  const out = { sun: '', air: '', facts: '', sunsetAt: '', aqi: null };
   const facts = [];
 
   // Sun, on the place's own clock. A day row: that day's sunrise and sunset. A
@@ -6629,7 +6817,8 @@ function forecastRowExtras(parts, extras, point) {
     const atDawn = ms => clock(ms, nightOnly ? endOffset : offset, morningKey);
     if (typeof evening.sun === 'object' && typeof morning.sun === 'object') {
       // Sunset first and brightest: the time most people look for at a glance.
-      out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>Sunset ' + atDusk(evening.sun.set) +
+      out.sunsetAt = atDusk(evening.sun.set);
+      out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>Sunset ' + out.sunsetAt +
                 '</span> · <span aria-hidden="true">🌅 </span>Sunrise ' + atDawn(morning.sun.rise);
       // Opened: in time order, twilight included ("last light" is when it gets too
       // dark to see outdoors without lights, some 25 minutes after sunset).
@@ -6649,6 +6838,7 @@ function forecastRowExtras(parts, extras, point) {
       // (Utqiaġvik, May 10: "Sunset 1:50 AM (after midnight) · then the sun stays up").
       const dusk = typeof evening.sun === 'object';
       const dawn = typeof morning.sun === 'object';
+      if (dusk) out.sunsetAt = atDusk(evening.sun.set);
       out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>' +
         (dusk ? 'Sunset ' + atDusk(evening.sun.set) : 'No sunset') + '</span> · ' +
         (dawn ? '<span aria-hidden="true">🌅 </span>Sunrise ' + atDawn(morning.sun.rise)
@@ -6703,6 +6893,7 @@ function forecastRowExtras(parts, extras, point) {
     const [worstKey, worst] = air.reduce((a, b) => (b[1].value > a[1].value ? b : a));
     const category = aqiCategory(worst.value);
     out.air = aqiHtml(worst.value);
+    out.aqi = worst.value;
     facts.push('<p><b>Air quality:</b> up to ' + worst.value + ', ' + category.label.toLowerCase() +
       (worst.pollutant ? ' — mostly ' + worst.pollutant : '') + ', worst around ' + hourOf(worstKey) +
       runsOut(air, 'air-quality') + '. ' + category.advice + '</p>');
@@ -6796,19 +6987,481 @@ function renderForecastHours(periods, now = Date.now(), extras) {
     const key = utcHourKey(period.startTime);
     const air = extras?.aqi?.get(key);
     const hpa = extras?.pressure?.get(key);
-    const more = [air ? aqiHtml(air.value) : '', hpa != null ? hpaToInHg(hpa) + ' inHg' : '']
-      .filter(Boolean).join(' · ');
+    // Every cell is always there (empty when unknown): on wide screens they line up
+    // as table columns; on phones sky and wind share a line, air and pressure the next.
+    const cell = (name, html) => '<span class="fc-hour-' + name + '">' + html + '</span>';
+    const extra = air || hpa != null
+      ? '<span class="fc-hour-air">' + cell('aqi', air ? aqiHtml(air.value) : '') +
+        cell('press', hpa != null ? hpaToInHg(hpa) + ' inHg' : '') + '</span>' : '';
     return `${heading}<li class="fc-hour">
       <span class="fc-hour-time">${when ? forecastHourLabel(when.hour) : ''}</span>
       <span class="fc-icon" aria-hidden="true">${forecastEmoji(period.shortForecast, period.isDaytime)}</span>
       <span class="fc-temp">${forecastTemp(period)}</span>
-      <span class="fc-hour-pop">${popText}</span>
-      <span class="fc-hour-short">${escapeHtml([period.shortForecast, wind].filter(Boolean).join(' · '))}` +
-        (more ? '<span class="fc-hour-air">' + more + '</span>' : '') + `</span>
+      <span class="fc-hour-pop" style="--pop:${pop != null ? Math.round(pop) : 0}%">${popText}</span>
+      <span class="fc-hour-short">` + cell('sky', escapeHtml(period.shortForecast || '')) +
+        cell('wind', escapeHtml(wind)) + extra + `</span>
     </li>`;
   });
-  return `<ul class="fc-hours">${rows.join('')}</ul>`;
+  // Column names for the wide-screen table (hidden on phones, where rows wrap).
+  const head = '<li class="fc-hour fc-hour-head" aria-hidden="true"><span>Time</span><span></span>' +
+    '<span>Temperature</span><span>Rain</span><span>Sky</span><span>Wind</span>' +
+    (extras && (extras.aqi.size || extras.pressure.size) ? '<span>Air quality</span><span>Pressure</span>' : '') + '</li>';
+  return `<ul class="fc-hours">${head}${rows.join('')}</ul>`;
 }
+
+/* ── The week at a glance (wide screens) ─────────────────────────────────────
+   On a wide screen the 7-day forecast becomes a timeline: the days side by side,
+   and under them one continuous chart of their hours — temperature, chance of
+   rain, air quality and pressure, each on its own strip and scale — with every
+   night shaded from sunset to sunrise. Each day's column sits right above its own
+   hours. Picking a day (or a spot on the chart) shows its full forecast below.
+   Phones keep the list (renderForecastDays); CSS shows one or the other. */
+
+/** The chart's width in SVG units (stretched to fit; strokes keep their width). */
+const WEEK_W = 1000;
+/** Strip heights in px, and where each plot lies inside its strip. */
+const WEEK_TEMP     = { height: 192, top: 60, bottom: 150 };   // room for the labels above and below
+const WEEK_RAIN     = { height: 58, base: 52, full: 32 };   // a 100% chance rises `full` px
+const WEEK_AIR      = { height: 40, top: 24, band: 8 };
+const WEEK_PRESSURE = { height: 80, top: 32, bottom: 56 };   // room under the low's label
+
+let weekModel = null;   // the open forecast's week, for the chart's pointer and keys
+let weekHour  = -1;     // the hour the chart's cursor is on; -1 = none
+
+/** A fraction of the chart's width as a CSS left/width ("12.500%"). */
+const weekPct = x => (x * 100).toFixed(3) + '%';
+/** One decimal: plenty for SVG coordinates, and keeps the markup small. */
+const weekNum = v => Math.round(v * 10) / 10;
+/** A labelled point near the chart's edge leans its label inwards (CSS). */
+const weekEdge = x => (x < 0.05 ? ' fc-wk-pt-start' : x > 0.92 ? ' fc-wk-pt-end' : '');
+
+/**
+ * The week laid out: the day columns (a day and its night, as in the list), the
+ * hours placed under them, the nights to shade and each strip's scale.
+ * @returns {Object|null} null when the NWS sent no usable periods
+ */
+function forecastWeekModel(periods, hours, extras, point) {
+  const rows = forecastDayPairs(periods).map(({ day, night }) => {
+    const parts = [day, night].filter(Boolean);
+    return { day, night, parts,
+             start: Date.parse(parts[0].startTime), end: Date.parse(parts[parts.length - 1].endTime) };
+  }).filter(row => row.end > row.start);   // (an unreadable time fails this too)
+  if (!rows.length) return null;
+  // Columns as wide as their hours, but never under 18, so a part day ("Tonight", or
+  // "This Afternoon" opened at 5 PM) still has room for its name and numbers. The
+  // chart follows the same columns, its time running evenly within each.
+  const weights = rows.map(row => Math.max((row.end - row.start) / 3_600_000, 18));
+  const total = weights.reduce((a, b) => a + b, 0);
+  let edge = 0;
+  rows.forEach((row, i) => {
+    row.from = edge / total;
+    row.width = weights[i] / total;
+    edge += weights[i];
+    row.more = forecastRowExtras(row.parts, extras, point);
+  });
+  const t0 = rows[0].start, t1 = rows[rows.length - 1].end;
+  /** Where a moment falls across the chart, 0–1. */
+  const xAt = t => {
+    if (!(t > t0)) return 0;
+    if (t >= t1) return 1;
+    const row = rows.find(r => t < r.end);
+    return row.from + (t - row.start) / (row.end - row.start) * row.width;
+  };
+  // Each hour at its middle, with its air quality and pressure (matched by UTC hour).
+  const points = (hours || []).map(period => {
+    const key = utcHourKey(period.startTime);
+    return { period, t: Date.parse(period.startTime) + 1_800_000, deg: forecastDegrees(period),
+             air: extras?.aqi?.get(key), hpa: extras?.pressure?.get(key) };
+  }).filter(h => h.deg && h.t >= t0 && h.t < t1);
+  points.forEach(h => { h.x = xAt(h.t); });
+  // Each strip its own scale (never two on one plot); a flat week still gets 4 units.
+  const temps = points.map(h => h.deg.f), hpas = points.map(h => h.hpa).filter(v => v != null);
+  const lowT = Math.min(...temps), spanT = Math.max(Math.max(...temps) - lowT, 4);
+  const lowP = Math.min(...hpas), spanP = Math.max(Math.max(...hpas) - lowP, 4);
+  return {
+    rows, points, t0, t1, xAt, selected: 0,
+    nights: weekNights(rows, point, xAt),
+    tempY: f => WEEK_TEMP.top + (1 - (f - lowT) / spanT) * (WEEK_TEMP.bottom - WEEK_TEMP.top),
+    pressureY: hpa => WEEK_PRESSURE.top + (1 - (hpa - lowP) / spanP) * (WEEK_PRESSURE.bottom - WEEK_PRESSURE.top)
+  };
+}
+
+/**
+ * The stretches of the week to shade, as chart fractions: dusk (sunset to last
+ * light), night (last light to first light), dawn (first light to sunrise), or
+ * all twilight where it never gets fully dark; a polar-night day is all night.
+ * @returns {{kind: string, from: number, to: number}[]}
+ */
+function weekNights(rows, point, xAt) {
+  const first = forecastLocalTime(rows[0].parts[0].startTime);
+  const offset = isoOffsetMinutes(rows[0].parts[0].startTime);
+  if (!point || !first || offset == null) return [];
+  const t0 = rows[0].start, t1 = rows[rows.length - 1].end;
+  const dayAfter = key => new Date(Date.parse(key + 'T00:00:00Z') + 86_400_000).toISOString().slice(0, 10);
+  const midnight = key => Date.parse(key + 'T00:00:00Z') - offset * 60_000;
+  const bands = [];
+  // From the evening before the first day (its night may still be on) to past the last.
+  let key = new Date(Date.parse(first.dayKey + 'T00:00:00Z') - 86_400_000).toISOString().slice(0, 10);
+  for (let i = 0; i < rows.length + 2; i++, key = dayAfter(key)) {
+    const today = sunTimes(key, point.lat, point.lon), next = sunTimes(dayAfter(key), point.lat, point.lon);
+    if (today.sun === 'down') { bands.push(['night', midnight(key), midnight(dayAfter(key))]); continue; }
+    if (typeof today.sun !== 'object') continue;   // the midnight sun: no night after this day
+    const rise = typeof next.sun === 'object' ? next.sun.rise : next.sun === 'down' ? midnight(dayAfter(key)) : null;
+    if (rise == null) continue;
+    const set = today.sun.set;
+    const dark = typeof today.light === 'object' ? today.light.set : null;
+    const light = typeof next.light === 'object' ? next.light.rise : null;
+    if (dark != null && light != null && light > dark) {
+      bands.push(['dusk', set, dark], ['night', dark, light], ['dawn', light, rise]);
+    } else {
+      bands.push(['twilight', set, rise]);   // never fully dark (the far north in summer)
+    }
+  }
+  return bands.map(([kind, from, to]) => ({ kind, from: xAt(Math.max(from, t0)), to: xAt(Math.min(to, t1)) }))
+    .filter(band => band.to > band.from);
+}
+
+/**
+ * An SVG path through points [x, y]: smooth, but never bulging past them (a
+ * monotone cubic — the curve shows no high or low the data doesn't have).
+ */
+function smoothPath(pts) {
+  if (!pts.length) return '';
+  const xy = (x, y) => weekNum(x) + ',' + weekNum(y);
+  if (pts.length < 2) return 'M' + xy(pts[0][0], pts[0][1]);
+  const n = pts.length, slope = [], tangent = [];
+  for (let i = 0; i < n - 1; i++) slope[i] = (pts[i + 1][1] - pts[i][1]) / (pts[i + 1][0] - pts[i][0]);
+  tangent[0] = slope[0];
+  tangent[n - 1] = slope[n - 2];
+  for (let i = 1; i < n - 1; i++) tangent[i] = slope[i - 1] * slope[i] <= 0 ? 0 : (slope[i - 1] + slope[i]) / 2;
+  // Fritsch–Carlson: shorten tangents that would make a segment overshoot.
+  for (let i = 0; i < n - 1; i++) {
+    if (slope[i] === 0) { tangent[i] = tangent[i + 1] = 0; continue; }
+    const a = tangent[i] / slope[i], b = tangent[i + 1] / slope[i], h = a * a + b * b;
+    if (h > 9) { const k = 3 / Math.sqrt(h); tangent[i] = k * a * slope[i]; tangent[i + 1] = k * b * slope[i]; }
+  }
+  let d = 'M' + xy(pts[0][0], pts[0][1]);
+  for (let i = 0; i < n - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], third = (x1 - x0) / 3;
+    d += 'C' + xy(x0 + third, y0 + tangent[i] * third) + ' ' + xy(x1 - third, y1 - tangent[i + 1] * third) + ' ' + xy(x1, y1);
+  }
+  return d;
+}
+
+/** A day's column: name and date, sky, high and low, rain chance, sunset, air. */
+function forecastWeekDayHtml(row, index, selected) {
+  const main = row.day || row.night;
+  const when = forecastLocalTime(main.startTime);
+  const [weekday, date] = (when?.day || '').split(', ');
+  // The NWS calls part of today "This Afternoon" (or "Today") and a night "Tonight".
+  const name = !row.day ? main.name || weekday : /^(this|today)\b/i.test(main.name || '') ? 'Today' : weekday || main.name;
+  const temp = (part, word, d) => d ? '<span class="fc-' + part + '"><span aria-hidden="true">' +
+    (part === 'hi' ? '↑' : '↓') + '</span><span class="sr-only">' + word + ' </span>' + d.f + '°</span>' : '';
+  const temps = temp('hi', 'High', row.day && forecastDegrees(row.day)) + temp('lo', 'Low', row.night && forecastDegrees(row.night));
+  const pops = row.parts.map(p => p.probabilityOfPrecipitation?.value).filter(v => v != null);
+  const pop = pops.length ? Math.round(Math.max(...pops)) : null;
+  return '<button type="button" role="tab" class="fc-wk-day" id="fc-wk-tab-' + index + '" data-row="' + index + '"' +
+      ' aria-selected="' + selected + '" aria-controls="fc-wk-detail" tabindex="' + (selected ? 0 : -1) + '">' +
+    // The full name, and a short one ("Wed") the CSS swaps in where columns are narrow.
+    '<span class="fc-wk-name"><span class="fc-wk-long">' + escapeHtml(name || '') + '</span>' +
+      '<span class="fc-wk-short" aria-hidden="true">' + escapeHtml(name === weekday ? name.slice(0, 3) : name || '') + '</span></span>' +
+    '<span class="fc-wk-date">' + escapeHtml(date || '') + '</span>' +
+    '<span class="fc-wk-main"><span class="fc-wk-icon" aria-hidden="true">' + forecastEmoji(main.shortForecast, !!row.day) +
+      '</span><span class="fc-wk-temps">' + (temps || '—') + '</span></span>' +
+    '<span class="fc-wk-sky">' + escapeHtml(main.shortForecast || '') + '</span>' +
+    '<span class="fc-wk-meta">' +
+      (row.more.sunsetAt ? '<span class="fc-wk-sunset"><span aria-hidden="true">🌇 </span><span class="sr-only">Sunset </span>' +
+        row.more.sunsetAt + '</span>' : '') +
+      (pop != null ? '<span class="fc-wk-pop"><span aria-hidden="true">💧 </span>' + pop +
+        '%<span class="sr-only"> chance of rain</span></span>' : '') +
+    '</span>' +
+    (row.more.aqi != null ? '<span class="fc-wk-aqi">' + aqiHtml(row.more.aqi) + '</span>' : '') +
+  '</button>';
+}
+
+/** The temperature strip: the curve (warm to cool), each day's high and each night's low. */
+function weekTempStrip(model) {
+  const { points, rows } = model;
+  const xy = points.map(h => [h.x * WEEK_W, model.tempY(h.deg.f)]);
+  const line = smoothPath(xy);
+  const area = line + 'L' + weekNum(xy[xy.length - 1][0]) + ',' + WEEK_TEMP.height +
+               'L' + weekNum(xy[0][0]) + ',' + WEEK_TEMP.height + 'Z';
+  // The high in each day's daytime and the low in each night, where the curve covers
+  // most of that period: a morning's few hours would pass for the day's high.
+  const extreme = (part, pick) => {
+    const from = Date.parse(part.startTime), to = Date.parse(part.endTime);
+    const hrs = points.filter(h => h.t >= from && h.t < to);
+    return hrs.length >= 3 && hrs.length * 2 >= (to - from) / 3_600_000
+      ? hrs.reduce((a, b) => (pick(b.deg.f, a.deg.f) ? b : a)) : null;
+  };
+  const marks = rows.flatMap(row => [
+    row.day && ['hi', extreme(row.day, (a, b) => a > b)],
+    row.night && ['lo', extreme(row.night, (a, b) => a < b)]
+  ]).filter(mark => mark && mark[1]).map(([kind, h]) =>
+    '<span class="fc-wk-pt fc-wk-pt-' + kind + weekEdge(h.x) + '" style="left:' + weekPct(h.x) + ';top:' +
+    weekNum(model.tempY(h.deg.f)) + 'px"><b>' + h.deg.f + '°</b></span>').join('');
+  // The hourly forecast reaches ~6½ days: past that, the columns stand alone (said
+  // so where there's room for it).
+  const end = points[points.length - 1].x;
+  const gap = end < 0.88 ? '<span class="fc-wk-gap" style="left:' + weekPct((end + 1) / 2) +
+    '">The hourly forecast doesn\'t reach this far yet</span>' : '';
+  return '<div class="fc-wk-strip fc-wk-temp" style="height:' + WEEK_TEMP.height + 'px">' +
+    '<span class="fc-wk-label">Temperature (°F)</span>' +
+    '<svg viewBox="0 0 ' + WEEK_W + ' ' + WEEK_TEMP.height + '" preserveAspectRatio="none" height="' + WEEK_TEMP.height + '" focusable="false">' +
+      '<defs><linearGradient id="fc-wk-heat" gradientUnits="userSpaceOnUse" x1="0" y1="' + WEEK_TEMP.top +
+        '" x2="0" y2="' + WEEK_TEMP.bottom + '"><stop offset="0" stop-color="#ffb37a"/><stop offset="1" stop-color="#8fd3ff"/></linearGradient></defs>' +
+      '<path class="fc-wk-area" d="' + area + '"/><path class="fc-wk-line" d="' + line + '"/>' +
+    '</svg>' + marks + gap + '</div>';
+}
+
+/**
+ * The rain strip: each hour's chance as a filled step (100% = full height). An area
+ * rather than bars, so a run of low chances reads as a low band, not a dotted line.
+ */
+function weekRainStrip(model) {
+  const { points } = model;
+  const y = h => WEEK_RAIN.base - (h.period.probabilityOfPrecipitation?.value || 0) / 100 * WEEK_RAIN.full;
+  // Each hour spans halfway to its neighbours.
+  const edge = i => (i <= 0 ? points[0].x : i >= points.length ? points[points.length - 1].x
+    : (points[i - 1].x + points[i].x) / 2) * WEEK_W;
+  let top = '';
+  points.forEach((h, i) => { top += 'L' + weekNum(edge(i)) + ',' + weekNum(y(h)) + 'L' + weekNum(edge(i + 1)) + ',' + weekNum(y(h)); });
+  const most = Math.max(0, ...points.map(h => h.period.probabilityOfPrecipitation?.value || 0));
+  const area = 'M' + weekNum(edge(0)) + ',' + WEEK_RAIN.base + top + 'L' + weekNum(edge(points.length)) + ',' + WEEK_RAIN.base + 'Z';
+  return '<div class="fc-wk-strip fc-wk-rain" style="height:' + WEEK_RAIN.height + 'px">' +
+    '<span class="fc-wk-label">Chance of rain' + (most ? ' (up to ' + Math.round(most) + '%)' : ' (none expected)') + '</span>' +
+    '<svg viewBox="0 0 ' + WEEK_W + ' ' + WEEK_RAIN.height + '" preserveAspectRatio="none" height="' + WEEK_RAIN.height + '" focusable="false">' +
+      '<line class="fc-wk-base" x1="0" x2="' + WEEK_W + '" y1="' + WEEK_RAIN.base + '" y2="' + WEEK_RAIN.base + '"/>' +
+      (most ? '<path class="fc-wk-rain-area" d="' + area + '"/>' : '') +
+    '</svg></div>';
+}
+
+/** The air strip: each hour in its EPA colour, with a key to the categories shown. */
+function weekAirStrip(model) {
+  const { points } = model;
+  const levels = new Set();
+  const cells = points.map((h, i) => {
+    if (!h.air) return '';
+    const level = aqiCategory(h.air.value).level;
+    levels.add(level);
+    const left = i ? (points[i - 1].x + h.x) / 2 : h.x;
+    const right = points[i + 1] ? (points[i + 1].x + h.x) / 2 : h.x;
+    return '<rect class="fc-aqi-' + level + '" x="' + weekNum(left * WEEK_W) + '" y="' + WEEK_AIR.top +
+           '" width="' + weekNum(Math.max(right - left, 0.001) * WEEK_W) + '" height="' + WEEK_AIR.band + '"/>';
+  }).join('');
+  if (!levels.size) return '';
+  const key = [...levels].sort().map(level => {
+    const value = [0, 25, 75, 125, 175, 250, 350][level];
+    return '<span class="fc-aqi fc-aqi-' + level + '">' + aqiCategory(value).label + '</span>';
+  }).join('');
+  return '<div class="fc-wk-strip fc-wk-air" style="height:' + WEEK_AIR.height + 'px">' +
+    '<span class="fc-wk-label">Air quality ' + key + '</span>' +
+    '<svg viewBox="0 0 ' + WEEK_W + ' ' + WEEK_AIR.height + '" preserveAspectRatio="none" height="' + WEEK_AIR.height + '" focusable="false">' +
+      cells + '</svg></div>';
+}
+
+/** The pressure strip: the line, with the week's highest and lowest marked. */
+function weekPressureStrip(model) {
+  const known = model.points.filter(h => h.hpa != null);
+  if (known.length < 2) return '';
+  const line = smoothPath(known.map(h => [h.x * WEEK_W, model.pressureY(h.hpa)]));
+  const top = known.reduce((a, b) => (b.hpa > a.hpa ? b : a)), low = known.reduce((a, b) => (b.hpa < a.hpa ? b : a));
+  const mark = (h, kind) => '<span class="fc-wk-pt fc-wk-pt-' + kind + weekEdge(h.x) + '" style="left:' + weekPct(h.x) + ';top:' +
+    weekNum(model.pressureY(h.hpa)) + 'px"><b>' + hpaToInHg(h.hpa) + '</b></span>';
+  return '<div class="fc-wk-strip fc-wk-pressure" style="height:' + WEEK_PRESSURE.height + 'px">' +
+    '<span class="fc-wk-label">Pressure (inHg)</span>' +
+    '<svg viewBox="0 0 ' + WEEK_W + ' ' + WEEK_PRESSURE.height + '" preserveAspectRatio="none" height="' + WEEK_PRESSURE.height + '" focusable="false">' +
+      '<path d="' + line + '"/></svg>' + mark(top, 'ph') + mark(low, 'pl') + '</div>';
+}
+
+/** The picked day in full: the forecaster's words, then its daylight, air and pressure. */
+function renderWeekDetail(model, index) {
+  const row = model?.rows[index];
+  if (!row) return '';
+  const main = row.day || row.night;
+  const when = forecastLocalTime(main.startTime);
+  return '<div class="fc-wk-words"><h3 class="fc-wk-title">' + escapeHtml(when ? when.day : main.name || '') + '</h3>' +
+    row.parts.map(p => '<p><b>' + escapeHtml(p.name || '') + ':</b> ' + escapeHtml(p.detailedForecast || '') + '</p>').join('') +
+    '</div>' + (row.more.facts ? '<div class="fc-wk-facts">' + row.more.facts + '</div>' : '');
+}
+
+/** The whole week view as HTML ('' without a model). */
+function renderForecastWeek(model, now = Date.now()) {
+  if (!model) return '';
+  const { rows, points } = model;
+  const selected = rows[model.selected];
+  const backdrop = model.nights.map(band => '<span class="fc-wk-' + band.kind + '" style="left:' +
+      weekPct(band.from) + ';width:' + weekPct(band.to - band.from) + '"></span>').join('') +
+    rows.slice(1).map(row => '<span class="fc-wk-sep" style="left:' + weekPct(row.from) + '"></span>').join('') +
+    '<span class="fc-wk-sel" style="left:' + weekPct(selected.from) + ';width:' + weekPct(selected.width) + '"></span>' +
+    (now >= model.t0 && now < model.t1
+      ? '<span class="fc-wk-now" style="left:' + weekPct(model.xAt(now)) + '"><span>Now</span></span>' : '');
+  const strips = points.length >= 2
+    ? weekTempStrip(model) + weekRainStrip(model) + weekAirStrip(model) + weekPressureStrip(model)
+    : '<p class="fc-empty">The NWS sent no hourly forecast for these days.</p>';
+  return '<div class="fc-week">' +
+    '<div class="fc-wk-days" role="tablist" aria-label="Days" style="grid-template-columns:' +
+      rows.map(row => 'minmax(0,' + row.width.toFixed(4) + 'fr)').join(' ') + '">' +
+      rows.map((row, i) => forecastWeekDayHtml(row, i, i === model.selected)).join('') + '</div>' +
+    // The strips are drawn for the eye; keyboard and screen-reader users step
+    // through the hours with the arrow keys (read out below), and the HOURLY tab
+    // lists them all.
+    '<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: temperature, chance of rain, air quality and pressure. Use the arrow keys to go through the hours and Enter to pick that day.">' +
+      '<div class="fc-wk-back" aria-hidden="true">' + backdrop + '</div>' +
+      '<div aria-hidden="true">' + strips + '</div>' +
+      '<span class="fc-wk-cursor" aria-hidden="true" hidden></span><span class="fc-wk-dot" aria-hidden="true" hidden></span>' +
+      '<div class="fc-wk-tip" aria-hidden="true" hidden></div>' +
+    '</div>' +
+    '<p class="sr-only" id="fc-wk-readout" aria-live="polite"></p>' +
+    '<div class="fc-wk-detail" id="fc-wk-detail" role="tabpanel" aria-labelledby="fc-wk-tab-' + model.selected + '">' +
+      renderWeekDetail(model, model.selected) + '</div>' +
+  '</div>';
+}
+
+/** One hour in the chart's tooltip: when, temperature, sky, rain, wind, air, pressure. */
+function weekHourHtml(h) {
+  const p = h.period;
+  const when = forecastLocalTime(p.startTime);
+  const pop = p.probabilityOfPrecipitation?.value;
+  const wind = [p.windDirection, p.windSpeed].filter(Boolean).join(' ');
+  return [
+    '<b>' + (when ? escapeHtml(when.day.split(',')[0]) + ', ' + forecastHourLabel(when.hour) : '') + '</b>',
+    '<span class="fc-wk-tip-temp">' + forecastTemp(p) + '</span>',
+    p.shortForecast ? '<span>' + escapeHtml(p.shortForecast) + '</span>' : '',
+    pop != null ? '<span>' + Math.round(pop) + '% chance of rain</span>' : '',
+    wind ? '<span>Wind ' + escapeHtml(wind) + '</span>' : '',
+    h.air ? '<span>' + aqiHtml(h.air.value) + '</span>' : '',
+    h.hpa != null ? '<span>Pressure ' + hpaToInHg(h.hpa) + ' inHg</span>' : ''
+  ].filter(Boolean).join('');
+}
+
+/** Put the chart's cursor and tooltip on hour `index` of the week (-1 hides them). */
+function showWeekHour(index) {
+  const chart = fcDays.querySelector('.fc-wk-chart');
+  if (!chart) return;
+  const h = weekModel?.points[index];
+  const cursor = chart.querySelector('.fc-wk-cursor'), dot = chart.querySelector('.fc-wk-dot');
+  const tip = chart.querySelector('.fc-wk-tip');
+  weekHour = h ? index : -1;
+  for (const el of [cursor, dot, tip]) el.hidden = !h;
+  if (!h) return;
+  cursor.style.left = dot.style.left = tip.style.left = weekPct(h.x);
+  dot.style.top = weekModel.tempY(h.deg.f) + 'px';   // the temperature strip opens the chart
+  tip.innerHTML = weekHourHtml(h);
+  tip.classList.toggle('fc-wk-tip-left', h.x > 0.62);   // on the side with room
+}
+
+/** The hour nearest to a spot across the chart (0–1), or -1 with no hours. */
+function weekHourAt(fraction) {
+  const model = weekModel;
+  if (!model?.points.length) return -1;
+  const row = model.rows.find(r => fraction < r.from + r.width) || model.rows[model.rows.length - 1];
+  const t = row.start + Math.min(Math.max((fraction - row.from) / row.width, 0), 1) * (row.end - row.start);
+  let best = 0;
+  model.points.forEach((h, i) => { if (Math.abs(h.t - t) < Math.abs(model.points[best].t - t)) best = i; });
+  return best;
+}
+
+/** The day an hour of the chart belongs to. */
+function weekRowOf(h) {
+  return weekModel.rows.findIndex(row => h.t >= row.start && h.t < row.end);
+}
+
+/** Pick a day: its column, its band on the chart, its forecast below. */
+function selectWeekDay(index, focusTab) {
+  const model = weekModel;
+  if (!model?.rows[index]) return;
+  model.selected = index;
+  const tabs = fcDays.querySelectorAll('.fc-wk-day');
+  tabs.forEach((tab, i) => {
+    tab.setAttribute('aria-selected', String(i === index));
+    tab.tabIndex = i === index ? 0 : -1;
+  });
+  const row = model.rows[index];
+  const band = fcDays.querySelector('.fc-wk-sel'), detail = fcDays.querySelector('#fc-wk-detail');
+  if (band) { band.style.left = weekPct(row.from); band.style.width = weekPct(row.width); }
+  if (detail) {
+    detail.innerHTML = renderWeekDetail(model, index);
+    detail.setAttribute('aria-labelledby', 'fc-wk-tab-' + index);
+  }
+  if (focusTab) tabs[index]?.focus();
+}
+
+/** Read an hour out to screen readers (the chart itself is drawn for the eye). */
+function readWeekHour(index) {
+  const readout = fcDays.querySelector('#fc-wk-readout');
+  const tip = fcDays.querySelector('.fc-wk-tip');
+  if (!readout || !tip || index < 0) return;
+  // The temperature is "71°F" plus a small "22°C": read as "71°F (22°C)", not run together.
+  readout.textContent = [...tip.children].map(el => {
+    const celsius = el.querySelector('small');
+    return celsius ? el.firstChild.textContent + ' (' + celsius.textContent + ')' : el.textContent;
+  }).join(', ');
+}
+
+// One set of listeners on the panel serves every week drawn into it.
+fcDays.addEventListener('click', e => {
+  const tab = e.target.closest('.fc-wk-day');
+  if (tab) { selectWeekDay(+tab.dataset.row); return; }
+  const chart = e.target.closest('.fc-wk-chart');
+  if (!chart || !weekModel) return;
+  // The hour where the click (or tap) landed: a tap brings no pointermove first.
+  const box = chart.getBoundingClientRect();
+  const hour = weekHourAt((e.clientX - box.left) / box.width);
+  if (hour < 0) return;
+  selectWeekDay(weekRowOf(weekModel.points[hour]));
+  showWeekHour(hour);   // and its numbers (a touch screen has no hover)
+});
+fcDays.addEventListener('pointermove', e => {
+  const chart = e.target.closest('.fc-wk-chart');
+  if (!chart || !weekModel) return;
+  const box = chart.getBoundingClientRect();
+  showWeekHour(weekHourAt((e.clientX - box.left) / box.width));
+});
+fcDays.addEventListener('pointerout', e => {
+  const chart = e.target.closest('.fc-wk-chart');
+  // Left the chart (not just moved between its parts), and the keyboard isn't using
+  // it (focus from a click doesn't count: the cursor would stick after the pointer left).
+  if (chart && !chart.contains(e.relatedTarget) && !chart.matches(':focus-visible')) showWeekHour(-1);
+});
+fcDays.addEventListener('keydown', e => {
+  if (!weekModel) return;
+  const tab = e.target.closest('.fc-wk-day');
+  if (tab) {   // the days: the usual tab-list keys
+    const last = weekModel.rows.length - 1, at = +tab.dataset.row;
+    const to = { ArrowRight: Math.min(at + 1, last), ArrowLeft: Math.max(at - 1, 0), Home: 0, End: last }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    selectWeekDay(to, true);
+    return;
+  }
+  if (!e.target.classList.contains('fc-wk-chart') || !weekModel.points.length) return;
+  const last = weekModel.points.length - 1;
+  const step = { ArrowRight: 1, ArrowLeft: -1, PageDown: 24, PageUp: -24 }[e.key];
+  const to = step !== undefined ? Math.min(Math.max(weekHour + step, 0), last)
+    : e.key === 'Home' ? 0 : e.key === 'End' ? last : null;
+  if (to != null) {
+    e.preventDefault();
+    showWeekHour(to);
+    readWeekHour(to);
+  } else if ((e.key === 'Enter' || e.key === ' ') && weekHour >= 0) {
+    e.preventDefault();
+    selectWeekDay(weekRowOf(weekModel.points[weekHour]));
+  }
+});
+fcDays.addEventListener('focusin', e => {
+  // Keyboard focus only: a click or tap puts the cursor where it landed instead.
+  if (!e.target.classList.contains('fc-wk-chart') || !e.target.matches(':focus-visible') ||
+      !weekModel?.points.length || weekHour >= 0) return;
+  // Start at the picked day's first hour.
+  const row = weekModel.rows[weekModel.selected];
+  const first = Math.max(weekModel.points.findIndex(h => h.t >= row.start), 0);
+  showWeekHour(first);
+  readWeekHour(first);
+});
+fcDays.addEventListener('focusout', e => {
+  if (e.target.classList.contains('fc-wk-chart')) showWeekHour(-1);
+});
 
 /**
  * A load error as the end of "Couldn't load the forecast: …": lower-case, and
@@ -6870,6 +7523,7 @@ async function openForecast() {
   forecastPlace.textContent = `Near ${lat.toFixed(3)}, ${lon.toFixed(3)}`;
   forecastFoot.textContent = 'National Weather Service';
   forecastNow.hidden = true;   // the last place's air doesn't describe this one
+  weekModel = null;            // …nor its week
   fcDays.innerHTML = fcHours.innerHTML = '<p class="fc-empty">Loading the forecast…</p>';
   if (!forecastDialog.open) forecastDialog.showModal();
   try {
@@ -6877,7 +7531,10 @@ async function openForecast() {
     if (seq !== forecastSeq || !forecastDialog.open) return;   // closed, or opened again
     if (forecast.place) forecastPlace.textContent = forecast.place;
     const extras = forecast.extras;
-    fcDays.innerHTML = renderForecastDays(forecast.days, extras, point);
+    weekModel = forecastWeekModel(forecast.days, forecast.hours, extras, point);
+    weekHour = -1;
+    // Both the phone list and the wide-screen week: CSS shows the one that fits.
+    fcDays.innerHTML = renderForecastDays(forecast.days, extras, point) + renderForecastWeek(weekModel);
     fcHours.innerHTML = renderForecastHours(forecast.hours, Date.now(), extras);
     if (extras?.aqiNow != null) {
       forecastNow.innerHTML = 'Air quality now: ' + aqiHtml(extras.aqiNow);

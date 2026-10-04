@@ -486,6 +486,11 @@
   .alert-card.alert-warn  .alert-event { color: var(--accent2); }
   .alert-card.alert-watch .alert-event { color: #ffae42; }
   .alert-card.alert-info  .alert-event { color: var(--yellow); }
+  /* The alert's colour on the map (live alerts): a small square before its name. */
+  .alert-swatch {
+    display: inline-block; width: 0.7em; height: 0.7em; margin-right: 7px; vertical-align: 0.02em;
+    border-radius: 2px; outline: 1px solid rgba(255,255,255,0.35);
+  }
 
   /* Card header (always visible) — click to reveal the full description. */
   /* The banner scrolls (overflow-y: auto), which also clips anything drawn outside
@@ -898,10 +903,12 @@
   .fc-aqi-4 { --aqi: #ff0000; } .fc-aqi-5 { --aqi: #8f3f97; } .fc-aqi-6 { --aqi: #7e0023; }
   .fc-now { margin-top: 3px; font-size: 0.7rem; }
   .fc-foot a { color: var(--accent); white-space: nowrap; }   /* not split at "Open-|Meteo" */
-  .fc-hour-air { display: block; font-size: 0.66rem; }
-  /* Phones: "Sky · wind" on one line, "AQI · pressure" under it. */
-  .fc-hour-sky:not(:empty) + .fc-hour-wind:not(:empty)::before,
-  .fc-hour-aqi:not(:empty) + .fc-hour-press:not(:empty)::before { content: ' · '; }
+  /* Phones: sky and wind on one line, AQI and pressure on the next, spaced apart
+     (no separators to strand at a line start); a reading that doesn't fit moves
+     down whole ("N 10 mph", "29.98 inHg" never split). */
+  .fc-hour-short, .fc-hour-air { display: flex; flex-wrap: wrap; column-gap: 12px; }
+  .fc-hour-air { flex-basis: 100%; font-size: 0.66rem; }
+  .fc-hour-wind, .fc-hour-aqi, .fc-hour-press { white-space: nowrap; }
   .fc-hour.fc-hour-head { display: none; }   /* (outranks .fc-hour's grid) */
   .fc-day p { margin: 0; padding: 0 16px 12px 58px; font-size: 0.74rem; line-height: 1.55; color: var(--text-muted); }
   .fc-day p b { color: var(--text); font-weight: 700; }
@@ -1511,6 +1518,17 @@
     }
   }
 
+  /* Short screens (a phone on its side): a compact forecast head — place and air
+     quality on one line, less padding — so the forecast keeps most of the height. */
+  @media (max-height: 520px) {
+    .fc-head { padding: 8px 12px 6px 16px; }
+    .fc-head h2 { font-size: 0.9rem; }
+    .fc-place, .fc-now { display: inline-block; margin: 0 16px 0 0; }
+    .fc-now[hidden] { display: none; }
+    .fc-close { width: 30px; height: 30px; }
+    .fc-tabs [role="tab"] { padding: 6px 12px; }
+  }
+
   /* ════════════════════════════════════════════════════════════════════════════
      FORECAST ON WIDE SCREENS — the week at a glance (section 14D)
      From 960 × 600 px up the dialog grows to use the screen, and the 7-day list
@@ -1537,9 +1555,6 @@
       gap: 12px; padding: 8px 20px;
     }
     .fc-hour-short, .fc-hour-air { display: contents; }
-    /* (As specific as the phone rule it undoes: columns need no separators.) */
-    .fc-hour-sky:not(:empty) + .fc-hour-wind:not(:empty)::before,
-    .fc-hour-aqi:not(:empty) + .fc-hour-press:not(:empty)::before { content: none; }
     /* The chance of rain as a bar behind its number: 100% fills the cell. */
     .fc-hour:not(.fc-hour-head) .fc-hour-pop {
       padding: 2px 6px; border-radius: 3px;
@@ -1618,7 +1633,8 @@
   .fc-wk-strip + .fc-wk-strip { border-top: 1px solid rgba(30,58,95,0.55); }
   .fc-wk-strip svg { display: block; width: 100%; overflow: visible; }
   .fc-wk-label {
-    position: absolute; left: 14px; top: 7px; display: flex; flex-wrap: wrap; gap: 4px 12px;
+    position: absolute; left: 8px; top: 5px; z-index: 1; display: flex; flex-wrap: wrap; gap: 4px 12px;
+    padding: 1px 6px; border-radius: 3px; background: rgba(17,24,39,0.9);   /* lines never run through it */
     font-size: 0.64rem; color: var(--text-muted); pointer-events: none;
   }
   .fc-wk-label .fc-aqi { color: var(--text-muted); }
@@ -4836,6 +4852,17 @@ function alertAreaDesc(f) {
 }
 
 /** One alert's card: header (event, times, places) and the body it opens to. */
+/**
+ * With live alerts on, a swatch of the alert's colour on the map (and in its key):
+ * the banner ranks alerts by severity (red, orange, yellow), the map uses the
+ * NWS's own hazard colours, and the swatch ties the two together. ('' otherwise:
+ * the searched area's own shapes each get a colour of their own.)
+ */
+function alertSwatchHtml(event) {
+  return liveAlertsOn && event
+    ? '<span class="alert-swatch" aria-hidden="true" style="background:' + liveAlertColor(event) + '"></span>' : '';
+}
+
 function alertCardHtml(f) {
   const p   = f.properties || {};
   const id  = alertId(f);
@@ -4858,7 +4885,7 @@ function alertCardHtml(f) {
   const open     = openAlertCards.has(id);
   return '<div class="alert-card alert-' + cls + (open ? ' open' : '') + '" data-alert-id="' + escapeHtml(id) + '">' +
       '<button class="alert-card-head" type="button" data-role="card" aria-expanded="' + open + '">' +
-        '<span class="alert-event">' + escapeHtml(p.event || 'Weather alert') + '</span>' +
+        '<span class="alert-event">' + alertSwatchHtml(p.event) + escapeHtml(p.event || 'Weather alert') + '</span>' +
         '<span class="alert-expires">' + alertWhenHtml(p) + '</span>' +
         (places ? '<span class="alert-places">' + escapeHtml(places) + '</span>'
                 : (alertRecordPending(id) ? '<span class="alert-places">Finding the places…</span>' : '')) +
@@ -4888,7 +4915,7 @@ function alertGroupHtml(event, members) {
   return '<div class="alert-group alert-' + cls + (open ? ' open' : '') + '" data-group="' + escapeHtml(event) + '">' +
       '<button class="alert-group-head" type="button" data-role="group" aria-expanded="' + open + '">' +
         // Name and count stay on one line; screen readers hear "8 alerts", not "times 8".
-        '<span class="alert-group-title"><span class="alert-event">' + escapeHtml(event) + '</span>' +
+        '<span class="alert-group-title"><span class="alert-event">' + alertSwatchHtml(event) + escapeHtml(event) + '</span>' +
         '<span class="alert-group-count"><span aria-hidden="true">×' + members.length + '</span>' +
         '<span class="sr-only">' + members.length + ' alerts</span></span></span>' +
         '<span class="alert-expires">' + when + '</span>' +
@@ -6996,7 +7023,10 @@ function forecastRowExtras(parts, extras, point) {
       '; lowest ' + hpaToInHg(low) + ' inHg around ' + hourOf(lowKey) + runsOut(pressure, 'pressure') + '.</p>');
   }
 
-  out.facts = facts.join('');
+  // A time never breaks across lines ("7:41 | PM"): a no-break space before AM/PM.
+  const keepTimes = html => html.replace(/(\d) (AM|PM)\b/g, '$1\u00A0$2');
+  out.sun = keepTimes(out.sun);
+  out.facts = keepTimes(facts.join(''));
   return out;
 }
 
@@ -7295,10 +7325,10 @@ function forecastWeekModel(periods, hours, extras, point) {
              start: Date.parse(parts[0].startTime), end: Date.parse(parts[parts.length - 1].endTime) };
   }).filter(row => row.end > row.start);   // (an unreadable time fails this too)
   if (!rows.length) return null;
-  // Columns as wide as their hours, but never under 18, so a part day ("Tonight", or
-  // "This Afternoon" opened at 5 PM) still has room for its name and numbers. The
-  // chart follows the same columns, its time running evenly within each.
-  const weights = rows.map(row => Math.max((row.end - row.start) / 3_600_000, 18));
+  // Columns as wide as their hours, but never under 20, so a part day ("Tonight", or
+  // "This Afternoon" opened at 5 PM) still has room for its name and numbers (at
+  // 1024 px too). The chart follows the same columns, its time running evenly within each.
+  const weights = rows.map(row => Math.max((row.end - row.start) / 3_600_000, 20));
   const total = weights.reduce((a, b) => a + b, 0);
   let edge = 0;
   rows.forEach((row, i) => {

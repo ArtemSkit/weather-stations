@@ -3397,10 +3397,45 @@ test('live alerts: null properties, a zone split at the date line, and the 2-min
     ${extractFunction('pruneLivePieces')}
     return pruneLivePieces;
   })()`, { livePieces, liveAlertsLayer: { removeLayer: l => drawnOut.push(l.at) }, liveCacheTrim: c => c,
-           saveLiveCache: () => {}, renderLiveView: () => {}, Date });
+           saveLiveCache: () => {}, renderLiveView: () => {}, scheduleLiveExpiry: () => {}, Date });
   prune(now);
   assert.equal(drawnOut.length, 2, 'the old one and the ended one');
   assert.equal(livePieces.size, 1);
+});
+
+test('live alerts: taken off the moment they turn 15 minutes old, not at the next check', () => {
+  const now = Date.now();
+  const timers = [];
+  const ctx = { liveAlertsOn: true, liveExpiryTimer: 0, Infinity, Math, Date,
+    livePieces: new Set([{ at: now - 60_000 }, { at: now - 10 * 60_000 }]),   // drawn: the oldest 10 min old
+    liveCache: [{ at: now - 12 * 60_000 }],                                    // saved: older still, 12 min
+    pruneLivePieces: () => {}, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: () => {} };
+  const schedule = vm.runInNewContext(`(() => {
+    const LIVE_CACHE_MAX_AGE_MS = 15 * 60_000;
+    ${extractFunction('scheduleLiveExpiry')}
+    return scheduleLiveExpiry;
+  })()`, ctx);
+  schedule();
+  // The saved piece is the oldest: it turns 15 in 3 minutes — the wake-up is then.
+  assert.equal(timers.length, 1);
+  assert.ok(Math.abs(timers[0].ms - 3 * 60_000) < 1000, `in ${timers[0].ms} ms`);
+  assert.equal(timers[0].fn, ctx.pruneLivePieces);
+  // Already due: at once. Nothing left, or live alerts off: no wake-up.
+  ctx.liveCache = [{ at: now - 20 * 60_000 }];
+  schedule();
+  assert.ok(timers[1].ms <= 100);
+  ctx.livePieces = new Set(); ctx.liveCache = [];
+  schedule();
+  ctx.liveAlertsOn = false; ctx.liveCache = [{ at: now }];
+  schedule();
+  assert.equal(timers.length, 2);
+  // Set after each answer, after the saved copy is drawn, and after each prune; cleared
+  // when live alerts go off; and on coming back to the page, what came due is taken off.
+  assert.match(extractFunction('loadLiveAlerts'), /saveLiveCache\(\);\s*scheduleLiveExpiry\(\);/);
+  assert.match(extractFunction('pruneLivePieces'), /scheduleLiveExpiry\(\);\s*\}$/);
+  assert.match(extractFunction('setLiveAlerts'), /clearTimeout\(liveExpiryTimer\);/);
+  assert.match(html, /if \(document\.visibilityState === 'visible' && liveAlertsOn\) pruneLivePieces\(\);/);
 });
 
 test('live alerts: a view downloaded moments ago (as finely) needs no new download', () => {
@@ -3433,16 +3468,17 @@ test('live alerts: the saved copy is drawn at once on opening, unless an answer 
   const feature = id => ({ geometry: { type: 'Polygon', coordinates: [[[-100, 40], [-99, 40], [-99, 41], [-100, 41], [-100, 40]]] },
     properties: { prod_type: 'Flood Warning', cap_id: id, ends: later } });
   const run = async (saved, setup = () => {}) => {
-    const drawn = [], erased = [];
+    const drawn = [], erased = [], scheduled = [];
     const k = liveCacheKit({
       liveCacheStore: async () => ({ get: () => { const read = {}; setTimeout(() => { read.result = saved; read.onsuccess(); }); return read; } }),
       map: { getBounds: () => ({ getWest: () => -110, getEast: () => -90 }) },
       addLivePiece: (f, at) => drawn.push(f.properties.cap_id + '@' + (Date.now() - at < 60_000 ? 'recent' : 'old')),
-      restackLivePieces: () => {}, renderLiveView: () => {}, saveLiveCache: () => erased.push(true)
+      restackLivePieces: () => {}, renderLiveView: () => {}, saveLiveCache: () => erased.push(true),
+      scheduleLiveExpiry: () => scheduled.push(true)
     });
     setup(k);
     await k.restoreLiveCache();
-    return { k, drawn, erased };
+    return { k, drawn, erased, scheduled };
   };
   const now = Date.now();
   const v = Number(html.match(/const LIVE_CACHE_VERSION = (\d+);/)[1]);
@@ -3452,6 +3488,7 @@ test('live alerts: the saved copy is drawn at once on opening, unless an answer 
   const opened = await run({ version: v, pieces });
   assert.deepEqual(opened.drawn, ['fresh@old']);
   assert.equal(opened.k.pending, true);
+  assert.equal(opened.scheduled.length, 1, 'its 15-minute wake-up is set');
   assert.equal(opened.k.cache.length, 1, 'the stale piece is dropped from the copy too');
   // The fresh answer came first: the copy is left alone (it would only bring back what it replaced).
   assert.deepEqual((await run({ version: v, pieces }, k => { k.answered = true; })).drawn, []);
@@ -3469,7 +3506,8 @@ test('live alerts: the saved copy is drawn at once on opening, unless an answer 
   const racing = liveCacheKit({
     liveCacheStore: async () => ({ get: () => { const read = {}; setTimeout(() => { read.result = { version: v, pieces }; read.onsuccess(); }); return read; } }),
     map: { getBounds: () => ({ getWest: () => -110, getEast: () => -90 }) },
-    addLivePiece: () => { throw new Error('drew an erased copy'); }, restackLivePieces: () => {}, renderLiveView: () => {}, saveLiveCache: () => {}
+    addLivePiece: () => { throw new Error('drew an erased copy'); }, restackLivePieces: () => {}, renderLiveView: () => {}, saveLiveCache: () => {},
+    scheduleLiveExpiry: () => {}
   });
   const reading = racing.restoreLiveCache();
   racing.switched();   // off and on again while it reads

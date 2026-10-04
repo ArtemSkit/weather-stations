@@ -625,6 +625,11 @@
     white-space: nowrap;
     box-shadow: 0 2px 8px rgba(0,0,0,0.6);
   }
+  /* A live chip's swatch: the area's own colour, to tell neighbouring areas apart. */
+  .live-chip-swatch {
+    display: inline-block; width: 0.8em; height: 0.8em; margin-right: 5px; vertical-align: -0.08em;
+    border-radius: 2px; outline: 1px solid rgba(255,255,255,0.4);
+  }
   /* Leaflet draws a little caret on directional tooltips — hide it for these chips. */
   .leaflet-tooltip.alert-area-label::before { display: none !important; }
 
@@ -5916,6 +5921,163 @@ function liveField(value) {
   return v || undefined;
 }
 
+/** An alert's fields as the app uses them, from a map-service feature's properties. */
+function liveProps(p) {
+  p = p || {};   // (null is valid GeoJSON for "no properties")
+  return {
+    prod_type: liveField(p.prod_type) || 'Weather alert', sig: liveField(p.sig),
+    onset: liveField(p.onset), ends: liveField(p.ends), expiration: liveField(p.expiration),
+    issuance: liveField(p.issuance), url: liveField(p.url), cap_id: liveField(p.cap_id)
+  };
+}
+
+/* ── Live alerts kept on the device, and requests kept in check ───────────────
+   Every answer is also saved on the device (IndexedDB), so a refresh or reopening
+   the app draws the alert areas at once, before any download — while the fresh
+   download it always makes replaces them. Nothing older than LIVE_CACHE_MAX_AGE_MS
+   is ever drawn or kept, nor an alert that has ended; switching live alerts off
+   erases it all. While moving around, a view inside a region downloaded in this
+   visit within LIVE_FRESH_MS (at the same or finer detail) needs no new download;
+   the 2-minute check always downloads. And requests are spaced LIVE_MIN_GAP_MS
+   apart, the last one waiting its turn, never dropped. */
+const LIVE_CACHE_MAX_AGE_MS = 15 * 60_000;
+const LIVE_CACHE_MAX_BYTES = 8_000_000;       // about; the oldest answers go first
+const LIVE_CACHE_VERSION = 1;                 // a saved copy of another layout is thrown away
+const LIVE_CACHE_DB = 'wxmap-weather-stations-live-alerts';   // (the origin may host other apps)
+const LIVE_FRESH_MS = 60_000;
+const LIVE_MIN_GAP_MS = 2_000;
+/** The saved pieces: { f: the feature as NOAA sent it (-180…180), s, w, n, e: its box, at, size } */
+let liveCache = [];
+/** Regions downloaded in this visit: { boxes: the answered box(es) on the map, tol, at } */
+let liveFreshViews = [];
+let liveCacheSaveTimer = 0, liveGapTimer = 0;
+let liveLastRequestAt = 0;
+let liveAnswered = false;                     // an answer has been drawn since live alerts went on
+let liveCacheTried = false;                   // the saved copy is read once, on the page's first start
+let liveRun = 0;                              // bumped at each switch on or off (a read under way is then void)
+let liveLoadOwed = false;                     // a spaced request skipped mid-move: the move's end must download
+
+/** A GeoJSON geometry's box, made continuous across the date line (see placeGeometry). */
+function geometryBox(geometry) {
+  let s = Infinity, w = Infinity, n = -Infinity, e = -Infinity;
+  const walk = a => {
+    if (typeof a[0] === 'number') { w = Math.min(w, a[0]); e = Math.max(e, a[0]); s = Math.min(s, a[1]); n = Math.max(n, a[1]); }
+    else a.forEach(walk);
+  };
+  // Placed round its own first point (not 0°): a zone split at the date line into
+  // parts at +179.9° and -179.9° then stays one small box, not one round the world.
+  let first = geometry;
+  while (first && !(typeof first[0] === 'number')) first = first.coordinates ?? first.geometries?.[0] ?? first[0];
+  const placed = placeGeometry(geometry, Array.isArray(first) ? first[0] : 0);
+  if (placed.type === 'GeometryCollection') placed.geometries.forEach(g => walk(g.coordinates));
+  else walk(placed.coordinates || []);
+  return { s, w, n, e };
+}
+
+/** Whether a saved piece's box meets an asked-for box (-180…180), across the date line too. */
+function liveBoxesMeet(piece, q) {
+  if (q.east - q.west >= 360) return piece.s <= q.north && q.south <= piece.n;   // the whole world
+  return piece.s <= q.north && q.south <= piece.n &&
+    [-360, 0, 360].some(k => piece.w + k <= q.east && q.west <= piece.e + k);
+}
+
+/**
+ * The saved copy after an answer: what it held inside the asked-for box(es) is
+ * replaced by the answer's pieces (so ended, cancelled and changed alerts go), the
+ * rest kept — then trimmed (see liveCacheTrim).
+ * @param {Object[]} saved - liveCache
+ * @param {Object[]} features - the answer, as NOAA sent it
+ * @param {{west:number, south:number, east:number, north:number}[]} boxes - asked for
+ */
+function liveCacheMerge(saved, features, boxes, now) {
+  const kept = saved.filter(piece => !boxes.some(q => liveBoxesMeet(piece, q)));
+  const added = features.filter(f => f?.geometry).map(f => ({
+    f, ...geometryBox(f.geometry), at: now, size: JSON.stringify(f).length
+  })).filter(piece => Number.isFinite(piece.s));
+  return liveCacheTrim([...kept, ...added], now);
+}
+
+/** The saved copy without what's too old or over, and within its size (newest kept). */
+function liveCacheTrim(saved, now) {
+  let bytes = 0;
+  return saved
+    .filter(piece => now - piece.at < LIVE_CACHE_MAX_AGE_MS && !liveAlertEnded(liveProps(piece.f.properties), now))
+    .sort((a, b) => b.at - a.at)
+    .filter(piece => (bytes += piece.size) <= LIVE_CACHE_MAX_BYTES);
+}
+
+/** Whether a view lies inside a region downloaded within LIVE_FRESH_MS, at least as finely. */
+function liveViewFresh(fresh, view, tolerance, now) {
+  return fresh.some(v => now - v.at < LIVE_FRESH_MS && v.tol <= tolerance * 1.0001 &&
+                         v.boxes.some(box => box.contains(view)));
+}
+
+/** The device's store for the saved copy (null where the browser allows none). */
+function liveCacheStore(mode) {
+  return new Promise(resolve => {
+    try {
+      const open = indexedDB.open(LIVE_CACHE_DB, 1);
+      open.onupgradeneeded = () => open.result.createObjectStore('cache');
+      open.onsuccess = () => {
+        const db = open.result, tx = db.transaction('cache', mode);
+        tx.oncomplete = tx.onabort = tx.onerror = () => db.close();   // one connection per use, then let go
+        resolve(tx.objectStore('cache'));
+      };
+      open.onerror = () => resolve(null);
+    } catch (_) { resolve(null); }   // private windows, blocked storage: no saved copy
+  });
+}
+
+/** Save the copy (or erase it: null) — a moment after the last change, not at each one. */
+function saveLiveCache(now = false) {
+  clearTimeout(liveCacheSaveTimer);
+  const write = async () => {
+    liveCacheSaveTimer = 0;
+    const store = await liveCacheStore('readwrite');
+    try {
+      if (liveCache.length) store?.put({ version: LIVE_CACHE_VERSION, pieces: liveCache }, 'pieces');
+      else store?.delete('pieces');
+    } catch (_) { /* full or blocked: the copy on screen is unaffected */ }
+  };
+  if (now) write(); else liveCacheSaveTimer = setTimeout(write, 1000);
+}
+// Leaving the page (or putting the app away) with a save still waiting: save now.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && liveCacheSaveTimer) saveLiveCache(true);
+});
+
+/**
+ * Live alerts just went on (a page load, mostly): draw the saved copy at once —
+ * what is under 15 minutes old and not over — while the fresh download, already
+ * on its way or about to be, replaces it. (If that answer has already been drawn,
+ * the copy is left: it could only bring back what the answer replaced.)
+ */
+async function restoreLiveCache() {
+  // Only when the page opens: switched off and on again later, the copy was erased
+  // (and that erasing may still be under way — read now, it could come back).
+  if (liveCacheTried) return;
+  liveCacheTried = true;
+  const run = liveRun;   // switched off (and on) while reading: the copy was erased meanwhile
+  const store = await liveCacheStore('readonly');
+  const saved = await new Promise(resolve => {
+    if (!store) return resolve(null);
+    const read = store.get('pieces');
+    read.onsuccess = () => resolve(read.result || null);
+    read.onerror = () => resolve(null);
+  });
+  if (!liveAlertsOn || liveAnswered || run !== liveRun) return;
+  const now = Date.now();
+  liveCache = saved?.version === LIVE_CACHE_VERSION && Array.isArray(saved.pieces) ? liveCacheTrim(saved.pieces, now) : [];
+  if (!saved || saved.version !== LIVE_CACHE_VERSION) { if (saved) saveLiveCache(true); return; }   // another layout: erased
+  if (!liveCache.length) return;
+  const b = map.getBounds();
+  const nearLon = (b.getWest() + b.getEast()) / 2;
+  for (const piece of liveCache) addLivePiece({ ...piece.f, geometry: placeGeometry(piece.f.geometry, nearLon) }, piece.at, now);
+  restackLivePieces();
+  liveViewPending = true;   // the count shows "…" until the fresh answer is in
+  renderLiveView();
+}
+
 /**
  * The boxes to ask the map service for, for a view [west, east] in map longitudes.
  * The service only knows longitudes from -180 to 180, but the map view can cross
@@ -5978,6 +6140,18 @@ function placeGeometry(geometry, nearLon) {
 async function loadLiveAlerts(confirmingEmpty = false) {
   if (!liveAlertsOn) return;
   liveWaitsForSearch = false;   // (the opening search's wait, if any, is over)
+  // At most one request every LIVE_MIN_GAP_MS: a sooner one waits its turn (for the
+  // view as it is then), so even frantic panning can't send a burst.
+  clearTimeout(liveGapTimer);
+  const wait = liveLastRequestAt + LIVE_MIN_GAP_MS - Date.now();
+  if (wait > 0) {
+    // Its turn may come mid-drag, for a view only passing by: then it's owed to the
+    // drag's end, which downloads (whatever was asked: a check, a retry, a move).
+    liveGapTimer = setTimeout(() => { if (mapMoving) liveLoadOwed = true; else loadLiveAlerts(confirmingEmpty); }, wait);
+    return;
+  }
+  liveLastRequestAt = Date.now();
+  liveLoadOwed = false;
   const seq = ++liveAlertsSeq;
   clearTimeout(liveRetryTimer);
   const b = map.getBounds().pad(0.15);
@@ -5992,7 +6166,8 @@ async function loadLiveAlerts(confirmingEmpty = false) {
   // The shapes go next to the view that was ASKED for (not wherever the map has
   // flown by the time the answer arrives), so they land inside the boxes above.
   const nearLon = (b.getWest() + b.getEast()) / 2;
-  const tolerance = liveAlertTolerance(map.getZoom()).toFixed(6);
+  const detail = liveAlertTolerance(map.getZoom());   // (kept unrounded for liveViewFresh)
+  const tolerance = detail.toFixed(6);
   const urlFor = q => `${LIVE_ALERTS_URL}?${new URLSearchParams({
     where: '1=1', geometry: `${q.west},${q.south},${q.east},${q.north}`, geometryType: 'esriGeometryEnvelope',
     inSR: '4326', spatialRel: 'esriSpatialRelIntersects', outSR: '4326', returnGeometry: 'true',
@@ -6032,8 +6207,19 @@ async function loadLiveAlerts(confirmingEmpty = false) {
       return;
     }
     liveAppliedSeq = seq;
+    liveAnswered = true;
     if (newest) liveViewPending = false;
     replaceLivePieces(features, queried, nearLon);
+    // What this view holds now: fresh for a minute (moves inside it need no new
+    // download), and saved on the device in place of what was there.
+    const now = Date.now();
+    // (An older record this answer touches is dropped: its outlines here were just
+    // replaced by these, perhaps coarser — zoomed out — so it no longer says how fine.)
+    liveFreshViews = [...liveFreshViews.filter(v => now - v.at < LIVE_FRESH_MS &&
+                                                    !v.boxes.some(b => queried.some(q => q.intersects(b)))),
+                      { boxes: queried, tol: detail, at: now }];
+    liveCache = liveCacheMerge(liveCache, unique, boxes, now);
+    saveLiveCache();
     // The service stops at 4,000 pieces; say so rather than silently showing part.
     const truncated = answers.some(({ data }) =>
       Boolean(data.exceededTransferLimit || data.properties?.exceededTransferLimit));
@@ -6068,35 +6254,37 @@ function replaceLivePieces(features, queried, nearLon) {
   // on screen again until asked for anew — kept, they'd only cost time and memory.
   const farAway = piece => Math.abs(piece.bounds.getCenter().lng - nearLon) > 360;
   for (const piece of livePieces) {
-    if (queried.some(q => q.intersects(piece.bounds)) || farAway(piece) || liveAlertEnded(piece.props, now)) {
+    if (queried.some(q => q.intersects(piece.bounds)) || farAway(piece) || liveAlertEnded(piece.props, now) ||
+        now - piece.at >= LIVE_CACHE_MAX_AGE_MS) {   // (drawn from the saved copy, and never updated since)
       liveAlertsLayer.removeLayer(piece.layer);
       livePieces.delete(piece);
     }
   }
-  features.forEach(f => {
-    if (!f?.geometry) return;
-    const p = f.properties || {};
-    const props = {
-      prod_type: liveField(p.prod_type) || 'Weather alert', sig: liveField(p.sig),
-      onset: liveField(p.onset), ends: liveField(p.ends), expiration: liveField(p.expiration),
-      issuance: liveField(p.issuance), url: liveField(p.url), cap_id: liveField(p.cap_id)
-    };
-    if (liveAlertEnded(props, now)) return;     // already over: not drawn at all
-    const color = liveAlertColor(props.prod_type);
-    const layer = L.geoJSON(f.geometry, {
-      renderer: liveAlertsRenderer,
-      style: { color, weight: 1.2, opacity: 0.95, fillColor: color, fillOpacity: 0.28 }
-    });
-    // An empty outline has no bounds; kept, it would break every later box test.
-    const bounds = layer.getBounds();
-    if (!bounds.isValid()) return;
-    layer.on('click', e => clickLiveAlert(props, e));
-    layer.on('mouseover', () => highlightLiveAlert(props.cap_id, true));
-    layer.on('mouseout',  () => highlightLiveAlert(props.cap_id, false));
-    livePieces.add({ layer, props, bounds });
-    if (!liveHiddenEvents.has(props.prod_type)) liveAlertsLayer.addLayer(layer);
-  });
+  features.forEach(f => addLivePiece(f, now, now));
   restackLivePieces();
+}
+
+/**
+ * Draw one piece (a feature placed on the copy of the world on screen).
+ * @param {number} at - when it was downloaded (now, or the saved copy's time)
+ */
+function addLivePiece(f, at, now) {
+  if (!f?.geometry) return;
+  const props = liveProps(f.properties);
+  if (liveAlertEnded(props, now)) return;     // already over: not drawn at all
+  const color = liveAlertColor(props.prod_type);
+  const layer = L.geoJSON(f.geometry, {
+    renderer: liveAlertsRenderer,
+    style: { color, weight: 1.2, opacity: 0.95, fillColor: color, fillOpacity: 0.28 }
+  });
+  // An empty outline has no bounds; kept, it would break every later box test.
+  const bounds = layer.getBounds();
+  if (!bounds.isValid()) return;
+  layer.on('click', e => clickLiveAlert(props, e));
+  layer.on('mouseover', () => highlightLiveAlert(props.cap_id, true));
+  layer.on('mouseout',  () => highlightLiveAlert(props.cap_id, false));
+  livePieces.add({ layer, props, bounds, at });
+  if (!liveHiddenEvents.has(props.prod_type)) liveAlertsLayer.addLayer(layer);
 }
 
 /**
@@ -6289,10 +6477,62 @@ function liveAlertsDrawnInView() {
 }
 
 /**
- * Label the live alerts in view, each on the middle of the visible part of its
- * largest piece — the most serious alerts first (and the largest of a kind), one
- * chip for neighbouring alerts of the same type, none overlapping another label,
- * and at most LIVE_LABEL_LIMIT, so a zoomed-out view isn't buried in chips.
+ * Spots for an alert's chip that lie inside its area (in view), the roomiest first:
+ * on a few east–west lines across each of its polygons, the middle of the widest
+ * stretch inside it (holes left out). Not the middle of a box: for a scattered or
+ * curved area that falls on a neighbour's ground, and the chip names the wrong one.
+ * @param {{layer: L.Layer}[]} pieces - the alert's pieces in view
+ * @param {L.LatLngBounds} view
+ * @returns {{lat:number, lng:number, w:number, e:number}[]} each spot, with the
+ *          stretch it lies on (west and east ends), where the chip may slide
+ */
+function liveChipSpots(pieces, view) {
+  const S = view.getSouth(), N = view.getNorth(), W = view.getWest(), E = view.getEast();
+  const spots = [];
+  for (const piece of pieces) {
+    piece.layer.eachLayer(shape => {
+      if (!(shape instanceof L.Polygon)) return;
+      const latlngs = shape.getLatLngs();
+      // A polygon is [outline, holes…]; a multipolygon a list of those.
+      const polygons = L.LineUtil.isFlat(latlngs[0]) ? [latlngs] : latlngs;
+      for (const rings of polygons) {
+        const outline = rings[0] || [];
+        if (outline.length < 3) continue;
+        // (A loop, not Math.min(...ring): a detailed coastline would overflow the stack.)
+        let s = Infinity, n = -Infinity, w = Infinity, e = -Infinity;
+        for (const c of outline) { s = Math.min(s, c.lat); n = Math.max(n, c.lat); w = Math.min(w, c.lng); e = Math.max(e, c.lng); }
+        s = Math.max(s, S); n = Math.min(n, N); w = Math.max(w, W); e = Math.min(e, E);
+        if (n <= s || e <= w) continue;   // out of view
+        for (const t of [0.5, 0.3, 0.7, 0.15, 0.85]) {
+          const lat = s + t * (n - s);
+          // Where the line crosses the rings: inside between each pair of crossings.
+          const xs = [];
+          for (const ring of rings) {
+            ring.forEach((a, i) => {
+              const b = ring[(i + 1) % ring.length];
+              if ((a.lat > lat) !== (b.lat > lat)) xs.push(a.lng + (lat - a.lat) * (b.lng - a.lng) / (b.lat - a.lat));
+            });
+          }
+          xs.sort((p, q) => p - q);
+          let best = null;
+          for (let k = 0; k + 1 < xs.length; k += 2) {
+            const x1 = Math.max(xs[k], w), x2 = Math.min(xs[k + 1], e);
+            if (x2 > x1 && (!best || x2 - x1 > best.e - best.w)) best = { lat, lng: (x1 + x2) / 2, w: x1, e: x2 };
+          }
+          if (best) spots.push(best);
+        }
+      }
+    });
+  }
+  return spots.sort((a, b) => (b.e - b.w) - (a.e - a.w)).slice(0, 12);
+}
+
+/**
+ * Label the live alerts in view, each inside its own area (see liveChipSpots) — the
+ * most serious alerts first (and the largest of a kind), one chip for neighbouring
+ * alerts of the same type, none overlapping another label (a chip that won't fit
+ * at one spot tries the next), and at most LIVE_LABEL_LIMIT, so a zoomed-out view
+ * isn't buried in chips.
  */
 function renderLiveLabels() {
   // A chip taken away under the pointer gets no mouseout: put its alert's light out.
@@ -6318,7 +6558,7 @@ function renderLiveLabels() {
       box = box ? { s: Math.min(box.s, part.s), w: Math.min(box.w, part.w), n: Math.max(box.n, part.n), e: Math.max(box.e, part.e) }
                 : part;
     }
-    candidates.push({ props, ...best, box, parts });
+    candidates.push({ props, pieces, ...best, box, parts });
   }
   candidates.sort((a, b) =>
     (LIVE_SIG_RANK[b.props.sig] ?? 0) - (LIVE_SIG_RANK[a.props.sig] ?? 0) || b.area - a.area);
@@ -6352,26 +6592,47 @@ function renderLiveLabels() {
   // count let chips overlap one another and run off the edge.
   const probe = L.DomUtil.create('div', 'leaflet-tooltip alert-area-label live-area-label', map.getContainer());
   probe.style.visibility = 'hidden';
+  // The chip: a swatch of the area's own colour on the map (the text is lightened
+  // to stay readable, so purple and blue would look alike), then its name.
+  const chipHtml = (type, text) =>
+    `<span class="live-chip-swatch" aria-hidden="true" style="background:${liveAlertColor(type)}"></span>` +
+    `<span style="color:${liveAlertTextColor(type)}">${escapeHtml(text)}</span>`;
   const halves = new Map();
-  const halfOf = text => {
-    if (!halves.has(text)) { probe.textContent = text; halves.set(text, probe.offsetWidth / 2); }
+  const halfOf = (type, text) => {
+    if (!halves.has(text)) { probe.innerHTML = chipHtml(type, text); halves.set(text, probe.offsetWidth / 2); }
     return halves.get(text);
   };
-  for (const [index, { props, at: middle }] of candidates.entries()) {
+  const fits = (pt, half) =>
+    !placed.some(o => Math.abs(o.x - pt.x) < o.half + half + 6 && Math.abs(o.y - pt.y) < 22) &&
+    !obstacles.some(r => pt.x + half > r.left - 4 && pt.x - half < r.right + 4 &&
+                         pt.y + 10 > r.top - 4 && pt.y - 10 < r.bottom + 4);
+  for (const [index, { props, pieces, at: middle }] of candidates.entries()) {
     if (placed.length >= LIVE_LABEL_LIMIT) break;
     const group = root(index);
     if (named.has(group)) continue;   // a neighbour of the same type already says it
     const text = shortAlertLabel(props.prod_type);
-    const half = halfOf(text);
-    // A sliver of an area at the edge of the view would centre its chip on the
-    // edge, half cut off ("FLOOD ADV…"): nudge it in until the whole chip shows.
-    const raw = map.latLngToContainerPoint(middle);
-    const pt = L.point(Math.min(Math.max(raw.x, half + 4), size.x - half - 4),
-                       Math.min(Math.max(raw.y, 14), size.y - 14));
-    const at = pt.equals(raw) ? middle : map.containerPointToLatLng(pt);
-    if (placed.some(o => Math.abs(o.x - pt.x) < o.half + half + 6 && Math.abs(o.y - pt.y) < 22)) continue;
-    if (obstacles.some(r => pt.x + half > r.left - 4 && pt.x - half < r.right + 4 &&
-                            pt.y + 10 > r.top - 4 && pt.y - 10 < r.bottom + 4)) continue;
+    const half = halfOf(props.prod_type, text);
+    // Its spots inside the area, roomiest first: at each, the middle of the stretch,
+    // then slid toward either end (still inside), until one is clear of the others.
+    // (An area with no spot found — none of its outlines in view — keeps the middle
+    // of its largest piece.)
+    const spots = liveChipSpots(pieces, view);
+    let pt = null;
+    for (const spot of spots.length ? spots : [{ lat: middle.lat, lng: middle.lng, w: middle.lng, e: middle.lng }]) {
+      const y = map.latLngToContainerPoint([spot.lat, spot.lng]).y;
+      const x1 = map.latLngToContainerPoint([spot.lat, spot.w]).x, x2 = map.latLngToContainerPoint([spot.lat, spot.e]).x;
+      const mid = (x1 + x2) / 2;
+      for (const x of [mid, mid - half - 8, mid + half + 8]) {
+        if (x < Math.min(x1, x2) || x > Math.max(x1, x2)) continue;
+        // A sliver of an area at the edge of the view would centre its chip on the
+        // edge, half cut off ("FLOOD ADV…"): nudge it in until the whole chip shows.
+        const at = L.point(Math.min(Math.max(x, half + 4), size.x - half - 4), Math.min(Math.max(y, 14), size.y - 14));
+        if (fits(at, half)) { pt = at; break; }
+      }
+      if (pt) break;
+    }
+    if (!pt) continue;
+    const at = map.containerPointToLatLng(pt);
     placed.push({ x: pt.x, y: pt.y, half });
     named.add(group);
     // The chip stands for its alert, like its area: a pointer, the alert lit up on
@@ -6380,7 +6641,7 @@ function renderLiveLabels() {
     L.tooltip({ permanent: true, direction: 'center', interactive: true,
                 className: 'alert-area-label live-area-label' })
       .setLatLng(at)
-      .setContent(`<span style="color:${liveAlertTextColor(props.prod_type)}">${escapeHtml(text)}</span>`)
+      .setContent(chipHtml(props.prod_type, text))
       .on('click', e => clickLiveAlert(props, e))
       .on('mouseover', () => { liveChipLit = props.cap_id; highlightLiveAlert(props.cap_id, true); })
       .on('mouseout', () => { liveChipLit = null; highlightLiveAlert(props.cap_id, false); })
@@ -6478,8 +6739,13 @@ function setLiveAlerts(on, waitForSearch = false) {
   clearInterval(liveRefreshTimer);
   clearTimeout(liveMoveTimer);
   clearTimeout(liveRetryTimer);
+  clearTimeout(liveGapTimer);
+  liveRun++;
+  liveLoadOwed = false;
   liveRefreshMissed = false;
   liveViewPending = false;
+  liveAnswered = false;
+  liveFreshViews = [];
   if (livePopup) map.closePopup(livePopup);
   // The searched area's own polygons would be drawn twice: hide them with a CSS
   // class (not by removing their layer), so their labels, popups and stacking
@@ -6496,11 +6762,14 @@ function setLiveAlerts(on, waitForSearch = false) {
     }
     else loadLiveAlerts();
     liveRefreshTimer = setInterval(refreshLiveAlerts, ALERTS_REFRESH_MS);
+    restoreLiveCache();   // the saved copy at once, while that download runs
   } else {
     liveAlertsSeq++;                 // ignore any answer still on its way
     liveAppliedSeq = liveAlertsSeq;
     liveAlertsLayer.clearLayers();
     livePieces.clear();
+    liveCache = [];
+    saveLiveCache(true);   // the saved copy is erased with them
     liveState = 'off';
     setLiveLegendOpen(false);
     // (The now-empty canvas stays on the map, hidden by CSS while off.)
@@ -6514,9 +6783,29 @@ function setLiveAlerts(on, waitForSearch = false) {
   renderLiveView();
 }
 
+/**
+ * Take off the map (and the saved copy) whatever is over 15 minutes old or has
+ * ended — at every 2-minute tick, so even while downloads keep failing (offline)
+ * nothing stale stays drawn. (A good answer does the same for its own box.)
+ */
+function pruneLivePieces(now = Date.now()) {
+  let gone = false;
+  for (const piece of livePieces) {
+    if (liveAlertEnded(piece.props, now) || now - piece.at >= LIVE_CACHE_MAX_AGE_MS) {
+      liveAlertsLayer.removeLayer(piece.layer);
+      livePieces.delete(piece);
+      gone = true;
+    }
+  }
+  const kept = liveCacheTrim(liveCache, now);
+  if (kept.length !== liveCache.length) { liveCache = kept; saveLiveCache(); }
+  if (gone) renderLiveView();
+}
+
 /** The 2-minute refresh tick: skipped while the page is hidden, caught up on return. */
 function refreshLiveAlerts() {
   if (!liveAlertsOn) return;
+  pruneLivePieces();
   if (document.hidden) { liveRefreshMissed = true; return; }
   loadLiveAlerts();
 }
@@ -6534,7 +6823,13 @@ map.on('moveend', () => {
   liveViewPending = true;          // what came into view isn't counted until its answer is in
   renderLiveView();                // labels and banner follow what's drawn in view now
   clearTimeout(liveMoveTimer);
-  liveMoveTimer = setTimeout(() => loadLiveAlerts(), 350);
+  liveMoveTimer = setTimeout(() => {
+    // Inside a region downloaded moments ago (as finely): what's drawn is current.
+    if (!liveLoadOwed && liveViewFresh(liveFreshViews, map.getBounds(), liveAlertTolerance(map.getZoom()), Date.now())) {
+      liveViewPending = false;
+      renderLiveView();
+    } else loadLiveAlerts();
+  }, 350);
 });
 
 /* The control: [colour key] above [‹] [LIVE ALERTS · n] [KEY] [RADIUS], above the

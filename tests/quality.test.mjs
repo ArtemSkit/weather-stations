@@ -3061,9 +3061,36 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
   assert.match(draw, /const area = L\.latLng\(lat, lon\)\.toBounds\(2 \* r\);\s*return \{ west: area\.getWest\(\)/);
 });
 
+/** A stand-in for Leaflet's polygon, and a layer holding shapes (see liveChipSpots). */
+class ChipPolygon { constructor(latlngs) { this.latlngs = latlngs; } getLatLngs() { return this.latlngs; } }
+const chipLayer = (...shapes) => ({ eachLayer: fn => shapes.forEach(fn) });
+const rect = (s, w, n, e) => new ChipPolygon([[{ lat: s, lng: w }, { lat: s, lng: e }, { lat: n, lng: e }, { lat: n, lng: w }]]);
+
+test('live alert chips sit inside their own area: scattered parts, holes, the view', () => {
+  const spots = (layer, view = [20, -130, 50, -80]) => vm.runInNewContext(`${extractFunction('liveChipSpots')}
+    liveChipSpots([{ layer }], { getSouth: () => ${view[0]}, getWest: () => ${view[1]}, getNorth: () => ${view[2]}, getEast: () => ${view[3]} })`,
+    { layer, Math, L: { Polygon: ChipPolygon, LineUtil: { isFlat: ring => !Array.isArray(ring[0]) } } });
+  const inside = (spot, [s, w, n, e]) => spot.lat > s && spot.lat < n && spot.lng > w && spot.lng < e;
+  // Two parts far apart (one zone of scattered bits): the middle of the box round
+  // them is in neither, but every spot is inside one, the larger part's first.
+  const west = [40, -100, 44, -96], east = [40, -84, 41, -83];
+  const two = new ChipPolygon([rect(...west).getLatLngs(), rect(...east).getLatLngs()]);
+  const found = Array.from(spots(chipLayer(two)));
+  assert.ok(found.length > 0 && found.every(sp => inside(sp, west) || inside(sp, east)));
+  assert.ok(inside(found[0], west), 'the roomier part first');
+  // A ring round a hole (a lake): never in the hole.
+  const ring = new ChipPolygon([rect(40, -100, 44, -96).getLatLngs()[0], rect(41, -99, 43, -97).getLatLngs()[0]]);
+  assert.ok(Array.from(spots(chipLayer(ring))).every(sp => !inside(sp, [41, -99, 43, -97])));
+  // Only the part in view counts; a shape out of view gives no spot.
+  assert.ok(Array.from(spots(chipLayer(rect(40, -100, 44, -96)), [42, -98, 50, -80])).every(sp => sp.lat > 42 && sp.w >= -98));
+  assert.equal(spots(chipLayer(rect(10, -100, 12, -96))).length, 0);
+  // Other shapes (a line) are skipped.
+  assert.equal(spots(chipLayer({ getLatLngs: () => [{ lat: 40, lng: -100 }, { lat: 44, lng: -96 }] })).length, 0);
+});
+
 test('live alert chips: one for neighbouring alerts of a type, the most serious first', () => {
   // A plain map: 20 px a degree, the view 1000 × 600 px from 50°N 130°W.
-  const toPt = ll => ({ x: (ll.lng + 130) * 20, y: (50 - ll.lat) * 20 });
+  const toPt = ll => (Array.isArray(ll) ? toPt({ lat: ll[0], lng: ll[1] }) : { x: (ll.lng + 130) * 20, y: (50 - ll.lat) * 20 });
   const point = (x, y) => ({ x, y, equals: o => o.x === x && o.y === y });
   const bounds = (s, w, n, e) => ({ getSouth: () => s, getWest: () => w, getNorth: () => n, getEast: () => e,
     getNorthEast: () => ({ lat: n, lng: e }), getSouthWest: () => ({ lat: s, lng: w }),
@@ -3077,19 +3104,21 @@ test('live alert chips: one for neighbouring alerts of a type, the most serious 
     clickLiveAlert: (props, e) => ctx.clicked.push(props.cap_id + ' @' + e.latlng),
     liveLabelLayer: { clearLayers: () => { chips.length = 0; } },
     liveLabelObstacles: () => [], liveObstacleKey: () => '', liveLabelObstaclesSeen: '',
-    shortAlertLabel: type => type.toUpperCase(), liveAlertTextColor: () => '#fff', escapeHtml: s => s,
+    shortAlertLabel: type => type.toUpperCase(), liveAlertTextColor: () => '#fff', liveAlertColor: () => '#483D8B', escapeHtml: s => s,
     map: { getBounds: () => bounds(20, -130, 50, -80), latLngToContainerPoint: ll => point(toPt(ll).x, toPt(ll).y),
            getSize: () => point(1000, 600), containerPointToLatLng: p => ({ lat: 50 - p.y / 20, lng: p.x / 20 - 130 }),
            getContainer: () => ({}) },
-    L: { point, latLngBounds: ([s, w], [n, e]) => bounds(s, w, n, e),
-         DomUtil: { create: () => ({ style: {}, set textContent(t) { this.w = t.length * 11 + 14; }, get offsetWidth() { return this.w; }, remove() {} }) },
+    L: { point, latLngBounds: ([s, w], [n, e]) => bounds(s, w, n, e), Polygon: ChipPolygon,
+         LineUtil: { isFlat: ring => !Array.isArray(ring[0]) },
+         DomUtil: { create: () => ({ style: {}, set innerHTML(h) { this.w = h.replace(/<[^>]+>/g, '').length * 11 + 14; }, get offsetWidth() { return this.w; }, remove() {} }) },
          tooltip: options => { const chip = { interactive: options.interactive, on: {} }; return { setLatLng(at) { chip.at = at; return this; },
            setContent(html) { chip.text = html.replace(/<[^>]+>/g, ''); return this; },
            on(type, fn) { chip.on[type] = fn; return this; }, addTo() { chips.push(chip); return this; } }; } }
   };
-  // Alerts as the map service gives them: id → its props and the pieces in view.
+  // Alerts as the map service gives them: id → its props and the pieces in view
+  // (each a rectangle, drawn as one polygon).
   const alert = (id, type, sig, s, w, n, e, ...more) => [id, { props: { cap_id: id, prod_type: type, sig },
-    pieces: [[s, w, n, e], ...more].map(b => ({ bounds: bounds(...b) })) }];
+    pieces: [[s, w, n, e], ...more].map(b => ({ bounds: bounds(...b), layer: chipLayer(rect(...b)) })) }];
   ctx.liveAlertsDrawnInView = () => new Map([
     alert('h3', 'Heat Advisory', 'Y', 34, -121, 37, -119.5),   // a run of three, each touching the next
     alert('h1', 'Heat Advisory', 'Y', 40, -124, 43, -121),     // (the largest, h1, gets their chip)
@@ -3103,7 +3132,7 @@ test('live alert chips: one for neighbouring alerts of a type, the most serious 
     alert('s2', 'Gale Watch', 'A', 30, -104, 31, -102)
   ]);
   const consts = html.match(/const LIVE_LABEL_LIMIT\s*=.*;/)[0];
-  vm.runInNewContext(`${consts}\n${extractFunction('renderLiveLabels')}\nrenderLiveLabels();\nglobalThis.render = renderLiveLabels;`, ctx);
+  vm.runInNewContext(`${consts}\n${extractFunction('liveChipSpots')}\n${extractFunction('renderLiveLabels')}\nrenderLiveLabels();\nglobalThis.render = renderLiveLabels;`, ctx);
   assert.deepEqual(chips.map(c => c.text).sort(),
     ['FLOOD WARNING', 'GALE WATCH', 'GALE WATCH', 'HEAT ADVISORY', 'HEAT ADVISORY', 'HEAT ADVISORY']);
   // The run shares the chip of its largest; the separate two keep their own.
@@ -3127,6 +3156,20 @@ test('live alert chips: one for neighbouring alerts of a type, the most serious 
   assert.deepEqual(ctx.lit, ['h1 on', 'h1 off', 'h1 on', 'h1 off']);   // the redraw put h1's light out
   assert.equal(ctx.liveChipLit, null);
   const moved = chips.filter(c => c.text === 'HEAT ADVISORY').map(c => c.at.lng);
+  // A chip whose first spot is taken (a Freeze Warning under a Gale Warning's chip)
+  // tries other spots inside its own area instead of going without one.
+  const saved = ctx.liveAlertsDrawnInView;
+  ctx.liveLabelObstacles = () => [];
+  ctx.liveAlertsDrawnInView = () => new Map([
+    alert('g1', 'Gale Warning', 'W', 43, -125, 47, -95),     // the larger: its chip first, mid-view
+    alert('z1', 'Freeze Warning', 'W', 42, -116, 48, -104)   // the same middle, but room below it
+  ]);
+  ctx.render();
+  const freeze = chips.find(c => c.text === 'FREEZE WARNING');
+  assert.ok(freeze, 'the Freeze Warning keeps a chip');
+  assert.ok(freeze.at.lat > 42 && freeze.at.lat < 48 && freeze.at.lng > -116 && freeze.at.lng < -104, 'inside its own area');
+  assert.ok(Math.abs(freeze.at.lat - 45) * 20 >= 22, 'clear of the Gale Warning chip');
+  ctx.liveAlertsDrawnInView = saved;
   assert.deepEqual(moved.sort((a, b) => a - b), [-121, -109, -95]);
 });
 
@@ -3152,14 +3195,14 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   // older view's answer that arrives first is still drawn. Only the newest
   // request's failure is reported, and retries wait while the page is hidden.
   assert.match(load, /if \(seq <= liveAppliedSeq \|\| !liveAlertsOn\) return;/, 'answers older than the drawn one are dropped');
-  assert.match(load, /liveAppliedSeq = seq;\s*if \(newest\) liveViewPending = false;/);
+  assert.match(load, /liveAppliedSeq = seq;\s*liveAnswered = true;\s*if \(newest\) liveViewPending = false;/);
   assert.match(load, /catch \(error\) \{\s*if \(seq !== liveAlertsSeq \|\| !liveAlertsOn\) return;/, 'only the newest failure counts');
   assert.match(load, /liveRetryTimer = setTimeout\(refreshLiveAlerts, 30_000\);/);
   assert.match(extractFunction('setLiveAlerts'), /liveAlertsSeq\+\+;[^\n]*\n\s*liveAppliedSeq = liveAlertsSeq;/, 'switching off drops answers on their way');
   // Never a misleading count while the view's own answer is on its way.
   assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;[\s\S]*?liveViewPending = true;/);
   assert.match(extractFunction('renderLiveLegend'), /liveViewPending \? '· …' : `· \$\{total\}`/);
-  assert.match(load, /const tolerance = liveAlertTolerance\(map\.getZoom\(\)\)\.toFixed\(6\);[\s\S]*maxAllowableOffset: tolerance/, 'outlines simplified to the zoom');
+  assert.match(load, /const detail = liveAlertTolerance\(map\.getZoom\(\)\);[^\n]*\n\s*const tolerance = detail\.toFixed\(6\);[\s\S]*maxAllowableOffset: tolerance/, 'outlines simplified to the zoom');
   const toggle = extractFunction('setLiveAlerts');
   // The searched area's polygons are hidden with a class (kept intact), and the
   // full-map canvas is hidden when off so it can't catch their clicks. It is never
@@ -3179,9 +3222,11 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(extractFunction('renderLiveBanner'), /if \(!liveAlertsOn \|\| liveViewPending\) return;/);
   assert.match(extractFunction('renderLiveLabels'), /className: 'alert-area-label live-area-label'/);
   // A chip on a sliver at the view's edge is nudged in whole, not cut in half.
-  assert.match(extractFunction('renderLiveLabels'), /Math\.min\(Math\.max\(raw\.x, half \+ 4\), size\.x - half - 4\)[\s\S]*?containerPointToLatLng\(pt\)/);
+  assert.match(extractFunction('renderLiveLabels'), /L\.point\(Math\.min\(Math\.max\(x, half \+ 4\), size\.x - half - 4\), Math\.min\(Math\.max\(y, 14\), size\.y - 14\)\)[\s\S]*?containerPointToLatLng\(pt\)/);
   // Chip widths are measured (the wide type defeats a guess), on a probe removed after.
-  assert.match(extractFunction('renderLiveLabels'), /probe\.textContent = text; halves\.set\(text, probe\.offsetWidth \/ 2\);[\s\S]*probe\.remove\(\);\s*\}$/);
+  assert.match(extractFunction('renderLiveLabels'), /probe\.innerHTML = chipHtml\(type, text\); halves\.set\(text, probe\.offsetWidth \/ 2\);[\s\S]*probe\.remove\(\);\s*\}$/);
+  // Each chip leads with a swatch of its area's own colour (the text is lightened).
+  assert.match(extractFunction('renderLiveLabels'), /<span class="live-chip-swatch" aria-hidden="true" style="background:\$\{liveAlertColor\(type\)\}"><\/span>/);
   // Fixed elements (the station panel, locate, the badge) count as shown: no offsetParent test.
   assert.match(extractFunction('liveLabelObstacles'), /document\.getElementById\('fab-locate'\), document\.getElementById\('app-version'\)\]\s*\.filter\(el => el && el\.getClientRects\(\)\.length\)/);
   assert.match(extractFunction('renderLiveLabels'), /const obstacles = liveLabelObstacles\(\);\s*liveLabelObstaclesSeen = liveObstacleKey\(obstacles\);/);
@@ -3248,7 +3293,7 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;[^\n]*\n[^\n]*\n\s*if \(liveWaitsForSearch\) return;/);
   assert.match(extractFunction('loadStationsAt'), /plotStations\(data, lat, lon, userZoom\);[\s\S]*?liveSearchLanded\(\);/);
   // Pin mode: a tap on an alert area places the pin instead of opening a popup.
-  const pieces = extractFunction('replaceLivePieces');
+  const pieces = extractFunction('addLivePiece');
   assert.match(pieces, /layer\.on\('click', e => clickLiveAlert\(props, e\)\);/);
   assert.match(extractFunction('clickLiveAlert'), /if \(tapModeActive\) return;[\s\S]*openLiveAlertPopup\(props, e\.latlng, e\.originalEvent\)/);
   // A name chip stands for its alert too (also off its area): its popup on a click,
@@ -3273,6 +3318,214 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.equal(ctx.liveClosingClick.capId, 'cap-1');
 });
 
+/** The live-alert saved copy's helpers in a vm (consts from the page, as written). */
+function liveCacheKit(extra = {}) {
+  const consts = ['LIVE_CACHE_MAX_AGE_MS', 'LIVE_CACHE_MAX_BYTES', 'LIVE_CACHE_VERSION', 'LIVE_FRESH_MS']
+    .map(name => html.match(new RegExp(`const ${name}\\s*=.*;`))[0]).join('\n');
+  return vm.runInNewContext(`(() => {
+    ${consts}
+    let liveCache = [], liveAlertsOn = true, liveAnswered = false, liveViewPending = false, liveCacheTried = false, liveRun = 0;
+    ${['liveField', 'liveProps', 'liveAlertEnded', 'placeGeometry', 'geometryBox', 'liveBoxesMeet', 'liveCacheMerge',
+       'liveCacheTrim', 'liveViewFresh'].map(extractFunction).join('\n')}
+    async ${extractFunction('restoreLiveCache')}
+    return { liveCacheMerge, liveCacheTrim, liveViewFresh, liveBoxesMeet, geometryBox, restoreLiveCache,
+             get cache() { return liveCache; }, set cache(v) { liveCache = v; },
+             set on(v) { liveAlertsOn = v; }, set answered(v) { liveAnswered = v; }, get pending() { return liveViewPending; },
+             again: () => { liveCacheTried = true; }, switched: () => { liveRun++; } };
+  })()`, { Date, Math, JSON, Number, Array, Infinity, Promise, setTimeout, ...extra });
+}
+
+test('live alerts saved on the device: replaced per box, 15 minutes at most, ended ones gone', () => {
+  const k = liveCacheKit();
+  const later = new Date(Date.now() + 3_600_000).toISOString(), past = new Date(Date.now() - 1000).toISOString();
+  const feature = (id, [w, s, e, n], extra = {}) => ({ type: 'Feature',
+    geometry: { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] },
+    properties: { prod_type: 'Flood Warning', sig: 'W', cap_id: id, ends: later, expiration: later, ...extra } });
+  const box = (west, south, east, north) => ({ west, south, east, north });
+  const now = Date.now();
+  // An answer for a box is saved…
+  let saved = k.liveCacheMerge([], [feature('a', [-100, 40, -99, 41]), feature('b', [-90, 40, -89, 41])], [box(-110, 30, -80, 50)], now);
+  assert.deepEqual(Array.from(saved, p => p.f.properties.cap_id).sort(), ['a', 'b']);
+  assert.ok(saved.every(p => p.at === now && p.size > 0 && p.w <= p.e));
+  // …the next answer for that box replaces what was there (b was cancelled)…
+  saved = k.liveCacheMerge(saved, [feature('a', [-100, 40, -99, 41])], [box(-110, 30, -80, 50)], now + 1000);
+  assert.deepEqual(Array.from(saved, p => p.f.properties.cap_id), ['a']);
+  // …and new areas loaded elsewhere are added, the rest kept.
+  saved = k.liveCacheMerge(saved, [feature('c', [-75, 40, -74, 41])], [box(-79, 30, -70, 50)], now + 2000);
+  assert.deepEqual(Array.from(saved, p => p.f.properties.cap_id).sort(), ['a', 'c']);
+  // A whole-world answer replaces everything.
+  assert.deepEqual(Array.from(k.liveCacheMerge(saved, [feature('d', [10, 10, 11, 11])], [box(-180, -85, 180, 85)], now), p => p.f.properties.cap_id), ['d']);
+  // Across the date line: a zone at 179°E…179°W meets a box just west of -180.
+  const aleutian = k.liveCacheMerge([], [feature('e', [179, 51, 181, 52])], [box(170, 45, 180, 60)], now);
+  assert.equal(aleutian.length, 1);
+  assert.equal(k.liveBoxesMeet(aleutian[0], box(-180, 45, -175, 60)), true);
+  assert.equal(k.liveBoxesMeet(aleutian[0], box(-100, 45, -90, 60)), false);
+  // Kept 15 minutes at most; an alert that has ended goes at once.
+  const old = { ...saved[0], at: now - 15 * 60_000 };
+  const ended = { ...saved[1], f: feature('x', [-75, 40, -74, 41], { ends: past }) };
+  assert.equal(k.liveCacheTrim([old, ended], now).length, 0);
+  assert.equal(k.liveCacheTrim([{ ...old, at: now - 14 * 60_000 }], now).length, 1);
+  // Over its size, the oldest go first.
+  const big = (id, at) => ({ ...saved[0], f: feature(id, [-100, 40, -99, 41]), at, size: 5_000_000 });
+  assert.deepEqual(Array.from(k.liveCacheTrim([big('old', now - 2000), big('new', now - 1000)], now), p => p.f.properties.cap_id), ['new']);
+});
+
+test('live alerts: null properties, a zone split at the date line, and the 2-minute prune', () => {
+  const k = liveCacheKit();
+  const now = Date.now();
+  // GeoJSON allows null properties: kept and trimmed like any other piece.
+  const bare = { type: 'Feature', properties: null, geometry: { type: 'Polygon', coordinates: [[[-100, 40], [-99, 40], [-99, 41], [-100, 40]]] } };
+  assert.equal(k.liveCacheMerge([], [bare], [{ west: -110, south: 30, east: -90, north: 50 }], now).length, 1);
+  // A zone split at the date line into two parts keeps one small box (not the world).
+  const split = { type: 'MultiPolygon', coordinates: [
+    [[[179.5, 51], [180, 51], [180, 52], [179.5, 52], [179.5, 51]]],
+    [[[-180, 51], [-179.5, 51], [-179.5, 52], [-180, 52], [-180, 51]]]] };
+  const b = k.geometryBox(split);
+  assert.ok(b.e - b.w <= 1.01, `box ${b.w}…${b.e}`);
+  // Every 2-minute tick takes off what's over 15 minutes old or over, downloads
+  // failing or not (and trims the saved copy).
+  const drawnOut = [];
+  const later = new Date(now + 3_600_000).toISOString(), past = new Date(now - 1000).toISOString();
+  const piece = (at, ends) => ({ at, props: { prod_type: 'Flood Warning', ends }, layer: { at } });
+  const livePieces = new Set([piece(now - 16 * 60_000, later), piece(now - 60_000, past), piece(now - 60_000, later)]);
+  const prune = vm.runInNewContext(`(() => {
+    const LIVE_CACHE_MAX_AGE_MS = 15 * 60_000;
+    let liveCache = [];
+    ${extractFunction('liveAlertEnded')}
+    ${extractFunction('pruneLivePieces')}
+    return pruneLivePieces;
+  })()`, { livePieces, liveAlertsLayer: { removeLayer: l => drawnOut.push(l.at) }, liveCacheTrim: c => c,
+           saveLiveCache: () => {}, renderLiveView: () => {}, Date });
+  prune(now);
+  assert.equal(drawnOut.length, 2, 'the old one and the ended one');
+  assert.equal(livePieces.size, 1);
+});
+
+test('live alerts: a view downloaded moments ago (as finely) needs no new download', () => {
+  const k = liveCacheKit();
+  const area = (w, s, e, n) => ({ contains: v => v.w >= w && v.e <= e && v.s >= s && v.n <= n });
+  const view = { w: -100, s: 40, e: -95, n: 45 };
+  const now = Date.now();
+  const fresh = [{ boxes: [area(-110, 35, -90, 50)], tol: 0.01, at: now - 30_000 }];
+  assert.equal(k.liveViewFresh(fresh, view, 0.01, now), true);
+  assert.equal(k.liveViewFresh(fresh, view, 0.02, now), true, 'zoomed out: coarser is fine');
+  assert.equal(k.liveViewFresh(fresh, view, 0.005, now), false, 'zoomed in: needs finer outlines');
+  assert.equal(k.liveViewFresh(fresh, { w: -120, s: 40, e: -95, n: 45 }, 0.01, now), false, 'partly outside');
+  assert.equal(k.liveViewFresh(fresh, view, 0.01, now + 31_000), false, 'over a minute old');
+  assert.equal(k.liveViewFresh([], view, 0.01, now), false);
+  // At every zoom, the detail recorded for a view passes for that same zoom (it was
+  // once rounded, and failed at zooms 9, 11, 13…).
+  const tolerance = vm.runInNewContext(`(${extractFunction('liveAlertTolerance')})`);
+  for (let zoom = 3; zoom <= 18; zoom++) {
+    assert.equal(k.liveViewFresh([{ boxes: [area(-110, 35, -90, 50)], tol: tolerance(zoom), at: now }], view, tolerance(zoom), now), true, `zoom ${zoom}`);
+  }
+  // A newer answer touching a recorded region supersedes it (its outlines there were
+  // replaced, perhaps coarser): zoomed out then back in, the view is downloaded again.
+  const load = extractFunction('loadLiveAlerts');
+  assert.match(load, /liveFreshViews\.filter\(v => now - v\.at < LIVE_FRESH_MS &&\s*!v\.boxes\.some\(b => queried\.some\(q => q\.intersects\(b\)\)\)\)/);
+  assert.match(load, /\{ boxes: queried, tol: detail, at: now \}/);
+});
+
+test('live alerts: the saved copy is drawn at once on opening, unless an answer beat it', async () => {
+  const later = new Date(Date.now() + 3_600_000).toISOString();
+  const feature = id => ({ geometry: { type: 'Polygon', coordinates: [[[-100, 40], [-99, 40], [-99, 41], [-100, 41], [-100, 40]]] },
+    properties: { prod_type: 'Flood Warning', cap_id: id, ends: later } });
+  const run = async (saved, setup = () => {}) => {
+    const drawn = [], erased = [];
+    const k = liveCacheKit({
+      liveCacheStore: async () => ({ get: () => { const read = {}; setTimeout(() => { read.result = saved; read.onsuccess(); }); return read; } }),
+      map: { getBounds: () => ({ getWest: () => -110, getEast: () => -90 }) },
+      addLivePiece: (f, at) => drawn.push(f.properties.cap_id + '@' + (Date.now() - at < 60_000 ? 'recent' : 'old')),
+      restackLivePieces: () => {}, renderLiveView: () => {}, saveLiveCache: () => erased.push(true)
+    });
+    setup(k);
+    await k.restoreLiveCache();
+    return { k, drawn, erased };
+  };
+  const now = Date.now();
+  const v = Number(html.match(/const LIVE_CACHE_VERSION = (\d+);/)[1]);
+  const pieces = [{ f: feature('fresh'), s: 40, w: -100, n: 41, e: -99, at: now - 60_000, size: 10 },
+                  { f: feature('stale'), s: 40, w: -100, n: 41, e: -99, at: now - 16 * 60_000, size: 10 }];
+  // Under 15 minutes old: drawn at once (with its saved time), and "…" until the fresh answer.
+  const opened = await run({ version: v, pieces });
+  assert.deepEqual(opened.drawn, ['fresh@old']);
+  assert.equal(opened.k.pending, true);
+  assert.equal(opened.k.cache.length, 1, 'the stale piece is dropped from the copy too');
+  // The fresh answer came first: the copy is left alone (it would only bring back what it replaced).
+  assert.deepEqual((await run({ version: v, pieces }, k => { k.answered = true; })).drawn, []);
+  // Live alerts switched off meanwhile: nothing drawn.
+  assert.deepEqual((await run({ version: v, pieces }, k => { k.on = false; })).drawn, []);
+  // A copy of another layout: not drawn, and erased.
+  const other = await run({ version: v + 1, pieces });
+  assert.deepEqual(other.drawn, []);
+  assert.equal(other.erased.length, 1);
+  // Nothing saved (or no storage): nothing drawn.
+  assert.deepEqual((await run(null)).drawn, []);
+  // Only on the page's first start: switched off (erased) and on again, nothing comes back…
+  assert.deepEqual((await run({ version: v, pieces }, k => k.again())).drawn, []);
+  // …not even from a read already under way when it was switched.
+  const racing = liveCacheKit({
+    liveCacheStore: async () => ({ get: () => { const read = {}; setTimeout(() => { read.result = { version: v, pieces }; read.onsuccess(); }); return read; } }),
+    map: { getBounds: () => ({ getWest: () => -110, getEast: () => -90 }) },
+    addLivePiece: () => { throw new Error('drew an erased copy'); }, restackLivePieces: () => {}, renderLiveView: () => {}, saveLiveCache: () => {}
+  });
+  const reading = racing.restoreLiveCache();
+  racing.switched();   // off and on again while it reads
+  await reading;
+  assert.equal(racing.cache.length, 0);
+});
+
+test('live alerts: requests spaced 2 s apart, the saved copy kept in step and erased when off', async () => {
+  const load = extractFunction('loadLiveAlerts');
+  // At most one request every 2 s; a sooner one waits its turn, never dropped.
+  assert.match(html, /const LIVE_MIN_GAP_MS = 2_000;/);
+  const timers = [], cleared = [];
+  const gap = {
+    liveAlertsOn: true, liveWaitsForSearch: false, liveLastRequestAt: Date.now() - 500, liveAlertsSeq: 0,
+    liveGapTimer: 0, liveLoadOwed: true, mapMoving: false, Date, LIVE_MIN_GAP_MS: 2000,
+    setTimeout: (fn, ms) => timers.push({ fn, ms }) && timers.length, clearTimeout: id => cleared.push(id),
+    clearTimeout2: null, liveRetryTimer: 0,
+    map: { getBounds: () => { throw new Error('sent'); } }   // the request itself starts here
+  };
+  const loadFn = vm.runInNewContext(`(async ${load})`, gap);
+  // 0.5 s after the last request: it waits its turn (about 1.5 s), sending nothing.
+  await loadFn();
+  assert.equal(timers.length, 1);
+  assert.ok(timers[0].ms > 1400 && timers[0].ms <= 1500);
+  assert.equal(gap.liveAlertsSeq, 0);
+  // A second call meanwhile replaces the waiting one (the latest wins, none dropped).
+  await loadFn();
+  assert.equal(timers.length, 2);
+  assert.ok(cleared.includes(gap.liveGapTimer) || cleared.length >= 2);
+  // Its turn comes mid-drag: not sent, owed to the drag's end.
+  gap.mapMoving = true; gap.liveLoadOwed = false;
+  timers[1].fn();
+  assert.equal(gap.liveLoadOwed, true);
+  assert.equal(gap.liveAlertsSeq, 0);
+  // 2 s on: it goes (and owes nothing).
+  gap.mapMoving = false;
+  gap.liveLastRequestAt = Date.now() - 2500;
+  await assert.rejects(loadFn(), /sent/);
+  assert.equal(gap.liveAlertsSeq, 1);
+  assert.equal(gap.liveLoadOwed, false);
+  // Each drawn answer is fresh for a minute and saved in place of what was there.
+  assert.match(load, /replaceLivePieces\(features, queried, nearLon\);[\s\S]*?\{ boxes: queried, tol: detail, at: now \}[\s\S]*?liveCache = liveCacheMerge\(liveCache, unique, boxes, now\);\s*saveLiveCache\(\);/);
+  // A move inside a fresh region needs no download; the 2-minute check always downloads.
+  assert.match(html, /if \(!liveLoadOwed && liveViewFresh\(liveFreshViews, map\.getBounds\(\), liveAlertTolerance\(map\.getZoom\(\)\), Date\.now\(\)\)\) \{\s*liveViewPending = false;\s*renderLiveView\(\);\s*\} else loadLiveAlerts\(\);/);
+  assert.match(extractFunction('refreshLiveAlerts'), /if \(!liveAlertsOn\) return;\s*pruneLivePieces\(\);[\s\S]*loadLiveAlerts\(\);/);
+  // On: the saved copy at once; off: erased with the areas.
+  const toggle = extractFunction('setLiveAlerts');
+  assert.match(toggle, /liveRefreshTimer = setInterval\(refreshLiveAlerts, ALERTS_REFRESH_MS\);\s*restoreLiveCache\(\);/);
+  assert.match(toggle, /liveCache = \[\];\s*saveLiveCache\(true\);/);
+  assert.match(toggle, /clearTimeout\(liveGapTimer\);[\s\S]*?liveAnswered = false;\s*liveFreshViews = \[\];/);
+  // Its own store (the origin may host other apps), saved a moment after changes and
+  // at once when the page is put away.
+  assert.match(html, /const LIVE_CACHE_DB = 'wxmap-weather-stations-live-alerts';/);
+  assert.match(html, /if \(document\.visibilityState === 'hidden' && liveCacheSaveTimer\) saveLiveCache\(true\);/);
+  // Drawn pieces too old (from the saved copy, never updated since) go at the next answer.
+  assert.match(extractFunction('replaceLivePieces'), /now - piece\.at >= LIVE_CACHE_MAX_AGE_MS/);
+});
+
 test('live alerts: each answer replaces what was drawn in its box (NOAA renumbers records)', () => {
   // A tiny stand-in for Leaflet: bounds are [west, south, east, north] boxes.
   const box = (w, s, e, n) => ({ w, s, e, n, intersects: o => !(o.e < w || o.w > e || o.n < s || o.s > n),
@@ -3286,10 +3539,13 @@ test('live alerts: each answer replaces what was drawn in its box (NOAA renumber
     LIVE_SIG_RANK: { S: 0, Y: 1, A: 2, W: 3 }, liveAlertColor: () => '#fff', Date
   };
   const replace = vm.runInNewContext(`(() => {
+    const LIVE_CACHE_MAX_AGE_MS = 15 * 60_000;
     ${extractFunction('liveField')}
+    ${extractFunction('liveProps')}
     ${extractFunction('liveAlertEnded')}
     ${extractFunction('restackLivePieces')}
     ${extractFunction('replaceLivePieces')}
+    ${extractFunction('addLivePiece')}
     return replaceLivePieces;
   })()`, fake);
   const later = new Date(Date.now() + 3_600_000).toISOString();

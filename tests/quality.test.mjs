@@ -3106,11 +3106,29 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   // Chip widths are measured (the wide type defeats a guess), on a probe removed after.
   assert.match(extractFunction('renderLiveLabels'), /probe\.textContent = text; halves\.set\(text, probe\.offsetWidth \/ 2\);[\s\S]*probe\.remove\(\);\s*\}$/);
   // Fixed elements (the station panel, locate, the badge) count as shown: no offsetParent test.
-  assert.match(extractFunction('renderLiveLabels'), /document\.getElementById\('fab-locate'\), document\.getElementById\('app-version'\)\]\s*\.filter\(el => el && el\.getClientRects\(\)\.length\)/);
+  assert.match(extractFunction('liveLabelObstacles'), /document\.getElementById\('fab-locate'\), document\.getElementById\('app-version'\)\]\s*\.filter\(el => el && el\.getClientRects\(\)\.length\)/);
+  assert.match(extractFunction('renderLiveLabels'), /const obstacles = liveLabelObstacles\(\);\s*liveLabelObstaclesSeen = liveObstacleKey\(obstacles\);/);
   // …and are placed again whenever the station panel opens, closes or changes size,
   // or the map buttons' control does (its colour key opening, the buttons folding).
   assert.match(html, /new LiveAlertsControl\(\)\.addTo\(map\);\s*\/\/[^\n]*\n\s*liveLabelSpace\.observe\(document\.querySelector\('\.live-alerts-ctl'\)\);/);
-  assert.match(html, /const liveLabelSpace = new ResizeObserver\(\(\) => renderLiveLabels\(\)\);\s*liveLabelSpace\.observe\(popupPanel\);\s*popupPanel\.addEventListener\('animationend', e => \{ if \(e\.target === popupPanel\) renderLiveLabels\(\); \}\);/);
+  assert.match(html, /const liveLabelSpace = new ResizeObserver\(replaceLiveLabelsIfCrowded\);\s*liveLabelSpace\.observe\(popupPanel\);\s*popupPanel\.addEventListener\('animationend', e => \{ if \(e\.target === popupPanel\) replaceLiveLabelsIfCrowded\(\); \}\);/);
+  // …but only when something they avoid moved: a new LIVE ALERTS count resizes the
+  // control right after a view update has placed them, and that needs no second go.
+  const crowd = { liveAlertsOn: true, boxes: [{ left: 0, top: 500, right: 120.4, bottom: 540 }], placed: 0, Math };
+  vm.runInNewContext(`${html.match(/const liveObstacleKey = [\s\S]*?\.join\(';'\);/)[0]}
+    let liveLabelObstaclesSeen = '';
+    const liveLabelObstacles = () => boxes;
+    const renderLiveLabels = () => { placed++; liveLabelObstaclesSeen = liveObstacleKey(liveLabelObstacles()); };
+    ${extractFunction('replaceLiveLabelsIfCrowded')}
+    replaceLiveLabelsIfCrowded();                                  // first look: placed
+    replaceLiveLabelsIfCrowded();                                  // nothing moved: not again
+    boxes = [{ left: 0, top: 500, right: 120.2, bottom: 540 }];
+    replaceLiveLabelsIfCrowded();                                  // under a pixel: not again
+    boxes = [{ left: 0, top: 480, right: 120, bottom: 540 }];
+    replaceLiveLabelsIfCrowded();                                  // the key grew: placed
+    liveAlertsOn = false; boxes = [];
+    replaceLiveLabelsIfCrowded();                                  // live alerts off: nothing`, crowd);
+  assert.equal(crowd.placed, 2);
   // …while the searched area's alerts keep updating underneath without replacing
   // it, and switching live mode off brings the searched area's banner back.
   assert.match(extractFunction('showAlerts'), /if \(!liveAlertsOn\) renderAlertBanner\(alerts\);/);

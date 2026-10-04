@@ -6230,14 +6230,42 @@ function toggleLiveAlertType(event, button) {
 
 /* Name chips on the live areas ("FLOOD", "HEAT"), like the searched area's own. */
 const liveLabelLayer = L.layerGroup().addTo(map);
-// They keep clear of the station panel: placed again whenever it opens, closes or
-// changes size (a phone's sheet grows when its readings arrive) — and once it has
-// slid in, as it opens below the screen and only then moves up over the map. (The
-// map buttons' control is watched too, once it exists: see LiveAlertsControl.)
-const liveLabelSpace = new ResizeObserver(() => renderLiveLabels());
-liveLabelSpace.observe(popupPanel);
-popupPanel.addEventListener('animationend', e => { if (e.target === popupPanel) renderLiveLabels(); });
 const LIVE_LABEL_LIMIT = 30;   // a zoomed-out view can hold hundreds of alerts
+
+/**
+ * What the chips keep clear of, as boxes in map-container pixels: the alert
+ * banner, an open station panel, the search circle's own label, and the map's
+ * buttons (the LIVE ALERTS row with its colour key when open, zoom, locate, the
+ * version badge). Shown = has a box: offsetParent is null for every fixed
+ * element, such as the panel.
+ */
+function liveLabelObstacles() {
+  const mapBox = map.getContainer().getBoundingClientRect();
+  return [alertBanner, popupPanel, document.querySelector('.search-radius-label'),
+          document.querySelector('.live-alerts-ctl'), document.querySelector('.leaflet-control-zoom'),
+          document.getElementById('fab-locate'), document.getElementById('app-version')]
+    .filter(el => el && el.getClientRects().length)
+    .map(el => el.getBoundingClientRect())
+    .map(r => ({ left: r.left - mapBox.left, right: r.right - mapBox.left,
+                 top: r.top - mapBox.top, bottom: r.bottom - mapBox.top }));
+}
+/** The obstacles as a string, to tell whether any moved since the chips were placed. */
+const liveObstacleKey = boxes =>
+  boxes.map(b => [b.left, b.top, b.right, b.bottom].map(Math.round).join()).join(';');
+let liveLabelObstaclesSeen = '';   // the key the chips on the map were placed around
+
+// The chips are placed again when the station panel opens, closes or changes size
+// (a phone's sheet grows when its readings arrive), once it has slid in (it opens
+// below the screen and only then moves up over the map), and when the map buttons'
+// control changes (watched once it exists: see LiveAlertsControl) — but only if
+// that moved something: a new LIVE ALERTS count also resizes the control, right
+// after a view update that has just placed them.
+function replaceLiveLabelsIfCrowded() {
+  if (liveAlertsOn && liveObstacleKey(liveLabelObstacles()) !== liveLabelObstaclesSeen) renderLiveLabels();
+}
+const liveLabelSpace = new ResizeObserver(replaceLiveLabelsIfCrowded);
+liveLabelSpace.observe(popupPanel);
+popupPanel.addEventListener('animationend', e => { if (e.target === popupPanel) replaceLiveLabelsIfCrowded(); });
 
 /** The alerts drawn in the current view: alert id → the props and pieces in view. */
 function liveAlertsDrawnInView() {
@@ -6277,18 +6305,9 @@ function renderLiveLabels() {
   }
   candidates.sort((a, b) =>
     (LIVE_SIG_RANK[b.props.sig] ?? 0) - (LIVE_SIG_RANK[a.props.sig] ?? 0) || b.area - a.area);
-  // Keep clear of what sits over the map: the alert banner, an open station
-  // panel, the search circle's own label, and the map's buttons (the LIVE ALERTS
-  // row with its colour key when open, zoom, locate, the version badge) — boxes in map-container pixels. (Shown
-  // = has a box: offsetParent is null for every fixed element, such as the panel.)
-  const mapBox = map.getContainer().getBoundingClientRect();
-  const obstacles = [alertBanner, popupPanel, document.querySelector('.search-radius-label'),
-                     document.querySelector('.live-alerts-ctl'), document.querySelector('.leaflet-control-zoom'),
-                     document.getElementById('fab-locate'), document.getElementById('app-version')]
-    .filter(el => el && el.getClientRects().length)
-    .map(el => el.getBoundingClientRect())
-    .map(r => ({ left: r.left - mapBox.left, right: r.right - mapBox.left,
-                 top: r.top - mapBox.top, bottom: r.bottom - mapBox.top }));
+  // Keep clear of what sits over the map (see liveLabelObstacles).
+  const obstacles = liveLabelObstacles();
+  liveLabelObstaclesSeen = liveObstacleKey(obstacles);
   const placed = [];   // screen boxes of the labels so far
   const size = map.getSize();
   // Each chip's real half-width, measured once per name on a hidden chip of the same

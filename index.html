@@ -5910,9 +5910,15 @@ function liveAlertTolerance(zoom) {
  * it stays until the service stops listing it, even if a follow-up is late.
  */
 function liveAlertEnded(props, now) {
-  if (props.ends) return Date.parse(props.ends) < now;
-  if (/(warning|watch|advisory)$/i.test(props.prod_type || '')) return false;
-  return Date.parse(props.expiration) < now;
+  return liveAlertEndsAt(props) < now;
+}
+
+/** When an alert ends (ms), by the rule above — Infinity for "until further notice". */
+function liveAlertEndsAt(props) {
+  const end = props.ends ? Date.parse(props.ends)
+    : /(warning|watch|advisory)$/i.test(props.prod_type || '') ? Infinity
+    : Date.parse(props.expiration);
+  return Number.isNaN(end) ? Infinity : end;   // (an unreadable time: no end known)
 }
 
 /** A map-service text field, or undefined when empty (the service sends " " for none). */
@@ -6807,20 +6813,21 @@ function pruneLivePieces(now = Date.now()) {
 }
 
 /**
- * Wake up the moment the oldest piece — drawn or saved — turns 15 minutes old, and
- * take it off then (pruneLivePieces), not at the next 2-minute check: what's on
- * screen is re-downloaded at each check while online, but areas moved away from,
- * and everything while downloads fail, would otherwise linger up to 2 minutes more.
+ * Wake up the moment the first piece — drawn or saved — is due to go, and take it
+ * off then (pruneLivePieces), not at the next 2-minute check: when it turns 15
+ * minutes old, or its alert ends. What's on screen is re-downloaded at each check
+ * while online, but areas moved away from, and everything while downloads fail,
+ * would otherwise linger up to 2 minutes more.
  */
 function scheduleLiveExpiry() {
   clearTimeout(liveExpiryTimer);
   if (!liveAlertsOn) return;
-  let oldest = Infinity;
-  for (const piece of livePieces) oldest = Math.min(oldest, piece.at);
-  for (const piece of liveCache) oldest = Math.min(oldest, piece.at);
-  if (oldest === Infinity) return;
+  let due = Infinity;
+  for (const piece of livePieces) due = Math.min(due, piece.at + LIVE_CACHE_MAX_AGE_MS, liveAlertEndsAt(piece.props));
+  for (const piece of liveCache) due = Math.min(due, piece.at + LIVE_CACHE_MAX_AGE_MS, liveAlertEndsAt(liveProps(piece.f.properties)));
+  if (due === Infinity) return;
   // (A moment past it, so the piece is surely due when the timer runs.)
-  liveExpiryTimer = setTimeout(pruneLivePieces, Math.max(0, oldest + LIVE_CACHE_MAX_AGE_MS - Date.now()) + 50);
+  liveExpiryTimer = setTimeout(pruneLivePieces, Math.max(0, due - Date.now()) + 50);
 }
 // Back to the page: timers may have been slowed or frozen meanwhile (a phone puts
 // the app to sleep), so take off at once whatever came due while away.

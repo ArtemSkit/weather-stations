@@ -3329,7 +3329,7 @@ function liveCacheKit(extra = {}) {
   return vm.runInNewContext(`(() => {
     ${consts}
     let liveCache = [], liveAlertsOn = true, liveAnswered = false, liveViewPending = false, liveCacheTried = false, liveRun = 0;
-    ${['liveField', 'liveProps', 'liveAlertEnded', 'placeGeometry', 'geometryBox', 'liveBoxesMeet', 'liveCacheMerge',
+    ${['liveField', 'liveProps', 'liveAlertEnded', 'liveAlertEndsAt', 'placeGeometry', 'geometryBox', 'liveBoxesMeet', 'liveCacheMerge',
        'liveCacheTrim', 'liveViewFresh'].map(extractFunction).join('\n')}
     async ${extractFunction('restoreLiveCache')}
     return { liveCacheMerge, liveCacheTrim, liveViewFresh, liveBoxesMeet, geometryBox, restoreLiveCache,
@@ -3396,6 +3396,7 @@ test('live alerts: null properties, a zone split at the date line, and the 2-min
     const LIVE_CACHE_MAX_AGE_MS = 15 * 60_000;
     let liveCache = [];
     ${extractFunction('liveAlertEnded')}
+    ${extractFunction('liveAlertEndsAt')}
     ${extractFunction('pruneLivePieces')}
     return pruneLivePieces;
   })()`, { livePieces, liveAlertsLayer: { removeLayer: l => drawnOut.push(l.at) }, liveCacheTrim: c => c,
@@ -3405,16 +3406,20 @@ test('live alerts: null properties, a zone split at the date line, and the 2-min
   assert.equal(livePieces.size, 1);
 });
 
-test('live alerts: taken off the moment they turn 15 minutes old, not at the next check', () => {
+test('live alerts: taken off the moment they turn 15 minutes old or end, not at the next check', () => {
   const now = Date.now();
   const timers = [];
-  const ctx = { liveAlertsOn: true, liveExpiryTimer: 0, Infinity, Math, Date,
-    livePieces: new Set([{ at: now - 60_000 }, { at: now - 10 * 60_000 }]),   // drawn: the oldest 10 min old
-    liveCache: [{ at: now - 12 * 60_000 }],                                    // saved: older still, 12 min
+  const warning = { prod_type: 'Flood Warning' };   // no end: "until further notice"
+  const ctx = { liveAlertsOn: true, liveExpiryTimer: 0, Infinity, Math, Date, Number,
+    livePieces: new Set([{ at: now - 60_000, props: warning }, { at: now - 10 * 60_000, props: warning }]),   // drawn: the oldest 10 min old
+    liveCache: [{ at: now - 12 * 60_000, f: { properties: warning } }],                                      // saved: older still, 12 min
     pruneLivePieces: () => {}, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     clearTimeout: () => {} };
   const schedule = vm.runInNewContext(`(() => {
     const LIVE_CACHE_MAX_AGE_MS = 15 * 60_000;
+    ${extractFunction('liveField')}
+    ${extractFunction('liveProps')}
+    ${extractFunction('liveAlertEndsAt')}
     ${extractFunction('scheduleLiveExpiry')}
     return scheduleLiveExpiry;
   })()`, ctx);
@@ -3423,8 +3428,18 @@ test('live alerts: taken off the moment they turn 15 minutes old, not at the nex
   assert.equal(timers.length, 1);
   assert.ok(Math.abs(timers[0].ms - 3 * 60_000) < 1000, `in ${timers[0].ms} ms`);
   assert.equal(timers[0].fn, ctx.pruneLivePieces);
+  // An alert that ends sooner (in a minute) wakes it then — drawn or saved alike.
+  ctx.livePieces.add({ at: now, props: { prod_type: 'Heat Advisory', ends: new Date(now + 60_000).toISOString() } });
+  schedule();
+  assert.ok(Math.abs(timers.at(-1).ms - 60_000) < 1000, `in ${timers.at(-1).ms} ms`);
+  ctx.livePieces = new Set([...ctx.livePieces].filter(p => !p.props.ends));
+  ctx.liveCache.push({ at: now, f: { properties: { prod_type: 'Special Weather Statement', expiration: new Date(now + 90_000).toISOString() } } });
+  schedule();
+  assert.ok(Math.abs(timers.at(-1).ms - 90_000) < 1000, `in ${timers.at(-1).ms} ms`);
+  ctx.liveCache.pop();
+  timers.length = 1;
   // Already due: at once. Nothing left, or live alerts off: no wake-up.
-  ctx.liveCache = [{ at: now - 20 * 60_000 }];
+  ctx.liveCache = [{ at: now - 20 * 60_000, f: { properties: warning } }];
   schedule();
   assert.ok(timers[1].ms <= 100);
   ctx.livePieces = new Set(); ctx.liveCache = [];
@@ -3432,6 +3447,13 @@ test('live alerts: taken off the moment they turn 15 minutes old, not at the nex
   ctx.liveAlertsOn = false; ctx.liveCache = [{ at: now }];
   schedule();
   assert.equal(timers.length, 2);
+  // When an alert ends, by the same rule as "ended": its hazard end; none for a
+  // warning, watch or advisory without one; else its message's expiration.
+  const endsAt = vm.runInNewContext(`(${extractFunction('liveAlertEndsAt')})`, { Date, Infinity, Number });
+  assert.equal(endsAt({ prod_type: 'Flood Warning', ends: '2026-10-04T12:00:00Z' }), Date.parse('2026-10-04T12:00:00Z'));
+  assert.equal(endsAt({ prod_type: 'River Flood Warning', expiration: '2026-10-04T12:00:00Z' }), Infinity);
+  assert.equal(endsAt({ prod_type: 'Special Weather Statement', expiration: '2026-10-04T12:00:00Z' }), Date.parse('2026-10-04T12:00:00Z'));
+  assert.equal(endsAt({ prod_type: 'Special Weather Statement', expiration: 'soon' }), Infinity);
   // Set after each answer, after the saved copy is drawn, and after each prune; cleared
   // when live alerts go off; and on coming back to the page, what came due is taken off.
   assert.match(extractFunction('loadLiveAlerts'), /saveLiveCache\(\);\s*scheduleLiveExpiry\(\);/);
@@ -3585,6 +3607,7 @@ test('live alerts: each answer replaces what was drawn in its box (NOAA renumber
     ${extractFunction('liveField')}
     ${extractFunction('liveProps')}
     ${extractFunction('liveAlertEnded')}
+    ${extractFunction('liveAlertEndsAt')}
     ${extractFunction('restackLivePieces')}
     ${extractFunction('replaceLivePieces')}
     ${extractFunction('addLivePiece')}

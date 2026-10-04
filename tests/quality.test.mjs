@@ -3057,6 +3057,58 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
   assert.match(draw, /const area = L\.latLng\(lat, lon\)\.toBounds\(2 \* r\);\s*return \{ west: area\.getWest\(\)/);
 });
 
+test('live alert chips: one for neighbouring alerts of a type, the most serious first', () => {
+  // A plain map: 20 px a degree, the view 1000 × 600 px from 50°N 130°W.
+  const toPt = ll => ({ x: (ll.lng + 130) * 20, y: (50 - ll.lat) * 20 });
+  const point = (x, y) => ({ x, y, equals: o => o.x === x && o.y === y });
+  const bounds = (s, w, n, e) => ({ getSouth: () => s, getWest: () => w, getNorth: () => n, getEast: () => e,
+    getNorthEast: () => ({ lat: n, lng: e }), getSouthWest: () => ({ lat: s, lng: w }),
+    getCenter: () => ({ lat: (s + n) / 2, lng: (w + e) / 2 }) });
+  const chips = [];
+  const ctx = {
+    liveAlertsOn: true, Math, Map,
+    LIVE_SIG_RANK: { S: 0, Y: 1, A: 2, W: 3 },
+    liveLabelLayer: { clearLayers: () => { chips.length = 0; } },
+    liveLabelObstacles: () => [], liveObstacleKey: () => '', liveLabelObstaclesSeen: '',
+    shortAlertLabel: type => type.toUpperCase(), liveAlertTextColor: () => '#fff', escapeHtml: s => s,
+    map: { getBounds: () => bounds(20, -130, 50, -80), latLngToContainerPoint: ll => point(toPt(ll).x, toPt(ll).y),
+           getSize: () => point(1000, 600), containerPointToLatLng: p => ({ lat: 50 - p.y / 20, lng: p.x / 20 - 130 }),
+           getContainer: () => ({}) },
+    L: { point, latLngBounds: ([s, w], [n, e]) => bounds(s, w, n, e),
+         DomUtil: { create: () => ({ style: {}, set textContent(t) { this.w = t.length * 11 + 14; }, get offsetWidth() { return this.w; }, remove() {} }) },
+         tooltip: () => { const chip = {}; return { setLatLng(at) { chip.at = at; return this; },
+           setContent(html) { chip.text = html.replace(/<[^>]+>/g, ''); return this; }, addTo() { chips.push(chip); return this; } }; } }
+  };
+  // Alerts as the map service gives them: id → its props and the pieces in view.
+  const alert = (id, type, sig, s, w, n, e, ...more) => [id, { props: { cap_id: id, prod_type: type, sig },
+    pieces: [[s, w, n, e], ...more].map(b => ({ bounds: bounds(...b) })) }];
+  ctx.liveAlertsDrawnInView = () => new Map([
+    alert('h3', 'Heat Advisory', 'Y', 34, -121, 37, -119.5),   // a run of three, each touching the next
+    alert('h1', 'Heat Advisory', 'Y', 40, -124, 43, -121),     // (the largest, h1, gets their chip)
+    alert('h2', 'Heat Advisory', 'Y', 37, -122, 40, -120),
+    alert('h5', 'Heat Advisory', 'Y', 43.5, -110, 45, -108),   // not touching them: its own
+    alert('h4', 'Heat Advisory', 'Y', 30, -96, 32, -94),       // far away (Texas): its own
+    alert('f1', 'Flood Warning', 'W', 39.5, -121, 40, -115),   // another kind overlapping h2: its own
+    // An alert's zones far apart, and another of its kind between them touching
+    // neither: two areas, two chips (a box round the first would swallow it).
+    alert('s1', 'Gale Watch', 'A', 46, -128, 47, -126, [22, -84, 23, -82]),
+    alert('s2', 'Gale Watch', 'A', 30, -104, 31, -102)
+  ]);
+  const consts = html.match(/const LIVE_LABEL_LIMIT\s*=.*;/)[0];
+  vm.runInNewContext(`${consts}\n${extractFunction('renderLiveLabels')}\nrenderLiveLabels();\nglobalThis.render = renderLiveLabels;`, ctx);
+  assert.deepEqual(chips.map(c => c.text).sort(),
+    ['FLOOD WARNING', 'GALE WATCH', 'GALE WATCH', 'HEAT ADVISORY', 'HEAT ADVISORY', 'HEAT ADVISORY']);
+  // The run shares the chip of its largest; the separate two keep their own.
+  const heat = chips.filter(c => c.text === 'HEAT ADVISORY').map(c => c.at.lng);
+  assert.deepEqual(heat.sort((a, b) => a - b), [-122.5, -109, -95]);
+  // Its first one's chip blocked (here by something over the map at h1), the next
+  // of the run takes it: the run is still named, by h2.
+  ctx.liveLabelObstacles = () => [{ left: 100, right: 200, top: 150, bottom: 190 }];
+  ctx.render();
+  const moved = chips.filter(c => c.text === 'HEAT ADVISORY').map(c => c.at.lng);
+  assert.deepEqual(moved.sort((a, b) => a - b), [-121, -109, -95]);
+});
+
 test('live alerts: NWS colours, readable popup text, one view request at a time', () => {
   const colours = vm.runInNewContext(`(() => {
     ${html.match(/const LIVE_ALERT_COLORS = \{[\s\S]*?\n\};/)[0]}

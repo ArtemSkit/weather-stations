@@ -931,6 +931,13 @@
   .fc-hour .fc-temp { font-size: 0.8rem; }
   .fc-hour-pop { color: var(--text-muted); }
   .fc-hour-short { color: var(--text-muted); }
+  /* The narrowest phones (320 px): slimmer columns, so the last one still fits a
+     long word ("Thunderstorms") or a wind ("NNW 10 mph") without the list
+     scrolling sideways. */
+  @media (max-width: 359px) {
+    .fc-hour { grid-template-columns: 40px 22px 76px 44px minmax(0, 1fr); gap: 4px; padding-left: 12px; padding-right: 12px; }
+    .fc-hour-pop { white-space: nowrap; }   /* "💧100%" in one piece */
+  }
   .fc-foot { padding: 8px 16px; border-top: 1px solid var(--border); font-size: 0.62rem; color: var(--text-muted); }
 
   /* ════════════════════════════════════════════════════════════════════════════
@@ -1312,6 +1319,9 @@
     /* Room for the home bar, inside the sheet: a tap on the dialog's own padding
        would count as a tap outside it and close the forecast. */
     .fc-foot { padding-bottom: calc(8px + var(--safe-bottom)); }
+    /* A phone on its side: the notch is at one side of the full-width sheet. (On the
+       sheet, not the dialog, for the same reason as above.) */
+    .fc-sheet { padding-left: var(--safe-left); padding-right: var(--safe-right); }
 
     /* Search bar stretches to full width on the second row */
     .search-bar {
@@ -1562,7 +1572,7 @@
     .fc-hour-short > :empty, .fc-hour-air > :empty { display: block; }
     /* The chance of rain as a bar behind its number: 100% fills the cell. */
     .fc-hour:not(.fc-hour-head) .fc-hour-pop {
-      padding: 2px 6px; border-radius: 3px;
+      padding: 2px 6px; border-radius: 3px; color: var(--text);   /* readable on the bar */
       background: linear-gradient(90deg, rgba(90,169,255,0.32) var(--pop, 0%), rgba(90,169,255,0.06) 0);
     }
     .fc-hour-sky { color: var(--text); }
@@ -1593,10 +1603,15 @@
     font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.88rem;
   }
   .fc-wk-short { display: none; }
-  /* Narrower windows: "Wed" in place of "Wednesday" (still read out in full). */
-  @media (max-width: 1279px) {
+  /* Narrow columns: "Wed" in place of "Wednesday" (still read out in full). Told
+     by each column's own width, which hangs on the window and on how many days
+     the week has (with eight, "Wednesday" doesn't fit even at 1280 px). */
+  .fc-wk-day { container-type: inline-size; }
+  @container (max-width: 139px) {
     .fc-wk-short { display: inline; }
     .fc-wk-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  }
+  @media (max-width: 1279px) {
     .fc-wk-day { padding-left: 11px; padding-right: 8px; }
     .fc-wk-name { font-size: 0.8rem; }
     .fc-wk-sunset { font-size: 0.74rem; }
@@ -1779,6 +1794,10 @@
   /* Windows High Contrast drops backgrounds and shadows: outline the picked day and
      the focused chart instead, and frame the labels. */
   @media (forced-colors: active) {
+    /* The open tab: its accent colour and underline are replaced, so mark it in
+       Highlight (and hide the others' underline, which would show as text colour). */
+    .fc-tabs [role="tab"] { border-bottom-color: Canvas; }
+    .fc-tabs [role="tab"][aria-selected="true"] { border-bottom-color: Highlight; }
     .fc-wk-day[aria-selected="true"] { outline: 3px solid Highlight; outline-offset: -3px; }
     .fc-wk-chart:focus-visible { outline: 2px solid Highlight; outline-offset: -2px; }
     .fc-wk-pt b, .fc-wk-now > span { border: 1px solid CanvasText; }
@@ -4878,10 +4897,11 @@ function alertCardHtml(f) {
   let headline = p.headline;
   if (!detail && record) { detail = record.detail; headline = record.headline; }
   // A live alert has no text yet: its card fetches the NWS record when opened.
-  const lazy     = !detail && p.detailsUrl;
+  // (A record that came with no text is loaded all the same: nothing to wait for.)
+  const lazy     = !detail && !record && p.detailsUrl;
   const bodyAttr = lazy ? ' data-details-url="' + escapeHtml(p.detailsUrl) + '"' : '';
   // (After a failed lookup with none on its way, say so rather than "Loading…".)
-  const descText = !lazy ? detail
+  const descText = !lazy ? detail || (record ? 'No further details were published for this alert.' : '')
     : alertRecordFailedAt.has(id) && !alertRecordPending(id)
       ? 'Couldn\'t load the details — close and reopen the card to try again.'
       : 'Loading the full NWS text…';
@@ -5190,6 +5210,8 @@ function loadAlertRecord(id, url) {
 function queueAlertRecords(items) {
   for (const { id, url } of items) {
     if (!id || alertRecordCache.has(id) || alertRecordWanted.has(id)) continue;
+    // No NWS record to load (a blank or foreign link): never "Finding the places…".
+    if (!isTrustedNwsApiUrl(url, '/alerts/')) continue;
     if (Date.now() - (alertRecordFailedAt.get(id) ?? -Infinity) < ALERT_RECORD_RETRY_MS) continue;
     alertRecordWanted.add(id);
     alertRecordQueue.push({ id, url });
@@ -6208,6 +6230,13 @@ function toggleLiveAlertType(event, button) {
 
 /* Name chips on the live areas ("FLOOD", "HEAT"), like the searched area's own. */
 const liveLabelLayer = L.layerGroup().addTo(map);
+// They keep clear of the station panel: placed again whenever it opens, closes or
+// changes size (a phone's sheet grows when its readings arrive) — and once it has
+// slid in, as it opens below the screen and only then moves up over the map. (The
+// map buttons' control is watched too, once it exists: see LiveAlertsControl.)
+const liveLabelSpace = new ResizeObserver(() => renderLiveLabels());
+liveLabelSpace.observe(popupPanel);
+popupPanel.addEventListener('animationend', e => { if (e.target === popupPanel) renderLiveLabels(); });
 const LIVE_LABEL_LIMIT = 30;   // a zoomed-out view can hold hundreds of alerts
 
 /** The alerts drawn in the current view: alert id → the props and pieces in view. */
@@ -6249,19 +6278,39 @@ function renderLiveLabels() {
   candidates.sort((a, b) =>
     (LIVE_SIG_RANK[b.props.sig] ?? 0) - (LIVE_SIG_RANK[a.props.sig] ?? 0) || b.area - a.area);
   // Keep clear of what sits over the map: the alert banner, an open station
-  // panel and the search circle's own label (boxes in map-container pixels).
+  // panel, the search circle's own label, and the map's buttons (the LIVE ALERTS
+  // row with its colour key when open, zoom, locate, the version badge) — boxes in map-container pixels. (Shown
+  // = has a box: offsetParent is null for every fixed element, such as the panel.)
   const mapBox = map.getContainer().getBoundingClientRect();
-  const obstacles = [alertBanner, popupPanel, document.querySelector('.search-radius-label')]
-    .filter(el => el && el.offsetParent !== null)
+  const obstacles = [alertBanner, popupPanel, document.querySelector('.search-radius-label'),
+                     document.querySelector('.live-alerts-ctl'), document.querySelector('.leaflet-control-zoom'),
+                     document.getElementById('fab-locate'), document.getElementById('app-version')]
+    .filter(el => el && el.getClientRects().length)
     .map(el => el.getBoundingClientRect())
     .map(r => ({ left: r.left - mapBox.left, right: r.right - mapBox.left,
                  top: r.top - mapBox.top, bottom: r.bottom - mapBox.top }));
   const placed = [];   // screen boxes of the labels so far
-  for (const { props, at } of candidates) {
+  const size = map.getSize();
+  // Each chip's real half-width, measured once per name on a hidden chip of the same
+  // style: the wide ExtraBold type runs ~11 px a letter, and a guess from the letter
+  // count let chips overlap one another and run off the edge.
+  const probe = L.DomUtil.create('div', 'leaflet-tooltip alert-area-label live-area-label', map.getContainer());
+  probe.style.visibility = 'hidden';
+  const halves = new Map();
+  const halfOf = text => {
+    if (!halves.has(text)) { probe.textContent = text; halves.set(text, probe.offsetWidth / 2); }
+    return halves.get(text);
+  };
+  for (const { props, at: middle } of candidates) {
     if (placed.length >= LIVE_LABEL_LIMIT) break;
     const text = shortAlertLabel(props.prod_type);
-    const pt = map.latLngToContainerPoint(at);
-    const half = text.length * 3.6 + 8;   // about half the chip's width
+    const half = halfOf(text);
+    // A sliver of an area at the edge of the view would centre its chip on the
+    // edge, half cut off ("FLOOD ADV…"): nudge it in until the whole chip shows.
+    const raw = map.latLngToContainerPoint(middle);
+    const pt = L.point(Math.min(Math.max(raw.x, half + 4), size.x - half - 4),
+                       Math.min(Math.max(raw.y, 14), size.y - 14));
+    const at = pt.equals(raw) ? middle : map.containerPointToLatLng(pt);
     if (placed.some(o => Math.abs(o.x - pt.x) < o.half + half + 6 && Math.abs(o.y - pt.y) < 22)) continue;
     if (obstacles.some(r => pt.x + half > r.left - 4 && pt.x - half < r.right + 4 &&
                             pt.y + 10 > r.top - 4 && pt.y - 10 < r.bottom + 4)) continue;
@@ -6272,6 +6321,7 @@ function renderLiveLabels() {
       .setContent(`<span style="color:${liveAlertTextColor(props.prod_type)}">${escapeHtml(text)}</span>`)
       .addTo(liveLabelLayer);
   }
+  probe.remove();
 }
 
 /* The banner in live mode lists the alerts drawn in view, kept in step with the
@@ -6305,9 +6355,12 @@ const LIVE_PLACES_PREFETCH = 60;   // a zoomed-out view can list hundreds
  */
 function prefetchLiveAlertPlaces() {
   if (!liveAlertsOn || alertBannerCollapsed) return;
+  // The top ones first, then those still without places: filtering first would take
+  // the next 60 each time a record arrives (and redraws), working through every
+  // alert in view — and past the record cache's size, round and round for ever.
   queueAlertRecords(sortAlerts(liveBannerFeatures)
-    .filter(f => !alertAreaDesc(f))
     .slice(0, LIVE_PLACES_PREFETCH)
+    .filter(f => !alertAreaDesc(f))
     .map(f => ({ id: alertId(f), url: f.properties.detailsUrl })));
 }
 
@@ -6453,6 +6506,8 @@ const LiveAlertsControl = L.Control.extend({
   }
 });
 new LiveAlertsControl().addTo(map);
+// Its colour key opening or the buttons folding changes the room left for labels.
+liveLabelSpace.observe(document.querySelector('.live-alerts-ctl'));
 const liveAlertsBtn   = document.getElementById('live-alerts-btn');
 const liveAlertsCount = document.getElementById('live-alerts-count');
 const liveLegendBtn   = document.getElementById('live-legend-btn');
@@ -6816,7 +6871,9 @@ async function fetchAirAndPressure(lat, lon, have = null) {
   // UTC times, not the place's clock: Open-Meteo gives a whole answer one UTC offset
   // (today's, wrong across a daylight-saving change), and the rounded point can
   // even fall in the next time zone. UTC hours always line up with the NWS's.
-  const where = '?latitude=' + lat.toFixed(1) + '&longitude=' + lon.toFixed(1) + '&timezone=GMT';
+  // past_days=1: the answer starts at 00:00 UTC today, which is the evening in the
+  // US; without yesterday's hours, "Tonight" would miss its first ones.
+  const where = '?latitude=' + lat.toFixed(1) + '&longitude=' + lon.toFixed(1) + '&timezone=GMT&past_days=1';
   const get = url => fetchJsonWithTimeout(url, {}, 8000)
     .then(({ response, data }) => (response.ok ? data : null), () => null);
   const keepAir = hasAir(have), keepPressure = hasPressure(have);
@@ -6992,12 +7049,22 @@ function forecastRowExtras(parts, extras, point) {
   const hourOf = key => {
     const ms = Date.parse(key + ':00:00Z');
     const part = parts.find(p => ms >= Date.parse(p.startTime) && ms < Date.parse(p.endTime)) || first;
-    const partOffset = isoOffsetMinutes(part?.startTime) ?? offset ?? 0;
+    const startOffset = isoOffsetMinutes(part?.startTime) ?? offset ?? 0;
+    const endOffset = isoOffsetMinutes(part?.endTime) ?? startOffset;
+    // A night the clocks change in (its start and end differ in offset): they change
+    // at 2 AM on the old clock (the US rule), so the hours after use the new offset.
+    const changeAt = endOffset === startOffset ? Infinity : Date.parse(
+      new Date(Date.parse(part.endTime) + startOffset * 60_000).toISOString().slice(0, 10) + 'T02:00:00Z') - startOffset * 60_000;
+    const partOffset = ms >= changeAt ? endOffset : startOffset;
     return forecastHourLabel(new Date(ms + partOffset * 60_000).getUTCHours());
   };
-  // "; the air-quality forecast runs to 8 AM" when it ends inside the row.
-  const runsOut = (hours, what) => (hours.length < rowHours
-    ? '; the ' + what + ' forecast runs to ' + hourOf(hours[hours.length - 1][0]) : '');
+  // "; the air-quality forecast runs to 8 AM" when it ends before the row's last
+  // hour (hours missing elsewhere, say a gap in the data, are no end).
+  const runsOut = (hours, what) => {
+    const lastKey = hours[hours.length - 1][0];
+    return lastKey < utcHourKey(new Date(Date.parse(last.endTime) - 3_600_000).toISOString())
+      ? '; the ' + what + ' forecast runs to ' + hourOf(lastKey) : '';
+  };
 
   const air = within(extras?.aqi);
   if (air.length) {
@@ -7381,26 +7448,49 @@ function sunBands(t0, t1, point, startIso) {
   const first = forecastLocalTime(startIso);
   const offset = isoOffsetMinutes(startIso);
   if (!point || !first || offset == null || !(t1 > t0)) return [];
-  const dayAfter = key => new Date(Date.parse(key + 'T00:00:00Z') + 86_400_000).toISOString().slice(0, 10);
+  const shift = (key, days) => new Date(Date.parse(key + 'T00:00:00Z') + days * 86_400_000).toISOString().slice(0, 10);
   const midnight = key => Date.parse(key + 'T00:00:00Z') - offset * 60_000;
+  const sun = key => sunTimes(key, point.lat, point.lon);
   const bands = [];
   // From the evening before the first day (its night may still be on) to past the last.
-  let key = new Date(Date.parse(first.dayKey + 'T00:00:00Z') - 86_400_000).toISOString().slice(0, 10);
-  for (let i = 0, days = Math.ceil((t1 - t0) / 86_400_000) + 2; i < days; i++, key = dayAfter(key)) {
-    const today = sunTimes(key, point.lat, point.lon), next = sunTimes(dayAfter(key), point.lat, point.lon);
-    if (today.sun === 'down') { bands.push({ kind: 'night', from: midnight(key), to: midnight(dayAfter(key)) }); continue; }
-    if (typeof today.sun !== 'object') continue;   // the midnight sun: no night after this day
-    const rise = typeof next.sun === 'object' ? next.sun.rise : next.sun === 'down' ? midnight(dayAfter(key)) : null;
-    if (rise == null) continue;
-    const set = today.sun.set;
-    const dark = typeof today.light === 'object' ? today.light.set : null;
-    const light = typeof next.light === 'object' ? next.light.rise : null;
-    if (dark != null && light != null && light > dark) {
-      bands.push({ kind: 'dusk', from: set, to: dark }, { kind: 'night', from: dark, to: light },
-                 { kind: 'dawn', from: light, to: rise });
-    } else {
-      bands.push({ kind: 'twilight', from: set, to: rise });   // never fully dark (the far north in summer)
+  let key = shift(first.dayKey, -1), yesterday = sun(shift(key, -1));
+  for (let i = 0, days = Math.ceil((t1 - t0) / 86_400_000) + 2; i < days; i++, key = shift(key, 1)) {
+    const today = sun(key), next = sun(shift(key, 1)), end = midnight(shift(key, 1));
+    if (today.sun === 'down') {
+      bands.push({ kind: 'night', from: midnight(key), to: end });   // polar night: all day
+    } else if (typeof today.sun === 'object') {   // (the midnight sun, 'up': no night at all)
+      const { rise: up, set } = today.sun;
+      // The first sunrise after polar night: the night before ended at midnight, so
+      // this morning's dark (and its first light) is this day's to shade.
+      if (yesterday.sun === 'down') {
+        const light = typeof today.light === 'object' && today.light.rise > midnight(key) && today.light.rise < up
+          ? today.light.rise : null;
+        bands.push(...(light != null ? [{ kind: 'night', from: midnight(key), to: light }, { kind: 'dawn', from: light, to: up }]
+                                     : [{ kind: 'dawn', from: midnight(key), to: up }]));
+      }
+      const dark = typeof today.light === 'object' ? today.light.set : null;
+      if (typeof next.sun === 'object') {
+        const rise = next.sun.rise;
+        const light = typeof next.light === 'object' ? next.light.rise : null;
+        if (dark != null && light != null && light > dark) {
+          bands.push({ kind: 'dusk', from: set, to: dark }, { kind: 'night', from: dark, to: light },
+                     { kind: 'dawn', from: light, to: rise });
+        } else {
+          bands.push({ kind: 'twilight', from: set, to: rise });   // never fully dark (the far north in summer)
+        }
+      } else if (next.sun === 'down') {
+        // Polar night from tomorrow: dusk, then night to midnight (tomorrow shades
+        // itself). No dawn: its end would read as a sunrise that never comes.
+        const dusk = dark != null && dark > set && dark < end ? dark : end;
+        bands.push({ kind: 'dusk', from: set, to: dusk });
+        if (dusk < end) bands.push({ kind: 'night', from: dusk, to: end });
+      } else {
+        // The midnight sun from tomorrow: the sun only dips below the horizon. Its
+        // sunset is still marked (an empty band: nothing to shade).
+        bands.push({ kind: 'dusk', from: set, to: set });
+      }
     }
+    yesterday = today;
   }
   return bands;
 }
@@ -7447,6 +7537,8 @@ function forecastWeekDayHtml(row, index, selected) {
   const [weekday, date] = (when?.day || '').split(', ');
   // The NWS calls part of today "This Afternoon" (or "Today") and a night "Tonight".
   const name = !row.day ? main.name || weekday : /^(this|today)\b/i.test(main.name || '') ? 'Today' : weekday || main.name;
+  // "Wed"; a night longer than "Tonight" ("Overnight") is "Night" (its date is under it).
+  const shortName = name === weekday ? name.slice(0, 3) : !row.day && (name || '').length > 7 ? 'Night' : name || '';
   const temp = (part, word, d) => d ? '<span class="fc-' + part + '"><span aria-hidden="true">' +
     (part === 'hi' ? '↑' : '↓') + '</span><span class="sr-only">' + word + ' </span>' + d.f + '°</span>' : '';
   const temps = temp('hi', 'High', row.day && forecastDegrees(row.day)) + temp('lo', 'Low', row.night && forecastDegrees(row.night));
@@ -7456,7 +7548,7 @@ function forecastWeekDayHtml(row, index, selected) {
       ' aria-selected="' + selected + '" aria-controls="fc-wk-detail" tabindex="' + (selected ? 0 : -1) + '">' +
     // The full name, and a short one ("Wed") the CSS swaps in where columns are narrow.
     '<span class="fc-wk-name"><span class="fc-wk-long">' + escapeHtml(name || '') + '</span>' +
-      '<span class="fc-wk-short" aria-hidden="true">' + escapeHtml(name === weekday ? name.slice(0, 3) : name || '') + '</span></span>' +
+      '<span class="fc-wk-short" aria-hidden="true">' + escapeHtml(shortName) + '</span></span>' +
     '<span class="fc-wk-date">' + escapeHtml(date || '') + '</span>' +
     '<span class="fc-wk-main"><span class="fc-wk-icon" aria-hidden="true">' + forecastEmoji(main.shortForecast, !!row.day) +
       '</span><span class="fc-wk-temps">' + (temps || '—') + '</span></span>' +
@@ -7643,11 +7735,20 @@ function showWeekHour(index) {
   tip.classList.toggle('fc-wk-tip-left', h.x > 0.62);   // on the side with room
 }
 
-/** The hour nearest to a spot across the chart (0–1), or -1 with no hours. */
+/** The day column at a spot across the chart (0–1). */
+function weekRowAt(fraction) {
+  const i = weekModel.rows.findIndex(r => fraction < r.from + r.width);
+  return i < 0 ? weekModel.rows.length - 1 : i;
+}
+
+/**
+ * The hour nearest to a spot across the chart (0–1), or -1 with no hours (a single
+ * one is none: the chart then says the NWS sent no hourly forecast).
+ */
 function weekHourAt(fraction) {
   const model = weekModel;
-  if (!model?.points.length) return -1;
-  const row = model.rows.find(r => fraction < r.from + r.width) || model.rows[model.rows.length - 1];
+  if (!model || model.points.length < 2) return -1;
+  const row = model.rows[weekRowAt(fraction)];
   const t = row.start + Math.min(Math.max((fraction - row.from) / row.width, 0), 1) * (row.end - row.start);
   let best = 0;
   model.points.forEach((h, i) => { if (Math.abs(h.t - t) < Math.abs(model.points[best].t - t)) best = i; });
@@ -7657,6 +7758,16 @@ function weekHourAt(fraction) {
 /** The day an hour of the chart belongs to. */
 function weekRowOf(h) {
   return weekModel.rows.findIndex(row => h.t >= row.start && h.t < row.end);
+}
+
+/**
+ * The hour to show for a spot on the chart: the nearest one, if it is in the day
+ * column there (past the end of the hourly forecast, the nearest hour is days
+ * back, nowhere near the pointer), or -1.
+ */
+function weekHourIn(fraction) {
+  const hour = weekHourAt(fraction);
+  return hour >= 0 && weekRowOf(weekModel.points[hour]) === weekRowAt(fraction) ? hour : -1;
 }
 
 /** Pick a day: its column, its band on the chart, its forecast below. */
@@ -7697,18 +7808,18 @@ fcDays.addEventListener('click', e => {
   if (tab) { selectWeekDay(+tab.dataset.row); return; }
   const chart = e.target.closest('.fc-wk-chart');
   if (!chart || !weekModel) return;
-  // The hour where the click (or tap) landed: a tap brings no pointermove first.
+  // The day where the click (or tap) landed, and its hour there: a tap brings no
+  // pointermove first.
   const box = chart.getBoundingClientRect();
-  const hour = weekHourAt((e.clientX - box.left) / box.width);
-  if (hour < 0) return;
-  selectWeekDay(weekRowOf(weekModel.points[hour]));
-  showWeekHour(hour);   // and its numbers (a touch screen has no hover)
+  const fraction = (e.clientX - box.left) / box.width;
+  selectWeekDay(weekRowAt(fraction));
+  showWeekHour(weekHourIn(fraction));   // and its numbers (a touch screen has no hover)
 });
 fcDays.addEventListener('pointermove', e => {
   const chart = e.target.closest('.fc-wk-chart');
   if (!chart || !weekModel) return;
   const box = chart.getBoundingClientRect();
-  showWeekHour(weekHourAt((e.clientX - box.left) / box.width));
+  showWeekHour(weekHourIn((e.clientX - box.left) / box.width));
 });
 fcDays.addEventListener('pointerout', e => {
   const chart = e.target.closest('.fc-wk-chart');
@@ -7727,7 +7838,7 @@ fcDays.addEventListener('keydown', e => {
     selectWeekDay(to, true);
     return;
   }
-  if (!e.target.classList.contains('fc-wk-chart') || !weekModel.points.length) return;
+  if (!e.target.classList.contains('fc-wk-chart') || weekModel.points.length < 2) return;   // (see weekHourAt)
   const last = weekModel.points.length - 1;
   const step = { ArrowRight: 1, ArrowLeft: -1, PageDown: 24, PageUp: -24 }[e.key];
   // With no cursor showing (the pointer left), keys start from the picked day.
@@ -7746,16 +7857,17 @@ fcDays.addEventListener('keydown', e => {
 fcDays.addEventListener('focusin', e => {
   // Keyboard focus only: a click or tap puts the cursor where it landed instead.
   if (!e.target.classList.contains('fc-wk-chart') || !e.target.matches(':focus-visible') ||
-      !weekModel?.points.length || weekHour >= 0) return;
+      !(weekModel?.points.length >= 2) || weekHour >= 0) return;
   const first = weekFirstHour();
   showWeekHour(first);
   readWeekHour(first);
 });
 
-/** The picked day's first hour on the chart. */
+/** The picked day's first hour on the chart (the last hour, for a day past them all). */
 function weekFirstHour() {
   const row = weekModel.rows[weekModel.selected];
-  return Math.max(weekModel.points.findIndex(h => h.t >= row.start), 0);
+  const i = weekModel.points.findIndex(h => h.t >= row.start);
+  return i < 0 ? weekModel.points.length - 1 : i;
 }
 fcDays.addEventListener('focusout', e => {
   if (e.target.classList.contains('fc-wk-chart')) showWeekHour(-1);
@@ -7865,7 +7977,11 @@ document.querySelector('.fc-tabs').addEventListener('keydown', e => {
 });
 forecastDialog.addEventListener('click', e => {
   if (e.target === forecastDialog) forecastDialog.close();    // the backdrop (outside the sheet)
-  else if (e.target.closest('.fc-retry')) openForecast();
+  else if (e.target.closest('.fc-retry')) {
+    // The button is about to be replaced: keep keyboard focus in the dialog, on the open tab.
+    (fcTabDays.getAttribute('aria-selected') === 'true' ? fcTabDays : fcTabHours).focus();
+    openForecast();
+  }
 });
 // Esc closes the dialog (the browser does that); it must not also reach the
 // page's own Esc handlers (alert popup, pin mode) hidden behind it.
@@ -8598,19 +8714,23 @@ fabLocate.addEventListener('click', () => {
       showOverlay(`Fetching station ${stationParam}…`);
 
       areaLoading = { status: 'LOADING STATION…', overlay: `Fetching station ${stationParam}…` };
-      let data, sitePoint;
+      let data, sitePoint, noReadings = null;
       try {
         // The observation's own point is rounded (KJFK's is ~1.8 km off), so also
         // ask for the station record's exact site — in parallel, and optional.
+        // A station that exists but hasn't reported lately (404) is still plotted,
+        // and its panel says so, as when it is opened from the map.
         [data, sitePoint] = await Promise.all([
-          fetchObservations(stationParam), fetchStationPoint(stationParam)
+          fetchObservations(stationParam).catch(e => { if (e.status !== 404) throw e; noReadings = e; return null; }),
+          fetchStationPoint(stationParam)
         ]);
       } finally {
         if (area === areaGeneration) areaLoading = null;
       }
       if (area !== areaGeneration) return;        // a user search replaced the map
+      if (!data && !sitePoint) throw noReadings || new Error('No coordinates in station response');   // no such station (or no site to show)
       // GeoJSON: [lng, lat]. Same spot a normal search plots the station at.
-      const [lng, lat] = sitePoint || data.geometry?.coordinates || [];
+      const [lng, lat] = sitePoint || data?.geometry?.coordinates || [];
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
         throw new Error('No coordinates in station response');
       }
@@ -8619,7 +8739,7 @@ fabLocate.addEventListener('click', () => {
       // lookup includes the nearby warning polygons visible there (alertViewportBounds).
       moveMapTo(lat, lng, 10);
 
-      const stName = data.properties?.stationName || stationParam;
+      const stName = data?.properties?.stationName || stationParam;
       const iconEl = makeStationMarker(stationParam, stName, lat, lng);
       // This path builds its single marker directly (not via plotStations), so
       // register it for Tier-3 alert flagging by hand.

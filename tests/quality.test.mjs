@@ -92,7 +92,11 @@ test('inline scripts compile and document IDs remain unique', () => {
   assert.equal(new Set(ids).size, ids.length, 'duplicate HTML IDs break label and event targeting');
   const idSet = new Set(ids);
   for (const [, references] of html.matchAll(/\saria-(?:labelledby|describedby)="([^"]+)"/g)) {
-    for (const id of references.split(/\s+/)) assert.ok(idSet.has(id), `missing ARIA target #${id}`);
+    // (A reference built in script, "fc-wk-tab-' + i + '", is checked by its own tests.)
+    if (references.includes("'")) continue;
+    for (const id of references.split(/\s+/)) {
+      assert.ok(idSet.has(id), `missing ARIA target #${id}`);
+    }
   }
   // Every element the scripts look up must exist, or a handler silently never binds.
   for (const [, id] of html.matchAll(/getElementById\('([^']+)'\)/g)) {
@@ -3356,7 +3360,10 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   // Each hour gets its air quality and pressure, matched by UTC hour (23:00 CDT = 04 UTC).
   const aired = r.renderForecastHours([hour('2026-10-01T23:00:00-05:00', '2026-10-02T00:00:00-05:00')], now,
     { aqi: new Map([['2026-10-02T04', { value: 44, pollutant: 'ozone' }]]), pressure: new Map([['2026-10-02T04', 1013.25]]) });
-  assert.match(aired, /<span class="fc-hour-air"><span class="fc-aqi fc-aqi-1">AQI 44 Good<\/span> · 29\.92 inHg<\/span>/);
+  assert.match(aired, /<span class="fc-hour-air"><span class="fc-hour-aqi"><span class="fc-aqi fc-aqi-1">AQI 44 Good<\/span><\/span><span class="fc-hour-press">29\.92 inHg<\/span><\/span>/);
+  // Every cell is there even when empty, so the wide-screen table's columns line up.
+  assert.match(aired, /<span class="fc-hour-sky">Clear<\/span><span class="fc-hour-wind"><\/span>/);
+  assert.match(aired, /<li class="fc-hour fc-hour-head" aria-hidden="true">[^]*?<span>Air quality<\/span><span>Pressure<\/span><\/li>/);
   assert.equal(r.forecastEmoji('Mostly Sunny', true), '⛅');
   assert.equal(r.forecastEmoji('Clear', false), '🌙');
   assert.equal(r.forecastTemp({ temperature: null }), '—');
@@ -3519,10 +3526,177 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   assert.match(dec.sun, /No sunrise — the sun stays down all day/);
   assert.match(dec.facts, /twilight from 11:5\d AM to 2:5\d PM/);
   // Nothing to go on (no place, or a timestamp without its offset): nothing shown.
-  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '' });
+  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', aqi: null });
   assert.equal(k.forecastRowExtras([{ startTime: '2026-10-03T06:00', endTime: '2026-10-03T18:00' }], null, sa).sun, '');
   // EPA categories at their edges.
   assert.deepEqual([50, 51, 101, 151, 201, 301].map(v => k.aqiCategory(v).level), [1, 2, 3, 4, 5, 6]);
+});
+
+/** The wide-screen week view's functions in a vm, with everything they lean on. */
+function forecastWeekKit() {
+  const escapeHtml = v => String(v ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+  const consts = ['WEEK_W', 'WEEK_TEMP', 'WEEK_RAIN', 'WEEK_AIR', 'WEEK_PRESSURE', 'weekPct', 'weekNum', 'weekEdge']
+    .map(name => html.match(new RegExp(`const ${name}\\s*=.*;`))[0]).join('\n');
+  return vm.runInNewContext(`(() => {
+    let weekModel = null;
+    ${consts}
+    ${['forecastDayPairs', 'forecastLocalTime', 'forecastHourLabel', 'forecastDegrees', 'forecastEmoji',
+       'forecastTemp'].map(extractFunction).join('\n')}
+    ${forecastExtrasSource}
+    ${['forecastWeekModel', 'weekNights', 'smoothPath', 'forecastWeekDayHtml', 'weekTempStrip', 'weekRainStrip',
+       'weekAirStrip', 'weekPressureStrip', 'renderWeekDetail', 'renderForecastWeek', 'weekHourHtml',
+       'weekHourAt', 'weekRowOf'].map(extractFunction).join('\n')}
+    return { forecastWeekModel, smoothPath, renderForecastWeek, renderWeekDetail, weekHourAt, weekRowOf,
+             use: model => { weekModel = model; } };
+  })()`, { Date, escapeHtml });
+}
+
+/** A San Antonio week: Tonight, then Sunday (day and night), then Monday's day; 42 hours. */
+function sampleWeek() {
+  const period = (name, isDaytime, start, end, temperature, extra = {}) => ({ name, isDaytime, temperature,
+    temperatureUnit: 'F', startTime: start, endTime: end, shortForecast: 'Sunny', detailedForecast: name + ' <words>.', ...extra });
+  const days = [
+    period('Tonight', false, '2026-10-03T18:00:00-05:00', '2026-10-04T06:00:00-05:00', 71, { shortForecast: 'Mostly Cloudy' }),
+    period('Sunday', true, '2026-10-04T06:00:00-05:00', '2026-10-04T18:00:00-05:00', 82, { probabilityOfPrecipitation: { value: 30 } }),
+    period('Sunday Night', false, '2026-10-04T18:00:00-05:00', '2026-10-05T06:00:00-05:00', 70),
+    period('Monday', true, '2026-10-05T06:00:00-05:00', '2026-10-05T18:00:00-05:00', 85)
+  ];
+  const t0 = Date.parse('2026-10-03T18:00:00-05:00');
+  const iso = ms => new Date(ms - 5 * 3600e3).toISOString().slice(0, 19) + '-05:00';
+  const hours = Array.from({ length: 42 }, (_, i) => {
+    const start = t0 + i * 3600e3, local = (18 + i) % 24;
+    return { startTime: iso(start), endTime: iso(start + 3600e3), isDaytime: local >= 7 && local < 19,
+             temperature: Math.round(76 - 7 * Math.cos((local - 5) / 24 * 2 * Math.PI)), temperatureUnit: 'F',
+             shortForecast: 'Clear', probabilityOfPrecipitation: { value: i > 20 && i < 26 ? 40 : 2 },
+             windDirection: 'N', windSpeed: '10 mph' };
+  });
+  const utc = ms => new Date(ms).toISOString().slice(0, 13);
+  const extras = {
+    aqiNow: 30,
+    aqi: new Map(hours.slice(0, 30).map((h, i) => [utc(Date.parse(h.startTime)), { value: i === 20 ? 120 : 40, pollutant: 'ozone' }])),
+    pressure: new Map(hours.map((h, i) => [utc(Date.parse(h.startTime)), 1018 - i * 0.2]))
+  };
+  return { days, hours, extras, point: { lat: 29.42, lon: -98.49 } };
+}
+
+test('wide screens: the week laid out on one time line, nights from the sun', () => {
+  const k = forecastWeekKit();
+  const { days, hours, extras, point } = sampleWeek();
+  const model = k.forecastWeekModel(days, hours, extras, point);
+  // Three columns (Tonight; Sunday with its night; Monday), each as wide as its hours
+  // but never under 18: 12 h → 18, 24 h → 24, 12 h → 18 of 60.
+  assert.equal(model.rows.length, 3);
+  assert.deepEqual(Array.from(model.rows, r => Math.round(r.width * 100)), [30, 40, 30]);
+  // Time runs evenly within a column and continues across its edges.
+  const [tonight, sunday, monday] = model.rows;
+  assert.equal(model.xAt(sunday.start), 0.3);
+  assert.equal(model.xAt(monday.start), 0.7);
+  assert.ok(Math.abs(model.xAt(sunday.start + 12 * 3600e3) - 0.5) < 1e-9);
+  assert.equal(model.xAt(tonight.start - 1), 0);
+  assert.equal(model.xAt(monday.end + 1), 1);
+  // Every hour placed, in order; each strip on its own scale.
+  assert.equal(model.points.length, 42);
+  assert.ok(model.points.every((h, i) => i === 0 || h.x > model.points[i - 1].x));
+  const temps = model.points.map(h => h.deg.f);
+  assert.equal(model.tempY(Math.max(...temps)), 60);
+  assert.equal(model.tempY(Math.min(...temps)), 150);
+  // The nights: dusk after sunset (7:17 PM), dark from last light, dawn before
+  // sunrise; the first night's dusk starts after the forecast does (at 6 PM).
+  const kinds = Array.from(model.nights, b => b.kind);
+  assert.deepEqual(kinds.slice(0, 3), ['dusk', 'night', 'dawn']);
+  assert.ok(model.nights[0].from > 0 && model.nights[0].from < 0.1);
+  assert.ok(model.nights.every(b => b.to > b.from && b.from >= 0 && b.to <= 1));
+  // No periods: no week.
+  assert.equal(k.forecastWeekModel([], hours, extras, point), null);
+});
+
+test('wide screens: the curve never invents a high or low', () => {
+  const k = forecastWeekKit();
+  // A plateau and a peak: a plain cubic spline would bulge past 10 and dip under 0.
+  const d = k.smoothPath([[0, 0], [1, 10], [2, 10], [3, 0], [4, 0], [5, 6]]);
+  const ys = [...d.matchAll(/[ ,]?(-?[\d.]+),(-?[\d.]+)/g)].map(m => +m[2]);
+  assert.ok(ys.length > 10);
+  assert.ok(Math.max(...ys) <= 10 && Math.min(...ys) >= 0, d);
+  assert.equal(k.smoothPath([]), '');
+  assert.equal(k.smoothPath([[5, 7]]), 'M5,7');
+});
+
+test('wide screens: day columns, chart strips and the picked day', () => {
+  const k = forecastWeekKit();
+  const { days, hours, extras, point } = sampleWeek();
+  const model = k.forecastWeekModel(days, hours, extras, point);
+  const week = k.renderForecastWeek(model, Date.parse('2026-10-03T20:00:00-05:00'));
+  // The days are a tab list that drives the detail panel; the first is picked.
+  assert.equal((week.match(/role="tab"/g) || []).length, 3);
+  assert.match(week, /<div class="fc-wk-days" role="tablist" aria-label="Days" style="grid-template-columns:minmax\(0,0\.3000fr\) minmax\(0,0\.4000fr\) minmax\(0,0\.3000fr\)">/);
+  assert.match(week, /id="fc-wk-tab-0" data-row="0" aria-selected="true" aria-controls="fc-wk-detail" tabindex="0"/);
+  assert.match(week, /id="fc-wk-tab-1" data-row="1" aria-selected="false" aria-controls="fc-wk-detail" tabindex="-1"/);
+  // A column: its name (and a short one), date, high/low, sky, sunset first, rain, air.
+  assert.match(week, /<span class="fc-wk-long">Tonight<\/span><span class="fc-wk-short" aria-hidden="true">Tonight<\/span>/);
+  assert.match(week, /<span class="fc-wk-long">Sunday<\/span><span class="fc-wk-short" aria-hidden="true">Sun<\/span>/);
+  assert.match(week, /<span class="fc-wk-date">Oct 4<\/span>/);
+  assert.match(week, /fc-hi">[^]*?High <\/span>82°<\/span><span class="fc-lo">[^]*?Low <\/span>70°/);
+  assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>7:1\d PM<\/span><span class="fc-wk-pop">[^]*?30%/);
+  assert.match(week, /<span class="fc-wk-aqi"><span class="fc-aqi fc-aqi-3">AQI 120 Unhealthy for sensitive groups<\/span>/);
+  // The chart: a keyboard-reachable group; strips drawn for the eye only.
+  assert.match(week, /<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: [^"]+">/);
+  assert.match(week, /<div aria-hidden="true"><div class="fc-wk-strip fc-wk-temp"/);
+  assert.match(week, /<p class="sr-only" id="fc-wk-readout" aria-live="polite"><\/p>/);
+  // Each night shaded; the picked day's band; "Now".
+  assert.match(week, /<span class="fc-wk-night" style="left:[\d.]+%;width:[\d.]+%">/);
+  assert.match(week, /<span class="fc-wk-sel" style="left:0\.000%;width:30\.000%">/);
+  assert.match(week, /<span class="fc-wk-now" style="left:[\d.]+%"><span>Now<\/span><\/span>/);
+  // Labels: Sunday's high, the two nights' lows, Monday's (half-covered) morning high.
+  assert.equal((week.match(/fc-wk-pt-hi/g) || []).length, 2);
+  assert.equal((week.match(/fc-wk-pt-lo/g) || []).length, 2);
+  // Rain as one area; the air key lists only the categories present; pressure extremes.
+  assert.match(week, /Chance of rain \(up to 40%\)<\/span>[^]*?<path class="fc-wk-rain-area" d="M/);
+  assert.match(week, /Air quality <span class="fc-aqi fc-aqi-1">Good<\/span><span class="fc-aqi fc-aqi-3">Unhealthy for sensitive groups<\/span><\/span>/);
+  assert.equal((week.match(/fc-wk-pt-ph|fc-wk-pt-pl/g) || []).length, 2);
+  // Past the hourly forecast's reach, the columns say so.
+  assert.match(week, /The hourly forecast doesn&#39;t reach this far yet|The hourly forecast doesn't reach this far yet/);
+  // The picked day in full, escaped, with its facts.
+  assert.match(week, /<div class="fc-wk-detail" id="fc-wk-detail" role="tabpanel" aria-labelledby="fc-wk-tab-0">/);
+  assert.match(k.renderWeekDetail(model, 1), /<h3 class="fc-wk-title">Sunday, Oct 4<\/h3><p><b>Sunday:<\/b> Sunday &#60;words&#62;\.<\/p><p><b>Sunday Night:<\/b>/);
+  assert.match(k.renderWeekDetail(model, 1), /<div class="fc-wk-facts"><p><b>Daylight:<\/b>/);
+  assert.equal(k.renderWeekDetail(model, 9), '');
+  assert.equal(k.renderForecastWeek(null), '');
+
+  // The pointer or keys find the nearest hour and its day.
+  k.use(model);
+  // Sunday's column runs 6 AM to 6 AM: 6½ hours in is 12:30 PM, the middle of the noon hour.
+  const h = k.weekHourAt(0.3 + 0.4 * 6.5 / 24);
+  assert.equal(model.points[h].period.startTime, '2026-10-04T12:00:00-05:00');
+  assert.equal(k.weekRowOf(model.points[h]), 1);
+  assert.equal(k.weekHourAt(0), 0);
+  assert.equal(k.weekHourAt(1), 41);
+});
+
+test('wide screens: the week shows from 960 × 600 up; phones keep the list', () => {
+  assert.match(html, /\.fc-week \{ display: none; \}\s*@media \(min-width: 960px\) and \(min-height: 600px\) \{[\s\S]*?#fc-days > \.fc-day \{ display: none; \}[^\n]*\n\s*\.fc-week \{ display: block; \}/);
+  // (After the phone rules, so a large touch screen gets it too.)
+  assert.ok(html.indexOf('.fc-week { display: none; }') > html.indexOf('@media (pointer: coarse), (max-width: 640px)'));
+  // Both are drawn; CSS shows the one that fits.
+  assert.match(extractFunction('openForecast'), /weekModel = forecastWeekModel\(forecast\.days, forecast\.hours, extras, point\);[\s\S]*?fcDays\.innerHTML = renderForecastDays\(forecast\.days, extras, point\) \+ renderForecastWeek\(weekModel\);/);
+  // Days are a tab list (arrow keys); the chart steps through hours and Enter picks the day.
+  assert.match(html, /\{ ArrowRight: Math\.min\(at \+ 1, last\), ArrowLeft: Math\.max\(at - 1, 0\), Home: 0, End: last \}\[e\.key\]/);
+  assert.match(html, /\{ ArrowRight: 1, ArrowLeft: -1, PageDown: 24, PageUp: -24 \}\[e\.key\]/);
+  // The hourly table's header row is for wide screens only.
+  assert.match(html, /\.fc-hour\.fc-hour-head \{ display: none; \}/);
+  // …and its columns fit the 896 px dialog of a 960 px window (minimums + gaps + padding).
+  const cols = html.match(/grid-template-columns: (56px 26px [^;]+);\s*gap: (\d+)px; padding: 8px (\d+)px;/);
+  const least = [...cols[1].matchAll(/(\d+)px/g)].reduce((sum, m) => sum + +m[1], 0) + 7 * +cols[2] + 2 * +cols[3];
+  assert.ok(least <= 896, `hourly table needs ${least}px`);
+  // A tap (no pointermove first) picks the day where it landed, and shows that hour.
+  assert.match(html, /const hour = weekHourAt\(\(e\.clientX - box\.left\) \/ box\.width\);[\s\S]{0,80}selectWeekDay\(weekRowOf\(weekModel\.points\[hour\]\)\);\s*showWeekHour\(hour\);/);
+  // Focus from a click doesn't pin the cursor once the pointer leaves; keyboard focus does.
+  assert.match(html, /!chart\.contains\(e\.relatedTarget\) && !chart\.matches\(':focus-visible'\)\) showWeekHour\(-1\);/);
+  assert.match(html, /!e\.target\.matches\(':focus-visible'\) \|\|/);
+  // Chart numbers: large, bold, on a dark backing; leaning inwards at the edges.
+  assert.match(html, /\.fc-wk-pt b \{[^}]*background: rgba\(17,24,39,0\.92\);[^}]*font-weight: 700; font-size: 0\.86rem;/);
+  assert.match(html, /const weekEdge = x => \(x < 0\.05 \? ' fc-wk-pt-start' : x > 0\.92 \? ' fc-wk-pt-end' : ''\);/);
+  // High Contrast keeps the picked day and the chart's focus visible.
+  assert.match(html, /@media \(forced-colors: active\) \{\s*\.fc-wk-day\[aria-selected="true"\] \{ outline: 3px solid Highlight;[^}]*\}\s*\.fc-wk-chart:focus-visible \{ outline: 2px solid Highlight;/);
 });
 
 test('air quality and pressure: Open-Meteo, rounded position, never fatal', async () => {

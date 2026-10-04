@@ -212,6 +212,15 @@ Once an area is loaded, a **FORECAST** button appears in the header. It opens th
   - **Pressure** — from start to end of the day in inHg and hPa, how much it changes, and when it is lowest: useful if pressure swings affect you (headaches, joint pain, blood pressure).
 - **HOURLY** — the next 48 hours, grouped by day: temperature, chance of rain, sky and wind, plus that hour's AQI and pressure. Times are the searched place's own clock, even when it is in another time zone than your device.
 
+**On a wide screen** (960 × 600 px and up: a laptop, a desktop monitor, a tablet in landscape) the dialog grows to use the space and **7 DAYS** becomes a week at a glance:
+
+- **The days side by side**, each column with its name and date, sky, high and low, the **sunset** (highlighted), the chance of rain and the day's worst air quality. Columns are as wide as the hours they cover (a part day such as "Tonight" a little wider, so it stays readable); narrower windows switch to short names ("Wed").
+- **One continuous chart under them**, each day's hours right below its column: the **temperature** curve (shaded from warm to cool, with each day's high and each night's low marked), the **chance of rain**, **air quality** in the EPA's colours (with a key) and **pressure** (the week's highest and lowest marked) — each on its own strip and scale. Every **night is shaded** from sunset to sunrise, fading through dusk and dawn, so day and night read at once; a line marks **now**. The curve is a monotone spline, so it never shows a high or low the data doesn't have.
+- **Point at any hour** (or focus the chart and use the arrow keys, Page Up/Down for a day at a time) for its time, temperature, sky, rain, wind, air quality and pressure; screen readers hear the same. **Click a day** — its column, or anywhere in its part of the chart (Enter from the keyboard) — to see its full forecast below: the forecaster's words beside its daylight, air quality and pressure.
+- **HOURLY** becomes a table: one row per hour with aligned columns, the chance of rain drawn as a bar behind its number.
+
+Phones and narrow windows keep the list described above.
+
 The header also shows the **air quality now**. Air quality (about 5 days ahead) and the pressure forecast (8 days) come from [Open-Meteo](https://open-meteo.com/) (free for non-commercial use, no key; credited in the dialog's footer together with Copernicus CAMS, the source of its air data, as their licences ask); the NWS forecast includes neither. They load alongside the NWS forecast with a short timeout; if Open-Meteo can't be reached they are left out, the footer says which is missing, and the next opening asks again for just that part. Their hours are matched to the NWS's in UTC, so they line up across daylight-saving changes. A day's air quality is shown only when the forecast covers at least half of it (and says where it stops). The **current** pressure a station measured is in its station panel. Pollen counts aren't included: no free, sign-up-free source covers the US (Open-Meteo's pollen data is Europe-only).
 
 It comes straight from the NWS (free, no key): `/points/{lat},{lon}` names the forecast grid cell, and its two forecast links (only ever NOAA's own) are fetched. A forecast is reused for 10 minutes; when the NWS forecast service hiccups (it sometimes answers an error for a minute or two), a **Try again** button reloads it. On phones it opens as a sheet from the bottom of the screen; Esc, the ✕ or a tap outside closes it.
@@ -488,7 +497,7 @@ The repository includes dependency-free regression tests using Node's built-in t
 node --test
 ```
 
-These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifest and version consistency, atomic service-worker installation/routing/cache isolation, vendored Leaflet assets, alert-popup overlap/dismissal/readability contracts, warning-polygon holes, URL encoding, key-less US-only address lookup and suggestions, alert-text unwrapping, and stale-response guards.
+These checks cover inline-script syntax, HTML identifier/ARIA integrity, manifest and version consistency, atomic service-worker installation/routing/cache isolation, vendored Leaflet assets, alert-popup overlap/dismissal/readability contracts, warning-polygon holes, URL encoding, key-less US-only address lookup and suggestions, sun times against the US Naval Observatory, the wide-screen forecast week, alert-text unwrapping, and stale-response guards.
 
 ---
 

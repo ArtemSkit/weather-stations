@@ -1009,7 +1009,11 @@ test('the sky row shows the main cloud deck, not just the lowest layer', () => {
 const escapeHtmlSource = html.match(/function escapeHtml\(s\) \{[\s\S]*?\r?\n\}/)[0];
 /** The forecast rows' sun, air and pressure helpers, to run in a vm alongside the renderers. */
 const forecastExtrasSource = ['sunTimes', 'isoOffsetMinutes', 'clockLabel', 'durationLabel', 'utcHourKey',
-  'hasAir', 'hasPressure', 'aqiCategory', 'aqiHtml', 'hpaToInHg', 'forecastRowExtras'].map(extractFunction).join('\n');
+  'hasAir', 'hasPressure', 'aqiCategory', 'aqiHtml', 'hpaToInHg', 'forecastRowExtras', 'sunBands'].map(extractFunction).join('\n');
+/** The hour strip's helpers (the HOURLY tab's glance), for the same vms. */
+const hourStripSource = ['STRIP_COL', 'STRIP_CURVE', 'STRIP_COMPASS', 'weekNum']
+  .map(name => html.match(new RegExp(`const ${name}\\s*=.*;`))[0]).join('\n') + '\n' +
+  ['smoothPath', 'renderHourStrip'].map(extractFunction).join('\n');
 
 test('station panel shows what weather.gov would: rounding, calm, clear, feels-like, pressure', () => {
   // Run the real renderWeather (and its helpers) against a stub page.
@@ -3300,6 +3304,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     ${extractFunction('forecastLocalTime')}
     ${extractFunction('forecastHourLabel')}
     ${forecastExtrasSource}
+    ${hourStripSource}
     ${extractFunction('renderForecastDays')}
     ${extractFunction('renderForecastHours')}
     return { renderForecastDays, renderForecastHours, forecastEmoji, forecastTemp };
@@ -3699,6 +3704,59 @@ test('wide screens: the week shows from 960 × 600 up; phones keep the list', ()
   assert.match(html, /const weekEdge = x => \(x < 0\.05 \? ' fc-wk-pt-start' : x > 0\.92 \? ' fc-wk-pt-end' : ''\);/);
   // High Contrast keeps the picked day and the chart's focus visible.
   assert.match(html, /@media \(forced-colors: active\) \{\s*\.fc-wk-day\[aria-selected="true"\] \{ outline: 3px solid Highlight;[^}]*\}\s*\.fc-wk-chart:focus-visible \{ outline: 2px solid Highlight;/);
+});
+
+test('hourly: the next hours at a glance — temperature curve, rain, wind, air, pressure, nights', () => {
+  const escapeHtml = v => String(v ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+  const k = vm.runInNewContext(`(() => {
+    ${['forecastLocalTime', 'forecastHourLabel', 'forecastDegrees', 'forecastEmoji', 'forecastTemp'].map(extractFunction).join('\n')}
+    ${forecastExtrasSource}
+    ${hourStripSource}
+    return { renderHourStrip };
+  })()`, { Date, escapeHtml });
+  const { hours, extras, point } = sampleWeek();   // from 6 PM Saturday, San Antonio
+  hours[1].windDirection = 'NNE'; hours[1].windSpeed = '5 to 10 mph';
+  hours[2].windDirection = 'Variable';
+  const now = Date.parse('2026-10-03T18:20:00-05:00');
+  const strip = k.renderHourStrip(hours.slice(0, 30), now, extras, point);
+  // One column per hour; the first hour is "Now"; midnight shows the day's name.
+  assert.equal((strip.match(/class="fc-strip-col[ "]/g) || []).length, 30);
+  assert.match(strip, /<div class="fc-strip-col fc-strip-now" data-hour="0"><span class="fc-strip-time">Now<\/span>/);
+  assert.match(strip, /<div class="fc-strip-col fc-strip-day" data-hour="6"><span class="fc-strip-time">Sun<\/span>/);
+  assert.match(strip, /data-hour="1"><span class="fc-strip-time">7 PM<\/span>/);
+  // Each hour's temperature, rain (bar + %), wind (arrow toward where it blows), air, pressure.
+  assert.match(strip, /data-hour="1">(?:(?!data-hour=)[^])*?<span class="fc-strip-wind"><i style="transform:rotate\(202\.5deg\)">↑<\/i><small>5–10<\/small><\/span>/);
+  assert.match(strip, /data-hour="2">(?:(?!data-hour=)[^])*?<span class="fc-strip-wind"><i>~<\/i><small>10<\/small><\/span>/);
+  assert.match(strip, /data-hour="21">(?:(?!data-hour=)[^])*?<span class="fc-strip-rain"><i style="height:12px"><\/i><small>40%<\/small><\/span>/);
+  assert.match(strip, /data-hour="20">(?:(?!data-hour=)[^])*?<span class="fc-strip-aqi"><span class="fc-aqi fc-aqi-3">120<\/span><\/span>/);
+  assert.match(strip, /data-hour="0">(?:(?!data-hour=)[^])*?<span class="fc-strip-press">30\.06<\/span>/);
+  // The curve through each hour, a dot per hour; the nights shaded, sunset and sunrise marked.
+  assert.equal((strip.match(/<circle /g) || []).length, 30);
+  assert.match(strip, /<path class="fc-strip-line" d="M28,/);
+  assert.match(strip, /<span class="fc-strip-band fc-wk-night" style="left:[\d.]+px;width:[\d.]+px">/);
+  assert.match(strip, /title="Sunset">🌇 7:1\d PM<\/span>/);
+  assert.match(strip, /title="Sunrise">🌅 7:2\d AM<\/span>/);
+  // Row names stay on the left; air and pressure rows named only when there is data.
+  assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span><\/span><span>Temp °F<\/span><span><\/span><span><\/span><span>Rain<\/span><span>Wind mph<\/span><span>Air AQI<\/span><span>Pressure<\/span><\/div>/);
+  const bare = k.renderHourStrip(hours.slice(0, 5), now, null, null);
+  assert.match(bare, /<span>Wind mph<\/span><span><\/span><span><\/span><\/div>/);
+  assert.doesNotMatch(bare, /fc-strip-band|class="fc-strip-sun"/);
+  // Drawn for the eye: the list below reads the same hours out; ‹ › are mouse-only.
+  assert.match(strip, /<button type="button" class="fc-strip-nav fc-strip-next" aria-hidden="true" tabindex="-1" title="Later hours">›<\/button>/);
+  assert.equal(k.renderHourStrip(hours.slice(0, 1), now, extras, point), '');
+  // The CSS column and curve row match the drawing's numbers.
+  assert.match(html, /\.fc-strip-col \{[^}]*flex: 0 0 56px; width: 56px;/);
+  assert.match(html, /--strip-rows: 18px 32px 24px 56px 18px /);   // 8 + 18 + 32 + 24 = the curve's top, 82
+  assert.match(html, /\.fc-strip-col \{[^}]*padding: 8px 0 10px;/);   // (the 8)
+  // The sun chips sit in their own row under the curve, each on its own hour's clock.
+  assert.match(strip, /<span class="fc-strip-sun" style="left:[\d.]+px;top:138px" title="Sunset">/);
+  assert.match(html, /const offsetAt = t => isoOffsetMinutes\(\(hours\.find\(p => t < Date\.parse\(p\.endTime\)\) \|\| hours\[0\]\)\.startTime\);/);
+  // Nothing in the aria-hidden strip takes focus; ‹ › are mouse-only.
+  assert.match(strip, /<div class="fc-strip" aria-hidden="true" tabindex="-1">/);
+  assert.match(html, /const STRIP_CURVE = \{ top: 82, height: 56 \};/);
+  // Clicking an hour shows it in the full list; ‹ › step six hours.
+  assert.match(html, /fcHours\.querySelectorAll\('\.fc-hour:not\(\.fc-hour-head\)'\)\[\+col\.dataset\.hour\]/);
+  assert.match(html, /\* 6 \* STRIP_COL/);
 });
 
 test('air quality and pressure: Open-Meteo, rounded position, never fatal', async () => {

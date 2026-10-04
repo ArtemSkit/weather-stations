@@ -1679,7 +1679,7 @@
   /* ── Hourly: the next 48 hours at a glance (every screen) ── */
   .fc-strip-wrap { position: relative; border-bottom: 1px solid var(--border); }
   .fc-strip {
-    --strip-rows: 18px 32px 24px 56px 18px 48px 38px 18px 16px;   /* time, sky, temp, curve, sun, rain, wind, air, pressure */
+    --strip-rows: 18px 32px 124px 18px 48px 38px 18px 16px;   /* time, sky, temperature graph, sun, rain, wind, air, pressure */
     display: flex; overflow-x: auto; overscroll-behavior-x: contain;
     scrollbar-width: thin; scrollbar-color: var(--border) transparent;
   }
@@ -1701,7 +1701,20 @@
   .fc-strip-day .fc-strip-time, .fc-strip-now .fc-strip-time { font-family: 'Syne', sans-serif; font-weight: 700; color: var(--text); }
   .fc-strip-now .fc-strip-time { color: var(--accent); }
   .fc-strip-icon { font-size: 1.35rem; line-height: 1; }
-  .fc-strip-temp { font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.92rem; }
+  /* The graph's scale in the pinned column: each step level with its gridline. */
+  .fc-strip-scale { position: relative; align-self: stretch; }
+  .fc-strip-scale b { position: absolute; top: 2px; left: 0; font-weight: 400; }
+  .fc-strip-scale i {
+    position: absolute; right: 0; transform: translateY(-50%); font-style: normal;
+    font-family: 'Space Mono', monospace; font-size: 0.64rem; color: var(--text-muted);
+  }
+  .fc-strip-grid { stroke: rgba(113,147,181,0.22); stroke-width: 1; }
+  /* Each hour's temperature on the curve, outlined in the surface colour so the
+     gridlines and the line never run through it. */
+  .fc-strip-val {
+    fill: var(--text); font-family: 'Space Mono', monospace; font-weight: 700; font-size: 13px;
+    text-anchor: middle; paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round;
+  }
   .fc-strip-rain { align-self: stretch; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 2px; }
   .fc-strip-rain i { width: 18px; border-radius: 3px 3px 0 0; background: #5aa9ff; }
   .fc-strip-rain small, .fc-strip-wind small { font-size: 0.62rem; color: var(--text-muted); white-space: nowrap; }
@@ -7088,9 +7101,10 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
 
 /** Each hour column's width in px (the CSS uses the same). */
 const STRIP_COL = 56;
-/** Where the temperature curve's row sits in a column, and its height (px); the
-    sunset/sunrise row comes right after it (8 px padding + time, sky, temp rows). */
-const STRIP_CURVE = { top: 82, height: 56 };
+/** The temperature graph's row in a column: where it starts (8 px padding + the
+    time and sky rows), its height, the room kept above the highest value's label
+    and under the lowest dot (px). The sunset/sunrise row comes right after it. */
+const STRIP_CURVE = { top: 58, height: 124, pad: 28, base: 12 };
 /** The 16 compass points, for turning "NNE" into degrees. */
 const STRIP_COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 
@@ -7101,8 +7115,14 @@ function renderHourStrip(hours, now, extras, point) {
   const x = t => (t - t0) / 3_600_000 * STRIP_COL;
   const temps = hours.map(p => forecastDegrees(p)?.f);
   const known = temps.filter(Number.isFinite);
-  const low = Math.min(...known), span = Math.max(Math.max(...known) - low, 4);
-  const y = f => 8 + (1 - (f - low) / span) * (STRIP_CURVE.height - 16);
+  // The graph's scale: round steps (2°, 5° or 10°, to give a few gridlines) from a
+  // step below the coolest hour to one above the warmest, so the curve fills it.
+  const min = Math.min(...known), max = Math.max(...known);
+  const step = max - min <= 10 ? 2 : max - min <= 24 ? 5 : 10;
+  const low = Math.floor(min / step) * step;
+  const high = Math.max(Math.ceil(max / step) * step, low + step);
+  const ticks = known.length ? Array.from({ length: (high - low) / step + 1 }, (_, i) => low + i * step) : [];
+  const y = f => STRIP_CURVE.pad + (1 - (f - low) / (high - low)) * (STRIP_CURVE.height - STRIP_CURVE.pad - STRIP_CURVE.base);
   let anyAir = false, anyPressure = false;
 
   const cols = hours.map((p, i) => {
@@ -7123,7 +7143,6 @@ function renderHourStrip(hours, now, extras, point) {
         '" data-hour="' + i + '">' +
       '<span class="fc-strip-time">' + escapeHtml(time) + '</span>' +
       '<span class="fc-strip-icon">' + forecastEmoji(p.shortForecast, p.isDaytime) + '</span>' +
-      '<span class="fc-strip-temp">' + (Number.isFinite(temps[i]) ? temps[i] + '°' : '—') + '</span>' +
       '<span class="fc-strip-curve"></span><span class="fc-strip-sunrow"></span>' +
       '<span class="fc-strip-rain">' + (pop > 0 ? '<i style="height:' + Math.max(2, Math.round(pop / 100 * 30)) + 'px"></i>' : '') +
         '<small>' + (pop != null ? Math.round(pop) + '%' : '') + '</small></span>' +
@@ -7135,18 +7154,24 @@ function renderHourStrip(hours, now, extras, point) {
     '</div>';
   }).join('');
 
-  // The temperature curve through the middle of each column (a dot per hour).
-  const pts = hours.map((p, i) => Number.isFinite(temps[i]) ? [i * STRIP_COL + STRIP_COL / 2, y(temps[i])] : null).filter(Boolean);
+  // The temperature graph: gridlines on the scale's round steps, the curve through
+  // the middle of each column, and each hour's temperature right above its dot.
+  const pts = hours.map((p, i) => Number.isFinite(temps[i]) ? [i * STRIP_COL + STRIP_COL / 2, y(temps[i]), temps[i]] : null)
+    .filter(Boolean);
   const width = hours.length * STRIP_COL;
   const line = smoothPath(pts);
   const area = pts.length > 1 ? line + 'L' + weekNum(pts[pts.length - 1][0]) + ',' + STRIP_CURVE.height +
     'L' + weekNum(pts[0][0]) + ',' + STRIP_CURVE.height + 'Z' : '';
+  const grid = ticks.map(t => '<line class="fc-strip-grid" x1="0" x2="' + width + '" y1="' + weekNum(y(t)) +
+    '" y2="' + weekNum(y(t)) + '"/>').join('');
   const curve = '<svg class="fc-strip-svg" width="' + width + '" height="' + STRIP_CURVE.height + '" viewBox="0 0 ' + width + ' ' +
       STRIP_CURVE.height + '" style="top:' + STRIP_CURVE.top + 'px" aria-hidden="true" focusable="false">' +
-    '<defs><linearGradient id="fc-strip-heat" gradientUnits="userSpaceOnUse" x1="0" y1="8" x2="0" y2="' + (STRIP_CURVE.height - 8) +
-      '"><stop offset="0" stop-color="#ffb37a"/><stop offset="1" stop-color="#8fd3ff"/></linearGradient></defs>' +
-    (area ? '<path class="fc-strip-area" d="' + area + '"/>' : '') + '<path class="fc-strip-line" d="' + line + '"/>' +
-    pts.map(([cx, cy]) => '<circle cx="' + weekNum(cx) + '" cy="' + weekNum(cy) + '" r="3"/>').join('') + '</svg>';
+    '<defs><linearGradient id="fc-strip-heat" gradientUnits="userSpaceOnUse" x1="0" y1="' + STRIP_CURVE.pad + '" x2="0" y2="' +
+      (STRIP_CURVE.height - STRIP_CURVE.base) + '"><stop offset="0" stop-color="#ffb37a"/><stop offset="1" stop-color="#8fd3ff"/></linearGradient></defs>' +
+    grid + (area ? '<path class="fc-strip-area" d="' + area + '"/>' : '') + '<path class="fc-strip-line" d="' + line + '"/>' +
+    pts.map(([cx, cy]) => '<circle cx="' + weekNum(cx) + '" cy="' + weekNum(cy) + '" r="3.5"/>').join('') +
+    pts.map(([cx, cy, f]) => '<text class="fc-strip-val" x="' + weekNum(cx) + '" y="' + weekNum(cy - 9) + '">' + f + '°</text>').join('') +
+    '</svg>';
 
   // The nights, and when the sun sets and rises (on the clock of the hour it falls
   // in: the 48 hours can span a daylight-saving change).
@@ -7169,9 +7194,12 @@ function renderHourStrip(hours, now, extras, point) {
     }
   }
 
-  // Row names, pinned on the left while the hours scroll (each row says what it is).
-  const labels = ['', '', 'Temp °F', '', '', 'Rain', 'Wind mph', anyAir ? 'Air AQI' : '', anyPressure ? 'Pressure' : '']
-    .map(text => '<span>' + text + '</span>').join('');
+  // Row names, pinned on the left while the hours scroll (each row says what it is);
+  // the graph's row carries its scale, each step level with its gridline.
+  const scale = '<span class="fc-strip-scale"><b>°F</b>' + ticks.map(t =>
+    '<i style="top:' + weekNum(y(t)) + 'px">' + t + '°</i>').join('') + '</span>';
+  const labels = ['', '', scale, '', 'Rain', 'Wind mph', anyAir ? 'Air AQI' : '', anyPressure ? 'Pressure' : '']
+    .map(text => (text.startsWith('<') ? text : '<span>' + text + '</span>')).join('');
   return '<div class="fc-strip-wrap">' +
     // Drawn for the eye: the list under it reads the same hours out in full.
     // (tabindex -1: browsers make a scroll box focusable by itself — not this one.)

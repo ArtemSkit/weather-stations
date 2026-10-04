@@ -6234,14 +6234,16 @@ const LIVE_LABEL_LIMIT = 30;   // a zoomed-out view can hold hundreds of alerts
 
 /**
  * What the chips keep clear of, as boxes in map-container pixels: the alert
- * banner, an open station panel, the search circle's own label, and the map's
- * buttons (the LIVE ALERTS row with its colour key when open, zoom, locate, the
- * version badge). Shown = has a box: offsetParent is null for every fixed
- * element, such as the panel.
+ * banner, an open station panel, the search circle's own label, the pin-mode
+ * banner, and the map's buttons (the LIVE ALERTS row with its colour key when
+ * open, zoom, locate, the version badge). Shown = has a box: offsetParent is
+ * null for every fixed element, such as the panel. (The pin-mode banner by its
+ * id: tapPlaceBanner is declared further down, after this can first run.)
  */
 function liveLabelObstacles() {
   const mapBox = map.getContainer().getBoundingClientRect();
   return [alertBanner, popupPanel, document.querySelector('.search-radius-label'),
+          document.getElementById('tap-place-banner'),
           document.querySelector('.live-alerts-ctl'), document.querySelector('.leaflet-control-zoom'),
           document.getElementById('fab-locate'), document.getElementById('app-version')]
     .filter(el => el && el.getClientRects().length)
@@ -6256,8 +6258,9 @@ let liveLabelObstaclesSeen = '';   // the key the chips on the map were placed a
 
 // The chips are placed again when the station panel opens, closes or changes size
 // (a phone's sheet grows when its readings arrive), once it has slid in (it opens
-// below the screen and only then moves up over the map), and when the map buttons'
-// control changes (watched once it exists: see LiveAlertsControl) — but only if
+// below the screen and only then moves up over the map), when the map buttons'
+// control changes (watched once it exists: see LiveAlertsControl), and when pin
+// mode's banner comes or goes (see setTapMode) — but only if
 // that moved something: a new LIVE ALERTS count also resizes the control, right
 // after a view update that has just placed them.
 function replaceLiveLabelsIfCrowded() {
@@ -8529,6 +8532,9 @@ function setTapMode(active) {
   // (which would otherwise take them for their own popup/panel), so a pin can be
   // placed anywhere — including inside a warning area or on a station.
   mapEl.classList.toggle('tap-mode', active);
+  // Its banner covers the top of the map and moves the alert banner and the
+  // desktop station panel down (or back up): live-alert chips make way.
+  replaceLiveLabelsIfCrowded();
 }
 setTapMode(false);   // initialise aria-pressed on both buttons
 
@@ -8541,6 +8547,8 @@ new ResizeObserver(() => {
   if (!tapPlaceBanner.textContent) return;
   mapEl.parentElement.style.setProperty('--tap-banner-h', `${tapPlaceBanner.offsetHeight}px`);
 }).observe(tapPlaceBanner);
+// …and the live-alert chips keep clear of it as its text arrives (and it grows).
+liveLabelSpace.observe(tapPlaceBanner);
 
 dragPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));
 tapPinBtn.addEventListener('click', () => setTapMode(!tapModeActive));

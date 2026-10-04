@@ -1235,6 +1235,15 @@ test('alert times never invent an end and show a future start', () => {
   render([{ id: 'b', properties: { event: 'Flood Warning', ends: tomorrow,
     detailsUrl: 'https://api.weather.gov/alerts/urn:oid:x' } }], true);
   assert.match(banner.innerHTML, /Loading the full NWS text…/);
+  // A record that loaded without any text is done: it says so, never "Loading…".
+  bannerCtx.alertRecordWanted.clear();
+  bannerCtx.alertRecordFailedAt.clear();
+  bannerCtx.alertRecordCache.set('b', { headline: '', detail: '', areaDesc: 'Travis' });
+  render([{ id: 'b', properties: { event: 'Flood Warning', ends: tomorrow,
+    detailsUrl: 'https://api.weather.gov/alerts/urn:oid:x' } }], true);
+  assert.match(banner.innerHTML, /<p class="alert-desc">No further details were published for this alert\.<\/p>/);
+  assert.doesNotMatch(banner.innerHTML, /data-details-url|Loading the full NWS text/);
+  bannerCtx.alertRecordCache.delete('b');
 
   // Where each alert applies is on its header; same-type alerts fold into one
   // group row (count, shared time, their places) that opens to their cards, each
@@ -1264,6 +1273,11 @@ test('alert times never invent an end and show a future start', () => {
   // A failed lookup redraws the list too, so no header keeps "Finding the places…".
   assert.match(load, /setBoundedCache\(alertRecordFailedAt, id, Date\.now\(\), ALERT_RECORD_CACHE_LIMIT\);[\s\S]*?scheduleLiveBannerRefresh\(\);\s*return false;/);
   assert.match(extractFunction('queueAlertRecords'), /Date\.now\(\) - \(alertRecordFailedAt\.get\(id\) \?\? -Infinity\) < ALERT_RECORD_RETRY_MS/);
+  // No record to load (blank or foreign link): never queued, so never "Finding the places…".
+  assert.match(extractFunction('queueAlertRecords'), /if \(!isTrustedNwsApiUrl\(url, '\/alerts\/'\)\) continue;/);
+  // Live places: the top 60 alerts, then those still without places — not the
+  // next 60 each time a record arrives (which never ends past the cache's size).
+  assert.match(extractFunction('prefetchLiveAlertPlaces'), /\.slice\(0, LIVE_PLACES_PREFETCH\)\s*\.filter\(f => !alertAreaDesc\(f\)\)/);
   assert.match(extractFunction('loadAlertCardDetails'), /updateAlertScrollHint\(\);\s*\/\/ the card's new height/);
   // "Show this area on the map" then picks the area out once the map has landed
   // (a newer zoom wins): glow, moving dashed outline, a flash and its name — gone
@@ -2811,7 +2825,11 @@ test('a ?station link places the marker at the station record, not the rounded o
   // Any failure falls back (null) to the observation's own point.
   assert.equal(await point(async () => { throw new Error('Network error'); })('KJFK'), null);
   assert.equal(await point(async () => ({ response: { ok: false }, data: null }))('KJFK'), null);
-  assert.match(html, /const \[lng, lat\] = sitePoint \|\| data\.geometry\?\.coordinates \|\| \[\];/);
+  assert.match(html, /const \[lng, lat\] = sitePoint \|\| data\?\.geometry\?\.coordinates \|\| \[\];/);
+  // A station that exists but hasn't reported lately is still plotted (its panel says
+  // so, as from the map); only a station with no site and no readings is an error.
+  assert.match(html, /fetchObservations\(stationParam\)\.catch\(e => \{ if \(e\.status !== 404\) throw e; noReadings = e; return null; \}\)/);
+  assert.match(html, /if \(!data && !sitePoint\) throw noReadings \|\| new Error\('No coordinates in station response'\);/);
   // The optional record must not hold the deep link for the default 15 s.
   assert.match(extractFunction('fetchStationPoint'), /encodeURIComponent\(stationId\)\}`, \{\}, 4000\)/);
 });
@@ -3081,6 +3099,16 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   // (Held while the moved view's answer is on its way: no shrink-and-refill.)
   assert.match(extractFunction('renderLiveBanner'), /if \(!liveAlertsOn \|\| liveViewPending\) return;/);
   assert.match(extractFunction('renderLiveLabels'), /className: 'alert-area-label live-area-label'/);
+  // A chip on a sliver at the view's edge is nudged in whole, not cut in half.
+  assert.match(extractFunction('renderLiveLabels'), /Math\.min\(Math\.max\(raw\.x, half \+ 4\), size\.x - half - 4\)[\s\S]*?containerPointToLatLng\(pt\)/);
+  // Chip widths are measured (the wide type defeats a guess), on a probe removed after.
+  assert.match(extractFunction('renderLiveLabels'), /probe\.textContent = text; halves\.set\(text, probe\.offsetWidth \/ 2\);[\s\S]*probe\.remove\(\);\s*\}$/);
+  // Fixed elements (the station panel, locate, the badge) count as shown: no offsetParent test.
+  assert.match(extractFunction('renderLiveLabels'), /document\.getElementById\('fab-locate'\), document\.getElementById\('app-version'\)\]\s*\.filter\(el => el && el\.getClientRects\(\)\.length\)/);
+  // …and are placed again whenever the station panel opens, closes or changes size,
+  // or the map buttons' control does (its colour key opening, the buttons folding).
+  assert.match(html, /new LiveAlertsControl\(\)\.addTo\(map\);\s*\/\/[^\n]*\n\s*liveLabelSpace\.observe\(document\.querySelector\('\.live-alerts-ctl'\)\);/);
+  assert.match(html, /const liveLabelSpace = new ResizeObserver\(\(\) => renderLiveLabels\(\)\);\s*liveLabelSpace\.observe\(popupPanel\);\s*popupPanel\.addEventListener\('animationend', e => \{ if \(e\.target === popupPanel\) renderLiveLabels\(\); \}\);/);
   // …while the searched area's alerts keep updating underneath without replacing
   // it, and switching live mode off brings the searched area's banner back.
   assert.match(extractFunction('showAlerts'), /if \(!liveAlertsOn\) renderAlertBanner\(alerts\);/);
@@ -3393,6 +3421,12 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.doesNotMatch(html, /\.fc-hour-aqi[^{]*\{[^}]*nowrap/);
   assert.match(html, /\.fc-hour-short > :empty, \.fc-hour-air > :empty \{ display: none; \}/);
   assert.match(html, /\.fc-hour-short > :empty, \.fc-hour-air > :empty \{ display: block; \}/);
+  // 320 px phones: slimmer columns, and the last may shrink, so the list never scrolls sideways.
+  assert.match(html, /@media \(max-width: 359px\) \{\s*\.fc-hour \{ grid-template-columns: 40px 22px 76px 44px minmax\(0, 1fr\);[^}]*\}\s*\.fc-hour-pop \{ white-space: nowrap; \}/);
+  // The wide table's rain chance is in full-strength text on its bar (AA contrast).
+  assert.match(html, /\.fc-hour:not\(\.fc-hour-head\) \.fc-hour-pop \{\s*padding: 2px 6px; border-radius: 3px; color: var\(--text\);/);
+  // A phone on its side keeps the sheet's content clear of the notch.
+  assert.match(html, /@media \(pointer: coarse\), \(max-width: 640px\) \{[\s\S]*?\.fc-sheet \{ padding-left: var\(--safe-left\); padding-right: var\(--safe-right\); \}/);
   assert.match(aired, /<li class="fc-hour fc-hour-head" aria-hidden="true">[^]*?<span>Air quality<\/span><span>Pressure<\/span><\/li>/);
   assert.equal(r.forecastEmoji('Mostly Sunny', true), '⛅');
   assert.equal(r.forecastEmoji('Clear', false), '🌙');
@@ -3433,13 +3467,44 @@ function forecastExtrasKit() {
     ${extractFunction('forecastLocalTime')}
     ${extractFunction('forecastHourLabel')}
     ${forecastExtrasSource}
-    return { sunTimes, clockLabel, isoOffsetMinutes, durationLabel, aqiCategory, forecastRowExtras };
+    return { sunTimes, clockLabel, isoOffsetMinutes, durationLabel, aqiCategory, forecastRowExtras, sunBands };
   })()`, { Date });
   const plain = v => String(v).replace(/\u00A0/g, ' ');
   return { ...kit, rawRowExtras: kit.forecastRowExtras,
            forecastRowExtras: (...args) => { const r = kit.forecastRowExtras(...args);
              return { ...r, sun: plain(r.sun), facts: plain(r.facts) }; } };
 }
+
+test('night bands across the start and end of polar night and the midnight sun', () => {
+  const k = forecastExtrasKit();
+  const pole = { lat: 71.29, lon: -156.79 };   // Utqiaġvik, Alaska
+  const bands = (start, hours = 48) => {
+    const t0 = Date.parse(start), t1 = t0 + hours * 3600e3;
+    return Array.from(k.sunBands(t0, t1, pole, start), b => ({ ...b })).filter(b => b.to >= t0 && b.from <= t1);
+  };
+  const at = iso => Date.parse(iso);
+  // Polar night from Nov 20: the 19th's dusk and night run to midnight; no dawn
+  // (whose end would read as a 12:00 AM sunrise), nothing backwards or doubled.
+  const nov = bands('2026-11-19T06:00:00-09:00');
+  assert.ok(nov.every(b => b.to >= b.from), 'no band runs backwards');
+  assert.deepEqual(nov.filter(b => b.from >= at('2026-11-19T12:00:00-09:00')).map(b => b.kind), ['dusk', 'night', 'night', 'night']);
+  assert.equal(nov.find(b => b.kind === 'dusk' && b.from > at('2026-11-19T12:00:00-09:00')).from > at('2026-11-19T13:00:00-09:00'), true);
+  assert.equal(nov.filter(b => b.kind === 'night' && b.from < at('2026-11-20T12:00:00-09:00') && b.to > at('2026-11-20T00:00:00-09:00')).length, 1,
+    'the first polar-night morning is shaded once');
+  // The sun back on Jan 23: its morning is night, then dawn to the 1:1x PM sunrise.
+  const jan = bands('2027-01-22T06:00:00-09:00');
+  const morning = jan.filter(b => b.from >= at('2027-01-23T00:00:00-09:00') && b.to <= at('2027-01-23T14:00:00-09:00'));
+  assert.deepEqual(morning.map(b => b.kind), ['night', 'dawn']);
+  assert.equal(morning[0].from, at('2027-01-23T00:00:00-09:00'));
+  assert.match(k.clockLabel(morning[1].to, -540), /^1:1\d PM$/);
+  // The midnight sun from May 11: the 10th's sunset (1:5x AM, after midnight) is
+  // still marked — an empty dusk band, nothing to shade — as the 7-day list says.
+  const may = bands('2026-05-10T06:00:00-08:00');
+  const last = may.at(-1);
+  assert.equal(last.kind, 'dusk');
+  assert.equal(last.from, last.to);
+  assert.match(k.clockLabel(last.from, -480), /^1:5\d AM$/);
+});
 
 test('sun times match the US Naval Observatory to within a minute', () => {
   const k = forecastExtrasKit();
@@ -3508,6 +3573,18 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   // shown and says where it stops; with less, it isn't passed off as the whole day.
   const half = k.forecastRowExtras(parts, { aqi: hours(13, '2026-10-03T11', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, sa);
   assert.match(half.facts, /worst around 6 AM; the air-quality forecast runs to 6 PM\./);
+  // The night the clocks fall back (2 AM CDT → 1 AM CST): hours after the change
+  // are told on the new clock — 10:00 UTC is 4 AM CST, not 5 AM.
+  const fallBackNight = [{ isDaytime: false, startTime: '2026-10-31T18:00:00-05:00', endTime: '2026-11-01T06:00:00-06:00' }];
+  const dstAir = hours(13, '2026-10-31T23', i => ({ value: i === 11 ? 90 : 30, pollutant: 'ozone' }));   // the worst at 10Z
+  const dstPressure = hours(13, '2026-10-31T23', i => (i === 7 ? 1000 : 1010));                         // the low at 06Z
+  const dst = k.forecastRowExtras(fallBackNight, { aqi: dstAir, pressure: dstPressure }, sa);
+  assert.match(dst.facts, /worst around 4 AM\./);
+  assert.match(dst.facts, /lowest 29\.53 inHg around 1 AM\./);   // 06Z: still 1 AM CDT
+  // Hours missing at the row's start (data that begins later) are no "runs to".
+  const late = k.forecastRowExtras(parts, { aqi: hours(20, '2026-10-03T15', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, sa);
+  assert.match(late.facts, /Air quality:<\/b> up to 40/);
+  assert.doesNotMatch(late.facts, /runs to/);
   const few = k.forecastRowExtras(parts, { aqi: hours(3, '2026-10-03T11', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, sa);
   assert.equal(few.air, '');
   assert.doesNotMatch(few.facts, /Air quality/);
@@ -3584,9 +3661,9 @@ function forecastWeekKit() {
     ${forecastExtrasSource}
     ${['forecastWeekModel', 'weekNights', 'smoothPath', 'forecastWeekDayHtml', 'weekTempStrip', 'weekRainStrip',
        'weekAirStrip', 'weekPressureStrip', 'renderWeekDetail', 'renderForecastWeek', 'weekHourHtml',
-       'weekHourAt', 'weekRowOf'].map(extractFunction).join('\n')}
-    return { forecastWeekModel, smoothPath, renderForecastWeek, renderWeekDetail, weekHourAt, weekRowOf,
-             use: model => { weekModel = model; } };
+       'weekRowAt', 'weekHourAt', 'weekRowOf', 'weekHourIn', 'weekFirstHour'].map(extractFunction).join('\n')}
+    return { forecastWeekModel, smoothPath, renderForecastWeek, renderWeekDetail, weekRowAt, weekHourAt, weekRowOf,
+             weekHourIn, weekFirstHour, use: model => { weekModel = model; } };
   })()`, { Date, escapeHtml });
 }
 
@@ -3673,6 +3750,12 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   // A column: its name (and a short one), date, high/low, sky, sunset first, rain, air.
   assert.match(week, /<span class="fc-wk-long">Tonight<\/span><span class="fc-wk-short" aria-hidden="true">Tonight<\/span>/);
   assert.match(week, /<span class="fc-wk-long">Sunday<\/span><span class="fc-wk-short" aria-hidden="true">Sun<\/span>/);
+  // A night with a longer name has a short one too (its date is under it).
+  const overnight = k.renderForecastWeek(k.forecastWeekModel(
+    [{ ...days[0], name: 'Overnight' }, ...days.slice(1)], hours, extras, point), Date.parse('2026-10-03T20:00:00-05:00'));
+  assert.match(overnight, /<span class="fc-wk-long">Overnight<\/span><span class="fc-wk-short" aria-hidden="true">Night<\/span>/);
+  // Short names go by each column's width (window size and day count both matter).
+  assert.match(html, /\.fc-wk-day \{ container-type: inline-size; \}\s*@container \(max-width: 139px\) \{\s*\.fc-wk-short \{ display: inline; \}/);
   assert.match(week, /<span class="fc-wk-date">Oct 4<\/span>/);
   assert.match(week, /fc-hi">[^]*?High <\/span>82°<\/span><span class="fc-lo">[^]*?Low <\/span>70°/);
   assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>7:1\d PM<\/span><span class="fc-wk-pop">[^]*?30%/);
@@ -3709,6 +3792,24 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.equal(k.weekRowOf(model.points[h]), 1);
   assert.equal(k.weekHourAt(0), 0);
   assert.equal(k.weekHourAt(1), 41);
+  assert.equal(k.weekHourIn(0.3125 + 0.375 * 6.5 / 24), h, 'an hour in the day column there is shown');
+
+  // Past the end of the hourly forecast (here: none for Monday), a spot in Monday's
+  // column picks Monday and shows no hour (the nearest one is back on Sunday); the
+  // keys start from the last hour, not the week's first.
+  const short = k.forecastWeekModel(days, hours.slice(0, 30), extras, point);
+  k.use(short);
+  assert.equal(k.weekRowAt(0.9), 2);
+  assert.equal(k.weekRowOf(short.points[k.weekHourAt(0.9)]), 1);
+  assert.equal(k.weekHourIn(0.9), -1);
+  short.selected = 2;
+  assert.equal(k.weekFirstHour(), short.points.length - 1);
+  short.selected = 1;
+  assert.equal(short.points[k.weekFirstHour()].period.startTime, '2026-10-04T06:00:00-05:00');
+  // A single hour is no hourly forecast (the strips say so): no cursor either.
+  k.use(k.forecastWeekModel(days, hours.slice(13, 14), extras, point));
+  assert.equal(k.weekHourAt(0.5), -1);
+  assert.equal(k.weekHourIn(0.5), -1);
 });
 
 test('wide screens: the week shows from 960 × 600 up; phones keep the list', () => {
@@ -3726,8 +3827,11 @@ test('wide screens: the week shows from 960 × 600 up; phones keep the list', ()
   const cols = html.match(/grid-template-columns: (56px 26px [^;]+);\s*gap: (\d+)px; padding: 8px (\d+)px;/);
   const least = [...cols[1].matchAll(/(\d+)px/g)].reduce((sum, m) => sum + +m[1], 0) + 7 * +cols[2] + 2 * +cols[3];
   assert.ok(least <= 896, `hourly table needs ${least}px`);
-  // A tap (no pointermove first) picks the day where it landed, and shows that hour.
-  assert.match(html, /const hour = weekHourAt\(\(e\.clientX - box\.left\) \/ box\.width\);[\s\S]{0,80}selectWeekDay\(weekRowOf\(weekModel\.points\[hour\]\)\);\s*showWeekHour\(hour\);/);
+  // A tap (no pointermove first) picks the day where it landed, and shows its hour there.
+  assert.match(html, /const fraction = \(e\.clientX - box\.left\) \/ box\.width;\s*selectWeekDay\(weekRowAt\(fraction\)\);\s*showWeekHour\(weekHourIn\(fraction\)\);/);
+  assert.match(html, /showWeekHour\(weekHourIn\(\(e\.clientX - box\.left\) \/ box\.width\)\);/);
+  // Try again keeps keyboard focus in the dialog (on the open tab) as its button goes.
+  assert.match(html, /e\.target\.closest\('\.fc-retry'\)\) \{[\s\S]{0,160}\? fcTabDays : fcTabHours\)\.focus\(\);\s*openForecast\(\);/);
   // Focus from a click doesn't pin the cursor once the pointer leaves; keyboard focus does.
   assert.match(html, /!chart\.contains\(e\.relatedTarget\) && !chart\.matches\(':focus-visible'\)\) showWeekHour\(-1\);/);
   assert.match(html, /!e\.target\.matches\(':focus-visible'\) \|\|/);
@@ -3735,7 +3839,9 @@ test('wide screens: the week shows from 960 × 600 up; phones keep the list', ()
   assert.match(html, /\.fc-wk-pt b \{[^}]*background: rgba\(17,24,39,0\.92\);[^}]*font-weight: 700; font-size: 0\.86rem;/);
   assert.match(html, /const weekEdge = x => \(x < 0\.05 \? ' fc-wk-pt-start' : x > 0\.92 \? ' fc-wk-pt-end' : ''\);/);
   // High Contrast keeps the picked day and the chart's focus visible.
-  assert.match(html, /@media \(forced-colors: active\) \{\s*\.fc-wk-day\[aria-selected="true"\] \{ outline: 3px solid Highlight;[^}]*\}\s*\.fc-wk-chart:focus-visible \{ outline: 2px solid Highlight;/);
+  assert.match(html, /@media \(forced-colors: active\) \{[^@]*?\.fc-wk-day\[aria-selected="true"\] \{ outline: 3px solid Highlight;[^}]*\}\s*\.fc-wk-chart:focus-visible \{ outline: 2px solid Highlight;/);
+  // …and the forecast's open tab too (its accent underline is replaced there).
+  assert.match(html, /@media \(forced-colors: active\) \{[^@]*?\.fc-tabs \[role="tab"\] \{ border-bottom-color: Canvas; \}\s*\.fc-tabs \[role="tab"\]\[aria-selected="true"\] \{ border-bottom-color: Highlight; \}/);
 });
 
 test('hourly: the next hours at a glance — temperature curve, rain, wind, air, pressure, nights', () => {
@@ -3848,7 +3954,7 @@ test('air quality and pressure: Open-Meteo, rounded position, never fatal', asyn
   // …and in UTC hours, which line up with the NWS's across daylight-saving changes
   // and time-zone lines (the rounded point may fall in the next zone).
   assert.match(requested[0], /^https:\/\/air-quality-api\.open-meteo\.com\/v1\/air-quality\?latitude=29\.5&longitude=-98\.5&timezone=GMT&/);
-  assert.match(requested[1], /^https:\/\/api\.open-meteo\.com\/v1\/forecast\?latitude=29\.5&longitude=-98\.5&timezone=GMT&forecast_days=8&hourly=pressure_msl$/);
+  assert.match(requested[1], /^https:\/\/api\.open-meteo\.com\/v1\/forecast\?latitude=29\.5&longitude=-98\.5&timezone=GMT&past_days=1&forecast_days=8&hourly=pressure_msl$/);
   assert.equal(got.aqiNow, 36);
   assert.deepEqual([...got.aqi.keys()], ['2026-10-03T00', '2026-10-03T02'], 'hours without a value are left out');
   assert.equal(got.aqi.get('2026-10-03T00').pollutant, 'fine particles (PM2.5)');

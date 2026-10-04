@@ -240,7 +240,7 @@ test('search pin works by drop, click, tap, and keyboard', () => {
   // Click/tap-to-place is wired for both pin buttons and passes through alert areas.
   assert.match(pinSection, /dragPinBtn\.addEventListener\('click'/);
   assert.match(pinSection, /tapPinBtn\.addEventListener\('click'/);
-  assert.match(html, /#map\.tap-mode \.wx-alert-area,\s*#map\.tap-mode \.leaflet-marker-icon \{ pointer-events: none; \}/);
+  assert.match(html, /#map\.tap-mode \.wx-alert-area,\s*#map\.tap-mode \.live-area-label,\s*#map\.tap-mode \.leaflet-marker-icon \{ pointer-events: none; \}/);
   // Keyboard users finish with Enter on the focused map; other searches end the mode.
   assert.match(pinSection, /mapEl\.addEventListener\('keydown'[\s\S]*?e\.key !== 'Enter'/);
   assert.match(extractFunction('doSearch'), /setTapMode\(false\);/);
@@ -3070,6 +3070,9 @@ test('live alert chips: one for neighbouring alerts of a type, the most serious 
   const ctx = {
     liveAlertsOn: true, Math, Map,
     LIVE_SIG_RANK: { S: 0, Y: 1, A: 2, W: 3 },
+    liveChipLit: null, lit: [], clicked: [],
+    highlightLiveAlert: (id, on) => ctx.lit.push(id + (on ? ' on' : ' off')),
+    clickLiveAlert: (props, e) => ctx.clicked.push(props.cap_id + ' @' + e.latlng),
     liveLabelLayer: { clearLayers: () => { chips.length = 0; } },
     liveLabelObstacles: () => [], liveObstacleKey: () => '', liveLabelObstaclesSeen: '',
     shortAlertLabel: type => type.toUpperCase(), liveAlertTextColor: () => '#fff', escapeHtml: s => s,
@@ -3078,8 +3081,9 @@ test('live alert chips: one for neighbouring alerts of a type, the most serious 
            getContainer: () => ({}) },
     L: { point, latLngBounds: ([s, w], [n, e]) => bounds(s, w, n, e),
          DomUtil: { create: () => ({ style: {}, set textContent(t) { this.w = t.length * 11 + 14; }, get offsetWidth() { return this.w; }, remove() {} }) },
-         tooltip: () => { const chip = {}; return { setLatLng(at) { chip.at = at; return this; },
-           setContent(html) { chip.text = html.replace(/<[^>]+>/g, ''); return this; }, addTo() { chips.push(chip); return this; } }; } }
+         tooltip: options => { const chip = { interactive: options.interactive, on: {} }; return { setLatLng(at) { chip.at = at; return this; },
+           setContent(html) { chip.text = html.replace(/<[^>]+>/g, ''); return this; },
+           on(type, fn) { chip.on[type] = fn; return this; }, addTo() { chips.push(chip); return this; } }; } }
   };
   // Alerts as the map service gives them: id → its props and the pieces in view.
   const alert = (id, type, sig, s, w, n, e, ...more) => [id, { props: { cap_id: id, prod_type: type, sig },
@@ -3103,10 +3107,23 @@ test('live alert chips: one for neighbouring alerts of a type, the most serious 
   // The run shares the chip of its largest; the separate two keep their own.
   const heat = chips.filter(c => c.text === 'HEAT ADVISORY').map(c => c.at.lng);
   assert.deepEqual(heat.sort((a, b) => a - b), [-122.5, -109, -95]);
+  // Each chip can be clicked and hovered, like its alert's area: a click opens that
+  // alert's popup where it landed, a hover lights the alert up and leaving puts it
+  // out — and a chip redrawn from under the pointer (no mouseout) puts it out too.
+  const runChip = chips.find(c => c.text === 'HEAT ADVISORY' && c.at.lng === -122.5);
+  assert.ok(chips.every(c => c.interactive === true));
+  runChip.on.click({ latlng: 'here' });
+  assert.deepEqual(ctx.clicked, ['h1 @here']);
+  runChip.on.mouseover();
+  runChip.on.mouseout();
+  runChip.on.mouseover();
+  assert.equal(ctx.liveChipLit, 'h1');
   // Its first one's chip blocked (here by something over the map at h1), the next
   // of the run takes it: the run is still named, by h2.
   ctx.liveLabelObstacles = () => [{ left: 100, right: 200, top: 150, bottom: 190 }];
   ctx.render();
+  assert.deepEqual(ctx.lit, ['h1 on', 'h1 off', 'h1 on', 'h1 off']);   // the redraw put h1's light out
+  assert.equal(ctx.liveChipLit, null);
   const moved = chips.filter(c => c.text === 'HEAT ADVISORY').map(c => c.at.lng);
   assert.deepEqual(moved.sort((a, b) => a - b), [-121, -109, -95]);
 });
@@ -3230,12 +3247,18 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(extractFunction('loadStationsAt'), /plotStations\(data, lat, lon, userZoom\);[\s\S]*?liveSearchLanded\(\);/);
   // Pin mode: a tap on an alert area places the pin instead of opening a popup.
   const pieces = extractFunction('replaceLivePieces');
-  assert.match(pieces, /if \(tapModeActive\) return;[\s\S]*openLiveAlertPopup\(props, e\.latlng, e\.originalEvent\)/);
+  assert.match(pieces, /layer\.on\('click', e => clickLiveAlert\(props, e\)\);/);
+  assert.match(extractFunction('clickLiveAlert'), /if \(tapModeActive\) return;[\s\S]*openLiveAlertPopup\(props, e\.latlng, e\.originalEvent\)/);
+  // A name chip stands for its alert too (also off its area): its popup on a click,
+  // the alert lit up on hover — and a light left on by a redrawn chip put out.
+  const chipCode = extractFunction('renderLiveLabels');
+  assert.match(chipCode, /interactive: true,[\s\S]*?\.on\('click', e => clickLiveAlert\(props, e\)\)\s*\.on\('mouseover', \(\) => \{ liveChipLit = props\.cap_id; highlightLiveAlert\(props\.cap_id, true\); \}\)\s*\.on\('mouseout', \(\) => \{ liveChipLit = null; highlightLiveAlert\(props\.cap_id, false\); \}\)/);
+  assert.match(chipCode, /^function renderLiveLabels\(\) \{\s*\/\/[^\n]*\n\s*if \(liveChipLit\) \{ highlightLiveAlert\(liveChipLit, false\); liveChipLit = null; \}/);
 
   // A click on the open live popup's own alert closes it and leaves it closed (a
   // toggle): the click-away handler remembers that click, and the area's click
   // handler, which runs next with the same DOM event, then skips reopening it.
-  assert.match(pieces, /if \(liveClosingClick\?\.event === e\.originalEvent && liveClosingClick\.capId === props\.cap_id\) return;/);
+  assert.match(extractFunction('clickLiveAlert'), /if \(liveClosingClick\?\.event === e\.originalEvent && liveClosingClick\.capId === props\.cap_id\) return;/);
   const ctx = {
     pressStartedInMap: false, alertAreaOwners: new Map(), activeAlertAreaOwner: null,
     map: { closePopup() {} }, openAlertPopupElement: () => ({ contains: () => false }),

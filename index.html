@@ -1114,6 +1114,7 @@
      station panel instead), so the pin goes exactly where the user taps. */
   #map.tap-mode.leaflet-container { cursor: crosshair; }
   #map.tap-mode .wx-alert-area,
+  #map.tap-mode .live-area-label,
   #map.tap-mode .leaflet-marker-icon { pointer-events: none; }
   /* Live-alert areas are drawn on one canvas, which shows a pointer over them;
      keep the crosshair there too (their clicks reach the map in pin mode). */
@@ -6089,13 +6090,7 @@ function replaceLivePieces(features, queried, nearLon) {
     // An empty outline has no bounds; kept, it would break every later box test.
     const bounds = layer.getBounds();
     if (!bounds.isValid()) return;
-    layer.on('click', e => {
-      // Pin mode: the tap places the pin (the map's own click handler), no popup.
-      if (tapModeActive) return;
-      // This very click just closed this alert's own popup: leave it closed.
-      if (liveClosingClick?.event === e.originalEvent && liveClosingClick.capId === props.cap_id) return;
-      openLiveAlertPopup(props, e.latlng, e.originalEvent);
-    });
+    layer.on('click', e => clickLiveAlert(props, e));
     layer.on('mouseover', () => highlightLiveAlert(props.cap_id, true));
     layer.on('mouseout',  () => highlightLiveAlert(props.cap_id, false));
     livePieces.add({ layer, props, bounds });
@@ -6112,6 +6107,15 @@ function restackLivePieces() {
   [...livePieces]
     .sort((a, b) => (LIVE_SIG_RANK[a.props.sig] ?? 0) - (LIVE_SIG_RANK[b.props.sig] ?? 0))
     .forEach(piece => { if (liveAlertsLayer.hasLayer(piece.layer)) piece.layer.bringToFront(); });
+}
+
+/** A click on a live alert's area or its name chip: its popup, where the click landed. */
+function clickLiveAlert(props, e) {
+  // Pin mode: the tap places the pin (the map's own click handler), no popup.
+  if (tapModeActive) return;
+  // This very click just closed this alert's own popup: leave it closed.
+  if (liveClosingClick?.event === e.originalEvent && liveClosingClick.capId === props.cap_id) return;
+  openLiveAlertPopup(props, e.latlng, e.originalEvent);
 }
 
 /** Light up every piece of one alert (a watch can cover dozens of counties). */
@@ -6231,6 +6235,7 @@ function toggleLiveAlertType(event, button) {
 /* Name chips on the live areas ("FLOOD", "HEAT"), like the searched area's own. */
 const liveLabelLayer = L.layerGroup().addTo(map);
 const LIVE_LABEL_LIMIT = 30;   // a zoomed-out view can hold hundreds of alerts
+let liveChipLit = null;        // the alert lit up by the chip under the pointer
 
 /**
  * What the chips keep clear of, as boxes in map-container pixels: the alert
@@ -6290,6 +6295,8 @@ function liveAlertsDrawnInView() {
  * and at most LIVE_LABEL_LIMIT, so a zoomed-out view isn't buried in chips.
  */
 function renderLiveLabels() {
+  // A chip taken away under the pointer gets no mouseout: put its alert's light out.
+  if (liveChipLit) { highlightLiveAlert(liveChipLit, false); liveChipLit = null; }
   liveLabelLayer.clearLayers();
   if (!liveAlertsOn) return;
   const view = map.getBounds();
@@ -6367,10 +6374,16 @@ function renderLiveLabels() {
                             pt.y + 10 > r.top - 4 && pt.y - 10 < r.bottom + 4)) continue;
     placed.push({ x: pt.x, y: pt.y, half });
     named.add(group);
-    L.tooltip({ permanent: true, direction: 'center', interactive: false,
+    // The chip stands for its alert, like its area: a pointer, the alert lit up on
+    // hover, its popup on a click — also where the chip isn't over the area itself
+    // (the middle of a scattered or ring-shaped area, or a chip nudged in from the edge).
+    L.tooltip({ permanent: true, direction: 'center', interactive: true,
                 className: 'alert-area-label live-area-label' })
       .setLatLng(at)
       .setContent(`<span style="color:${liveAlertTextColor(props.prod_type)}">${escapeHtml(text)}</span>`)
+      .on('click', e => clickLiveAlert(props, e))
+      .on('mouseover', () => { liveChipLit = props.cap_id; highlightLiveAlert(props.cap_id, true); })
+      .on('mouseout', () => { liveChipLit = null; highlightLiveAlert(props.cap_id, false); })
       .addTo(liveLabelLayer);
   }
   probe.remove();

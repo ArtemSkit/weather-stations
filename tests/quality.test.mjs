@@ -3741,7 +3741,7 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   assert.match(strip, /title="Sunset">🌇 7:1\d PM<\/span>/);
   assert.match(strip, /title="Sunrise">🌅 7:2\d AM<\/span>/);
   // Row names stay on the left; air and pressure rows named only when there is data.
-  assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span><\/span><span class="fc-strip-scale"><b>°F<\/b>(?:<i style="top:[\d.]+px">\d+°<\/i>)+<\/span><span><\/span><span>Rain<\/span><span>Wind mph<\/span><span>Air AQI<\/span><span>Pressure<\/span><\/div>/);
+  assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span class="fc-strip-unit">°F<\/span><span class="fc-strip-scale">(?:<i style="top:[\d.]+px">\d+°<\/i>)+<\/span><span><\/span><span>Rain<\/span><span>Wind mph<\/span><span>Air AQI<\/span><span>Pressure<\/span><\/div>/);
   // The graph has a scale: gridlines on round steps, each named in the pinned column
   // at the same height; and each hour's temperature sits right above its dot.
   const ticks = [...strip.matchAll(/<i style="top:([\d.]+)px">(\d+)°<\/i>/g)].map(m => [+m[1], +m[2]]);
@@ -3756,6 +3756,10 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   const texts = [...strip.matchAll(/<text class="fc-strip-val" x="([\d.]+)" y="([\d.]+)">(\d+)°<\/text>/g)];
   assert.equal(texts.length, 30);
   assert.ok(texts.every((m, i) => m[1] === vals[i][1] && Math.abs(+m[2] - (+vals[i][2] - 9)) < 0.11));
+  // The top gridline sits near the top of the graph (no empty band under the sky
+  // icons), and every value's label stays inside the graph.
+  assert.ok(ticks[ticks.length - 1][0] <= 22, 'the top gridline near the top');
+  assert.ok(texts.every(m => +m[2] >= 13), 'a label rising out of the graph');
   // A value's height on the graph matches the scale (the warmest hour against the ticks).
   const [lowTop, lowDeg] = ticks[0], [highTop, highDeg] = ticks[ticks.length - 1];
   const warm = texts.reduce((a, b) => (+b[3] > +a[3] ? b : a));
@@ -3764,6 +3768,12 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   const bare = k.renderHourStrip(hours.slice(0, 5), now, null, null);
   assert.match(bare, /<span>Wind mph<\/span><span><\/span><span><\/span><\/div>/);
   assert.doesNotMatch(strip, /fc-strip-temp/, 'the temperatures live on the graph, not in a row above it');
+  // The warmest hour right on a gridline (72–80°F: 2° steps up to 80°) gets just
+  // the room its label needs on top — not a whole extra step.
+  const onLine = hours.slice(0, 6).map((h, i) => ({ ...h, temperature: [72, 74, 80, 78, 76, 73][i] }));
+  const lined = k.renderHourStrip(onLine, now, null, null);
+  assert.deepEqual([...lined.matchAll(/<i style="top:[\d.]+px">(\d+)°<\/i>/g)].map(m => +m[1]), [72, 74, 76, 78, 80]);
+  assert.ok([...lined.matchAll(/<text class="fc-strip-val" x="[\d.]+" y="([\d.]+)">/g)].every(m => +m[1] >= 13));
   assert.doesNotMatch(bare, /fc-strip-band|class="fc-strip-sun"/);
   // Drawn for the eye: the list below reads the same hours out; ‹ › are mouse-only.
   assert.match(strip, /<button type="button" class="fc-strip-nav fc-strip-next" aria-hidden="true" tabindex="-1" title="Later hours">›<\/button>/);
@@ -3777,7 +3787,7 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   assert.match(html, /const offsetAt = t => isoOffsetMinutes\(\(hours\.find\(p => t < Date\.parse\(p\.endTime\)\) \|\| hours\[0\]\)\.startTime\);/);
   // Nothing in the aria-hidden strip takes focus; ‹ › are mouse-only.
   assert.match(strip, /<div class="fc-strip" aria-hidden="true" tabindex="-1">/);
-  assert.match(html, /const STRIP_CURVE = \{ top: 58, height: 124, pad: 28, base: 12 \};/);
+  assert.match(html, /const STRIP_CURVE = \{ top: 58, height: 124, pad: 8, base: 12, label: 22 \};/);
   // Clicking an hour shows it in the full list; ‹ › step six hours.
   assert.match(html, /fcHours\.querySelectorAll\('\.fc-hour:not\(\.fc-hour-head\)'\)\[\+col\.dataset\.hour\]/);
   assert.match(html, /\* 6 \* STRIP_COL/);

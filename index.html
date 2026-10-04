@@ -1703,11 +1703,11 @@
   .fc-strip-icon { font-size: 1.35rem; line-height: 1; }
   /* The graph's scale in the pinned column: each step level with its gridline. */
   .fc-strip-scale { position: relative; align-self: stretch; }
-  .fc-strip-scale b { position: absolute; top: 2px; left: 0; font-weight: 400; }
-  .fc-strip-scale i {
-    position: absolute; right: 0; transform: translateY(-50%); font-style: normal;
-    font-family: 'Space Mono', monospace; font-size: 0.64rem; color: var(--text-muted);
+  .fc-strip-scale i, .fc-strip-unit {
+    font-style: normal; font-family: 'Space Mono', monospace; font-size: 0.64rem; color: var(--text-muted);
   }
+  .fc-strip-scale i { position: absolute; right: 0; transform: translateY(-50%); }
+  .fc-strip-unit { align-self: end; justify-self: end; margin-bottom: 2px; }
   .fc-strip-grid { stroke: rgba(113,147,181,0.22); stroke-width: 1; }
   /* Each hour's temperature on the curve, outlined in the surface colour so the
      gridlines and the line never run through it. */
@@ -7102,9 +7102,10 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
 /** Each hour column's width in px (the CSS uses the same). */
 const STRIP_COL = 56;
 /** The temperature graph's row in a column: where it starts (8 px padding + the
-    time and sky rows), its height, the room kept above the highest value's label
-    and under the lowest dot (px). The sunset/sunrise row comes right after it. */
-const STRIP_CURVE = { top: 58, height: 124, pad: 28, base: 12 };
+    time and sky rows), its height, where its top gridline sits, the room under the
+    lowest dot, and how far above its dot a value's label reaches (px). The
+    sunset/sunrise row comes right after it. */
+const STRIP_CURVE = { top: 58, height: 124, pad: 8, base: 12, label: 22 };
 /** The 16 compass points, for turning "NNE" into degrees. */
 const STRIP_COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 
@@ -7115,14 +7116,20 @@ function renderHourStrip(hours, now, extras, point) {
   const x = t => (t - t0) / 3_600_000 * STRIP_COL;
   const temps = hours.map(p => forecastDegrees(p)?.f);
   const known = temps.filter(Number.isFinite);
-  // The graph's scale: round steps (2°, 5° or 10°, to give a few gridlines) from a
-  // step below the coolest hour to one above the warmest, so the curve fills it.
+  // The graph's scale: round steps (2°, 5° or 10°, to give a few gridlines) from
+  // the coolest hour's step to the warmest's, the top gridline near the top of the
+  // row — no empty band under the sky icons.
   const min = Math.min(...known), max = Math.max(...known);
   const step = max - min <= 10 ? 2 : max - min <= 24 ? 5 : 10;
   const low = Math.floor(min / step) * step;
-  const high = Math.max(Math.ceil(max / step) * step, low + step);
-  const ticks = known.length ? Array.from({ length: (high - low) / step + 1 }, (_, i) => low + i * step) : [];
-  const y = f => STRIP_CURVE.pad + (1 - (f - low) / (high - low)) * (STRIP_CURVE.height - STRIP_CURVE.pad - STRIP_CURVE.base);
+  const plot = STRIP_CURVE.height - STRIP_CURVE.pad - STRIP_CURVE.base;
+  // The top: the warmest hour's step — or, when its label (above its dot) would
+  // rise out of the graph, just the few degrees more it needs, not a whole step.
+  const room = (STRIP_CURVE.label - STRIP_CURVE.pad) / plot;
+  const high = Math.max(Math.ceil(max / step) * step, low + step, (max - room * low) / (1 - room));
+  const ticks = known.length
+    ? Array.from({ length: Math.floor((high - low) / step + 1e-9) + 1 }, (_, i) => low + i * step) : [];
+  const y = f => STRIP_CURVE.pad + (1 - (f - low) / (high - low)) * plot;
   let anyAir = false, anyPressure = false;
 
   const cols = hours.map((p, i) => {
@@ -7195,10 +7202,12 @@ function renderHourStrip(hours, now, extras, point) {
   }
 
   // Row names, pinned on the left while the hours scroll (each row says what it is);
-  // the graph's row carries its scale, each step level with its gridline.
-  const scale = '<span class="fc-strip-scale"><b>°F</b>' + ticks.map(t =>
+  // the graph's row carries its scale, each step level with its gridline, with the
+  // unit right above the top number (at the foot of the sky row's empty cell).
+  const unit = ticks.length ? '<span class="fc-strip-unit">°F</span>' : '';
+  const scale = '<span class="fc-strip-scale">' + ticks.map(t =>
     '<i style="top:' + weekNum(y(t)) + 'px">' + t + '°</i>').join('') + '</span>';
-  const labels = ['', '', scale, '', 'Rain', 'Wind mph', anyAir ? 'Air AQI' : '', anyPressure ? 'Pressure' : '']
+  const labels = ['', unit, scale, '', 'Rain', 'Wind mph', anyAir ? 'Air AQI' : '', anyPressure ? 'Pressure' : '']
     .map(text => (text.startsWith('<') ? text : '<span>' + text + '</span>')).join('');
   return '<div class="fc-strip-wrap">' +
     // Drawn for the eye: the list under it reads the same hours out in full.

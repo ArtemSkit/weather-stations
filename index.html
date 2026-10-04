@@ -5950,7 +5950,7 @@ const LIVE_MIN_GAP_MS = 2_000;
 let liveCache = [];
 /** Regions downloaded in this visit: { boxes: the answered box(es) on the map, tol, at } */
 let liveFreshViews = [];
-let liveCacheSaveTimer = 0, liveGapTimer = 0;
+let liveCacheSaveTimer = 0, liveGapTimer = 0, liveExpiryTimer = 0;
 let liveLastRequestAt = 0;
 let liveAnswered = false;                     // an answer has been drawn since live alerts went on
 let liveCacheTried = false;                   // the saved copy is read once, on the page's first start
@@ -6076,6 +6076,7 @@ async function restoreLiveCache() {
   restackLivePieces();
   liveViewPending = true;   // the count shows "…" until the fresh answer is in
   renderLiveView();
+  scheduleLiveExpiry();
 }
 
 /**
@@ -6220,6 +6221,7 @@ async function loadLiveAlerts(confirmingEmpty = false) {
                       { boxes: queried, tol: detail, at: now }];
     liveCache = liveCacheMerge(liveCache, unique, boxes, now);
     saveLiveCache();
+    scheduleLiveExpiry();
     // The service stops at 4,000 pieces; say so rather than silently showing part.
     const truncated = answers.some(({ data }) =>
       Boolean(data.exceededTransferLimit || data.properties?.exceededTransferLimit));
@@ -6740,6 +6742,7 @@ function setLiveAlerts(on, waitForSearch = false) {
   clearTimeout(liveMoveTimer);
   clearTimeout(liveRetryTimer);
   clearTimeout(liveGapTimer);
+  clearTimeout(liveExpiryTimer);
   liveRun++;
   liveLoadOwed = false;
   liveRefreshMissed = false;
@@ -6800,7 +6803,30 @@ function pruneLivePieces(now = Date.now()) {
   const kept = liveCacheTrim(liveCache, now);
   if (kept.length !== liveCache.length) { liveCache = kept; saveLiveCache(); }
   if (gone) renderLiveView();
+  scheduleLiveExpiry();
 }
+
+/**
+ * Wake up the moment the oldest piece — drawn or saved — turns 15 minutes old, and
+ * take it off then (pruneLivePieces), not at the next 2-minute check: what's on
+ * screen is re-downloaded at each check while online, but areas moved away from,
+ * and everything while downloads fail, would otherwise linger up to 2 minutes more.
+ */
+function scheduleLiveExpiry() {
+  clearTimeout(liveExpiryTimer);
+  if (!liveAlertsOn) return;
+  let oldest = Infinity;
+  for (const piece of livePieces) oldest = Math.min(oldest, piece.at);
+  for (const piece of liveCache) oldest = Math.min(oldest, piece.at);
+  if (oldest === Infinity) return;
+  // (A moment past it, so the piece is surely due when the timer runs.)
+  liveExpiryTimer = setTimeout(pruneLivePieces, Math.max(0, oldest + LIVE_CACHE_MAX_AGE_MS - Date.now()) + 50);
+}
+// Back to the page: timers may have been slowed or frozen meanwhile (a phone puts
+// the app to sleep), so take off at once whatever came due while away.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && liveAlertsOn) pruneLivePieces();
+});
 
 /** The 2-minute refresh tick: skipped while the page is hidden, caught up on return. */
 function refreshLiveAlerts() {

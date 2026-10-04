@@ -904,11 +904,14 @@
   .fc-now { margin-top: 3px; font-size: 0.7rem; }
   .fc-foot a { color: var(--accent); white-space: nowrap; }   /* not split at "Open-|Meteo" */
   /* Phones: sky and wind on one line, AQI and pressure on the next, spaced apart
-     (no separators to strand at a line start); a reading that doesn't fit moves
-     down whole ("N 10 mph", "29.98 inHg" never split). */
+     (no separators to strand at a line start); a short reading that doesn't fit
+     moves down whole ("N 10 mph", "29.98 inHg" never split). The AQI may wrap:
+     "Unhealthy for sensitive groups" is wider than the column. */
   .fc-hour-short, .fc-hour-air { display: flex; flex-wrap: wrap; column-gap: 12px; }
   .fc-hour-air { flex-basis: 100%; font-size: 0.66rem; }
-  .fc-hour-wind, .fc-hour-aqi, .fc-hour-press { white-space: nowrap; }
+  .fc-hour-wind, .fc-hour-press { white-space: nowrap; }
+  /* An unknown reading (no AQI for that hour, say) takes no gap before the next. */
+  .fc-hour-short > :empty, .fc-hour-air > :empty { display: none; }
   .fc-hour.fc-hour-head { display: none; }   /* (outranks .fc-hour's grid) */
   .fc-day p { margin: 0; padding: 0 16px 12px 58px; font-size: 0.74rem; line-height: 1.55; color: var(--text-muted); }
   .fc-day p b { color: var(--text); font-weight: 700; }
@@ -1555,6 +1558,8 @@
       gap: 12px; padding: 8px 20px;
     }
     .fc-hour-short, .fc-hour-air { display: contents; }
+    /* Empty cells stay here: they hold their column's place in the table. */
+    .fc-hour-short > :empty, .fc-hour-air > :empty { display: block; }
     /* The chance of rain as a bar behind its number: 100% fills the cell. */
     .fc-hour:not(.fc-hour-head) .fc-hour-pop {
       padding: 2px 6px; border-radius: 3px;
@@ -4851,7 +4856,6 @@ function alertAreaDesc(f) {
   return f.properties?.areaDesc || alertRecordCache.get(alertId(f))?.areaDesc || '';
 }
 
-/** One alert's card: header (event, times, places) and the body it opens to. */
 /**
  * With live alerts on, a swatch of the alert's colour on the map (and in its key):
  * the banner ranks alerts by severity (red, orange, yellow), the map uses the
@@ -4863,6 +4867,7 @@ function alertSwatchHtml(event) {
     ? '<span class="alert-swatch" aria-hidden="true" style="background:' + liveAlertColor(event) + '"></span>' : '';
 }
 
+/** One alert's card: header (event, times, places) and the body it opens to. */
 function alertCardHtml(f) {
   const p   = f.properties || {};
   const id  = alertId(f);

@@ -3386,6 +3386,11 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.match(aired, /<span class="fc-hour-air"><span class="fc-hour-aqi"><span class="fc-aqi fc-aqi-1">AQI 44 Good<\/span><\/span><span class="fc-hour-press">29\.92 inHg<\/span><\/span>/);
   // Every cell is there even when empty, so the wide-screen table's columns line up.
   assert.match(aired, /<span class="fc-hour-sky">Clear<\/span><span class="fc-hour-wind"><\/span>/);
+  // Phones hide those empty cells (no stray gap) and let a long AQI wrap; the table keeps them.
+  assert.match(html, /\.fc-hour-wind, \.fc-hour-press \{ white-space: nowrap; \}/);
+  assert.doesNotMatch(html, /\.fc-hour-aqi[^{]*\{[^}]*nowrap/);
+  assert.match(html, /\.fc-hour-short > :empty, \.fc-hour-air > :empty \{ display: none; \}/);
+  assert.match(html, /\.fc-hour-short > :empty, \.fc-hour-air > :empty \{ display: block; \}/);
   assert.match(aired, /<li class="fc-hour fc-hour-head" aria-hidden="true">[^]*?<span>Air quality<\/span><span>Pressure<\/span><\/li>/);
   assert.equal(r.forecastEmoji('Mostly Sunny', true), '⛅');
   assert.equal(r.forecastEmoji('Clear', false), '🌙');

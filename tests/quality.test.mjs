@@ -3110,6 +3110,11 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   // Fixed elements (the station panel, locate, the badge) count as shown: no offsetParent test.
   assert.match(extractFunction('liveLabelObstacles'), /document\.getElementById\('fab-locate'\), document\.getElementById\('app-version'\)\]\s*\.filter\(el => el && el\.getClientRects\(\)\.length\)/);
   assert.match(extractFunction('renderLiveLabels'), /const obstacles = liveLabelObstacles\(\);\s*liveLabelObstaclesSeen = liveObstacleKey\(obstacles\);/);
+  // The pin-mode banner too (by id: its const comes later), re-checked as pin mode
+  // turns on or off (it also moves the panel) and as the banner's text arrives.
+  assert.match(extractFunction('liveLabelObstacles'), /document\.getElementById\('tap-place-banner'\),/);
+  assert.match(extractFunction('setTapMode'), /replaceLiveLabelsIfCrowded\(\);\s*\}$/);
+  assert.match(html, /\}\)\.observe\(tapPlaceBanner\);\s*\/\/[^\n]*\n\s*liveLabelSpace\.observe\(tapPlaceBanner\);/);
   // …and are placed again whenever the station panel opens, closes or changes size,
   // or the map buttons' control does (its colour key opening, the buttons folding).
   assert.match(html, /new LiveAlertsControl\(\)\.addTo\(map\);\s*\/\/[^\n]*\n\s*liveLabelSpace\.observe\(document\.querySelector\('\.live-alerts-ctl'\)\);/);

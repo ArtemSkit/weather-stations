@@ -3739,23 +3739,43 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   assert.match(strip, /title="Sunset">🌇 7:1\d PM<\/span>/);
   assert.match(strip, /title="Sunrise">🌅 7:2\d AM<\/span>/);
   // Row names stay on the left; air and pressure rows named only when there is data.
-  assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span><\/span><span>Temp °F<\/span><span><\/span><span><\/span><span>Rain<\/span><span>Wind mph<\/span><span>Air AQI<\/span><span>Pressure<\/span><\/div>/);
+  assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span><\/span><span class="fc-strip-scale"><b>°F<\/b>(?:<i style="top:[\d.]+px">\d+°<\/i>)+<\/span><span><\/span><span>Rain<\/span><span>Wind mph<\/span><span>Air AQI<\/span><span>Pressure<\/span><\/div>/);
+  // The graph has a scale: gridlines on round steps, each named in the pinned column
+  // at the same height; and each hour's temperature sits right above its dot.
+  const ticks = [...strip.matchAll(/<i style="top:([\d.]+)px">(\d+)°<\/i>/g)].map(m => [+m[1], +m[2]]);
+  const grid = [...strip.matchAll(/<line class="fc-strip-grid" x1="0" x2="\d+" y1="([\d.]+)"/g)].map(m => +m[1]);
+  assert.ok(ticks.length >= 2);
+  assert.deepEqual(ticks.map(([top]) => top), grid);
+  assert.ok(ticks.every(([, deg], i) => i === 0 || deg > ticks[i - 1][1]));
+  const step = ticks[1][1] - ticks[0][1];   // 2°, 5° or 10° by the range (69–83°F here: 5°)
+  assert.equal(step, 5);
+  assert.ok(ticks.every(([, deg]) => deg % step === 0), 'round steps');
+  const vals = [...strip.matchAll(/<circle cx="([\d.]+)" cy="([\d.]+)" r="3\.5"\/>/g)];
+  const texts = [...strip.matchAll(/<text class="fc-strip-val" x="([\d.]+)" y="([\d.]+)">(\d+)°<\/text>/g)];
+  assert.equal(texts.length, 30);
+  assert.ok(texts.every((m, i) => m[1] === vals[i][1] && Math.abs(+m[2] - (+vals[i][2] - 9)) < 0.11));
+  // A value's height on the graph matches the scale (the warmest hour against the ticks).
+  const [lowTop, lowDeg] = ticks[0], [highTop, highDeg] = ticks[ticks.length - 1];
+  const warm = texts.reduce((a, b) => (+b[3] > +a[3] ? b : a));
+  const expected = lowTop + (+warm[3] - lowDeg) / (highDeg - lowDeg) * (highTop - lowTop);
+  assert.ok(Math.abs(+warm[2] + 9 - expected) < 0.2);
   const bare = k.renderHourStrip(hours.slice(0, 5), now, null, null);
   assert.match(bare, /<span>Wind mph<\/span><span><\/span><span><\/span><\/div>/);
+  assert.doesNotMatch(strip, /fc-strip-temp/, 'the temperatures live on the graph, not in a row above it');
   assert.doesNotMatch(bare, /fc-strip-band|class="fc-strip-sun"/);
   // Drawn for the eye: the list below reads the same hours out; ‹ › are mouse-only.
   assert.match(strip, /<button type="button" class="fc-strip-nav fc-strip-next" aria-hidden="true" tabindex="-1" title="Later hours">›<\/button>/);
   assert.equal(k.renderHourStrip(hours.slice(0, 1), now, extras, point), '');
   // The CSS column and curve row match the drawing's numbers.
   assert.match(html, /\.fc-strip-col \{[^}]*flex: 0 0 56px; width: 56px;/);
-  assert.match(html, /--strip-rows: 18px 32px 24px 56px 18px /);   // 8 + 18 + 32 + 24 = the curve's top, 82
+  assert.match(html, /--strip-rows: 18px 32px 124px 18px /);   // 8 + 18 + 32 = the graph's top, 58
   assert.match(html, /\.fc-strip-col \{[^}]*padding: 8px 0 10px;/);   // (the 8)
   // The sun chips sit in their own row under the curve, each on its own hour's clock.
-  assert.match(strip, /<span class="fc-strip-sun" style="left:[\d.]+px;top:138px" title="Sunset">/);
+  assert.match(strip, /<span class="fc-strip-sun" style="left:[\d.]+px;top:182px" title="Sunset">/);
   assert.match(html, /const offsetAt = t => isoOffsetMinutes\(\(hours\.find\(p => t < Date\.parse\(p\.endTime\)\) \|\| hours\[0\]\)\.startTime\);/);
   // Nothing in the aria-hidden strip takes focus; ‹ › are mouse-only.
   assert.match(strip, /<div class="fc-strip" aria-hidden="true" tabindex="-1">/);
-  assert.match(html, /const STRIP_CURVE = \{ top: 82, height: 56 \};/);
+  assert.match(html, /const STRIP_CURVE = \{ top: 58, height: 124, pad: 28, base: 12 \};/);
   // Clicking an hour shows it in the full list; ‹ › step six hours.
   assert.match(html, /fcHours\.querySelectorAll\('\.fc-hour:not\(\.fc-hour-head\)'\)\[\+col\.dataset\.hour\]/);
   assert.match(html, /\* 6 \* STRIP_COL/);

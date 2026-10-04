@@ -6284,9 +6284,10 @@ function liveAlertsDrawnInView() {
 }
 
 /**
- * Label each live alert in view once, on the middle of the visible part of its
- * largest piece — the most serious alerts first, and none overlapping another
- * label (at most LIVE_LABEL_LIMIT), so a zoomed-out view isn't buried in chips.
+ * Label the live alerts in view, each on the middle of the visible part of its
+ * largest piece — the most serious alerts first (and the largest of a kind), one
+ * chip for neighbouring alerts of the same type, none overlapping another label,
+ * and at most LIVE_LABEL_LIMIT, so a zoomed-out view isn't buried in chips.
  */
 function renderLiveLabels() {
   liveLabelLayer.clearLayers();
@@ -6294,7 +6295,9 @@ function renderLiveLabels() {
   const view = map.getBounds();
   const candidates = [];
   for (const { props, pieces } of liveAlertsDrawnInView().values()) {
-    let best = null;
+    // For telling neighbours: each piece's part in view, and a box round them all.
+    let best = null, box = null;
+    const parts = [];
     for (const piece of pieces) {
       const b = piece.bounds;
       const visible = L.latLngBounds(
@@ -6303,11 +6306,35 @@ function renderLiveLabels() {
       const ne = visible.getNorthEast(), sw = visible.getSouthWest();
       const area = (ne.lat - sw.lat) * (ne.lng - sw.lng);
       if (!best || area > best.area) best = { area, at: visible.getCenter() };
+      const part = { s: sw.lat, w: sw.lng, n: ne.lat, e: ne.lng };
+      parts.push(part);
+      box = box ? { s: Math.min(box.s, part.s), w: Math.min(box.w, part.w), n: Math.max(box.n, part.n), e: Math.max(box.e, part.e) }
+                : part;
     }
-    candidates.push({ props, ...best });
+    candidates.push({ props, ...best, box, parts });
   }
   candidates.sort((a, b) =>
     (LIVE_SIG_RANK[b.props.sig] ?? 0) - (LIVE_SIG_RANK[a.props.sig] ?? 0) || b.area - a.area);
+  // Neighbouring alerts of one type read as one area (each office issues its own:
+  // a heat wave can be five Heat Advisories side by side down California), so one
+  // chip names them all and the limited chips name more kinds of alert. Neighbours:
+  // the same type, with a piece of one touching or overlapping a piece of the other
+  // — told by the pieces' boxes (their outlines would cost too much on every move),
+  // piece by piece: an alert's zones can lie far apart, and a box round them all
+  // would swallow a separate area between them — chained, so a whole run of them
+  // is one group. (Each group's chip goes to its first: the most serious and
+  // largest, as sorted.)
+  const groupOf = candidates.map((_, i) => i);
+  const root = i => (groupOf[i] === i ? i : (groupOf[i] = root(groupOf[i])));
+  const touch = (a, b) => a.s <= b.n && b.s <= a.n && a.w <= b.e && b.w <= a.e;
+  const neighbours = (a, b) => a.props.prod_type === b.props.prod_type && touch(a.box, b.box) &&
+    a.parts.some(p => b.parts.some(q => touch(p, q)));
+  for (let i = 1; i < candidates.length; i++) {
+    for (let j = 0; j < i; j++) {
+      if (neighbours(candidates[i], candidates[j])) groupOf[root(i)] = root(j);
+    }
+  }
+  const named = new Set();   // the groups that have their chip
   // Keep clear of what sits over the map (see liveLabelObstacles).
   const obstacles = liveLabelObstacles();
   liveLabelObstaclesSeen = liveObstacleKey(obstacles);
@@ -6323,8 +6350,10 @@ function renderLiveLabels() {
     if (!halves.has(text)) { probe.textContent = text; halves.set(text, probe.offsetWidth / 2); }
     return halves.get(text);
   };
-  for (const { props, at: middle } of candidates) {
+  for (const [index, { props, at: middle }] of candidates.entries()) {
     if (placed.length >= LIVE_LABEL_LIMIT) break;
+    const group = root(index);
+    if (named.has(group)) continue;   // a neighbour of the same type already says it
     const text = shortAlertLabel(props.prod_type);
     const half = halfOf(text);
     // A sliver of an area at the edge of the view would centre its chip on the
@@ -6337,6 +6366,7 @@ function renderLiveLabels() {
     if (obstacles.some(r => pt.x + half > r.left - 4 && pt.x - half < r.right + 4 &&
                             pt.y + 10 > r.top - 4 && pt.y - 10 < r.bottom + 4)) continue;
     placed.push({ x: pt.x, y: pt.y, half });
+    named.add(group);
     L.tooltip({ permanent: true, direction: 'center', interactive: false,
                 className: 'alert-area-label live-area-label' })
       .setLatLng(at)

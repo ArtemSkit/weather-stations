@@ -1170,7 +1170,8 @@ test('alert times never invent an end and show a future start', () => {
     openAlertGroups: new Set(), openAlertCards: new Set(), alertRecordCache: new Map(),
     alertRecordWanted: new Set(['b']), alertRecordInFlight: new Map(), alertRecordFailedAt: new Map(),
     ALERT_CLASS_RANK: { crit: 0, warn: 1, watch: 2, info: 3 },
-    ALERT_SEV_WEIGHT: {}, ALERT_URGENCY_WEIGHT: {}, ALERT_CERTAINTY_WEIGHT: {}
+    ALERT_SEV_WEIGHT: {}, ALERT_URGENCY_WEIGHT: {}, ALERT_CERTAINTY_WEIGHT: {},
+    liveAlertsOn: false, liveAlertColor: () => '#00FF7F'
   };
   const render = vm.runInNewContext(`(() => {
     ${helpers}
@@ -1183,6 +1184,7 @@ test('alert times never invent an end and show a future start', () => {
     ${extractFunction('alertId')}
     ${extractFunction('alertAreaDesc')}
     ${extractFunction('alertRecordPending')}
+    ${extractFunction('alertSwatchHtml')}
     ${extractFunction('alertCardHtml')}
     ${extractFunction('alertGroupHtml')}
     ${extractFunction('alertBannerFocusKey')}
@@ -1194,6 +1196,12 @@ test('alert times never invent an end and show a future start', () => {
   render([{ id: 'a', properties: { ...flood, onset: tomorrow } }]);
   assert.match(banner.innerHTML, /<span class="alert-when">from [^<]+<\/span> <span class="alert-when">until further notice<\/span>/);
   assert.equal(banner.className, 'visible expanded', 'expanded on arrival');
+  assert.doesNotMatch(banner.innerHTML, /alert-swatch/, 'no map colour to match while live alerts are off');
+  // With live alerts on, each alert's name carries its colour on the map (and in the key).
+  bannerCtx.liveAlertsOn = true;
+  render([{ id: 'a', properties: { ...flood, onset: tomorrow } }]);
+  assert.match(banner.innerHTML, /<span class="alert-event"><span class="alert-swatch" aria-hidden="true" style="background:#00FF7F"><\/span>/);
+  bannerCtx.liveAlertsOn = false;
 
   // Once the user collapses it, later renders (refreshes, new searches) keep it collapsed.
   bannerCtx.alertBannerCollapsed = true;
@@ -3353,7 +3361,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     [day('Saturday', 90, { startTime: '2026-10-03T06:00:00-05:00', endTime: '2026-10-03T18:00:00-05:00' })],
     { aqi: new Map(Array.from({ length: 12 }, (_, i) => ['2026-10-03T' + (11 + i), { value: 120, pollutant: 'ozone' }])), pressure: new Map() },
     { lat: 29.42, lon: -98.49 });
-  assert.match(sat, /<span class="fc-sun"><span class="fc-sunset">[^<]*<span aria-hidden="true">🌇 <\/span>Sunset 7:1\d PM<\/span>[^]*?<\/span><span class="fc-air"><span class="fc-aqi fc-aqi-3">AQI 120 Unhealthy for sensitive groups<\/span><\/span><\/summary><p><b>Saturday:<\/b> Saturday details\.<\/p><p><b>Daylight:<\/b>/);
+  assert.match(sat.replace(/\u00A0/g, ' '), /<span class="fc-sun"><span class="fc-sunset">[^<]*<span aria-hidden="true">🌇 <\/span>Sunset 7:1\d PM<\/span>[^]*?<\/span><span class="fc-air"><span class="fc-aqi fc-aqi-3">AQI 120 Unhealthy for sensitive groups<\/span><\/span><\/summary><p><b>Saturday:<\/b> Saturday details\.<\/p><p><b>Daylight:<\/b>/);
   // Without them (no place, no data) a row is as before.
   assert.doesNotMatch(days, /fc-sun|fc-air|Daylight/);
   const now = Date.parse('2026-10-01T22:30:00-05:00');
@@ -3412,12 +3420,16 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
 
 /** The forecast row helpers (sun, air, pressure) in a vm, with what they lean on. */
 function forecastExtrasKit() {
-  return vm.runInNewContext(`(() => {
+  const kit = vm.runInNewContext(`(() => {
     ${extractFunction('forecastLocalTime')}
     ${extractFunction('forecastHourLabel')}
     ${forecastExtrasSource}
     return { sunTimes, clockLabel, isoOffsetMinutes, durationLabel, aqiCategory, forecastRowExtras };
   })()`, { Date });
+  const plain = v => String(v).replace(/\u00A0/g, ' ');
+  return { ...kit, rawRowExtras: kit.forecastRowExtras,
+           forecastRowExtras: (...args) => { const r = kit.forecastRowExtras(...args);
+             return { ...r, sun: plain(r.sun), facts: plain(r.facts) }; } };
 }
 
 test('sun times match the US Naval Observatory to within a minute', () => {
@@ -3538,6 +3550,11 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   const dec = k.forecastRowExtras([{ startTime: '2026-12-21T06:00:00-09:00', endTime: '2026-12-21T18:00:00-09:00' }], null, pole);
   assert.match(dec.sun, /No sunrise — the sun stays down all day/);
   assert.match(dec.facts, /twilight from 11:5\d AM to 2:5\d PM/);
+  // A time never breaks across lines: a no-break space before its AM/PM.
+  const raw = k.rawRowExtras(parts, extras, sa);
+  assert.match(raw.sun, /Sunset 7:1\d\u00A0PM/);
+  assert.match(raw.facts, /first light 7:0\d\u00A0AM/);
+  assert.doesNotMatch(raw.facts, /\d (AM|PM)/);
   // Nothing to go on (no place, or a timestamp without its offset): nothing shown.
   assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', aqi: null });
   assert.equal(k.forecastRowExtras([{ startTime: '2026-10-03T06:00', endTime: '2026-10-03T18:00' }], null, sa).sun, '');
@@ -3597,13 +3614,13 @@ test('wide screens: the week laid out on one time line, nights from the sun', ()
   const { days, hours, extras, point } = sampleWeek();
   const model = k.forecastWeekModel(days, hours, extras, point);
   // Three columns (Tonight; Sunday with its night; Monday), each as wide as its hours
-  // but never under 18: 12 h → 18, 24 h → 24, 12 h → 18 of 60.
+  // but never under 20: 12 h → 20, 24 h → 24, 12 h → 20 of 64.
   assert.equal(model.rows.length, 3);
-  assert.deepEqual(Array.from(model.rows, r => Math.round(r.width * 100)), [30, 40, 30]);
+  assert.deepEqual(Array.from(model.rows, r => r.width), [0.3125, 0.375, 0.3125]);
   // Time runs evenly within a column and continues across its edges.
   const [tonight, sunday, monday] = model.rows;
-  assert.equal(model.xAt(sunday.start), 0.3);
-  assert.equal(model.xAt(monday.start), 0.7);
+  assert.equal(model.xAt(sunday.start), 0.3125);
+  assert.equal(model.xAt(monday.start), 0.6875);
   assert.ok(Math.abs(model.xAt(sunday.start + 12 * 3600e3) - 0.5) < 1e-9);
   assert.equal(model.xAt(tonight.start - 1), 0);
   assert.equal(model.xAt(monday.end + 1), 1);
@@ -3641,7 +3658,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   const week = k.renderForecastWeek(model, Date.parse('2026-10-03T20:00:00-05:00'));
   // The days are a tab list that drives the detail panel; the first is picked.
   assert.equal((week.match(/role="tab"/g) || []).length, 3);
-  assert.match(week, /<div class="fc-wk-days" role="tablist" aria-label="Days" style="grid-template-columns:minmax\(0,0\.3000fr\) minmax\(0,0\.4000fr\) minmax\(0,0\.3000fr\)">/);
+  assert.match(week, /<div class="fc-wk-days" role="tablist" aria-label="Days" style="grid-template-columns:minmax\(0,0\.3125fr\) minmax\(0,0\.3750fr\) minmax\(0,0\.3125fr\)">/);
   assert.match(week, /id="fc-wk-tab-0" data-row="0" aria-selected="true" aria-controls="fc-wk-detail" tabindex="0"/);
   assert.match(week, /id="fc-wk-tab-1" data-row="1" aria-selected="false" aria-controls="fc-wk-detail" tabindex="-1"/);
   // A column: its name (and a short one), date, high/low, sky, sunset first, rain, air.
@@ -3657,7 +3674,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(week, /<p class="sr-only" id="fc-wk-readout" aria-live="polite"><\/p>/);
   // Each night shaded; the picked day's band; "Now".
   assert.match(week, /<span class="fc-wk-night" style="left:[\d.]+%;width:[\d.]+%">/);
-  assert.match(week, /<span class="fc-wk-sel" style="left:0\.000%;width:30\.000%">/);
+  assert.match(week, /<span class="fc-wk-sel" style="left:0\.000%;width:31\.250%">/);
   assert.match(week, /<span class="fc-wk-now" style="left:[\d.]+%"><span>Now<\/span><\/span>/);
   // Labels: Sunday's high, the two nights' lows, Monday's (half-covered) morning high.
   assert.equal((week.match(/fc-wk-pt-hi/g) || []).length, 2);
@@ -3678,7 +3695,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   // The pointer or keys find the nearest hour and its day.
   k.use(model);
   // Sunday's column runs 6 AM to 6 AM: 6½ hours in is 12:30 PM, the middle of the noon hour.
-  const h = k.weekHourAt(0.3 + 0.4 * 6.5 / 24);
+  const h = k.weekHourAt(0.3125 + 0.375 * 6.5 / 24);
   assert.equal(model.points[h].period.startTime, '2026-10-04T12:00:00-05:00');
   assert.equal(k.weekRowOf(model.points[h]), 1);
   assert.equal(k.weekHourAt(0), 0);

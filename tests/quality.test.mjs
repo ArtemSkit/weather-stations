@@ -3848,7 +3848,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   // Every cell is there even when empty, so the wide-screen table's columns line up.
   assert.match(aired, /<span class="fc-hour-sky">Clear<\/span><span class="fc-hour-wind"><\/span>/);
   // Phones hide those empty cells (no stray gap) and let a long AQI wrap; the table keeps them.
-  assert.match(html, /\.fc-hour-wind, \.fc-hour-press \{ white-space: nowrap; \}/);
+  assert.match(html, /\.fc-hour-wind, \.fc-hour-press, \.fc-hour-hum \{ white-space: nowrap; \}/);
   assert.doesNotMatch(html, /\.fc-hour-aqi[^{]*\{[^}]*nowrap/);
   assert.match(html, /\.fc-hour-short > :empty, \.fc-hour-air > :empty \{ display: none; \}/);
   assert.match(html, /\.fc-hour-short > :empty, \.fc-hour-air > :empty \{ display: block; \}/);
@@ -3859,6 +3859,21 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   // A phone on its side keeps the sheet's content clear of the notch.
   assert.match(html, /@media \(pointer: coarse\), \(max-width: 640px\) \{[\s\S]*?\.fc-sheet \{ padding-left: var\(--safe-left\); padding-right: var\(--safe-right\); \}/);
   assert.match(aired, /<li class="fc-hour fc-hour-head" aria-hidden="true">[^]*?<span>Air quality<\/span><span>Pressure<\/span><\/li>/);
+  // Each hour's humidity (from the NWS hour itself): "84% humidity" on phones, a
+  // Humidity column (number only) on wide screens; an empty cell when unknown.
+  const humidHour = Object.assign(hour('2026-10-01T23:00:00-05:00', '2026-10-02T00:00:00-05:00'), { relativeHumidity: { value: 83.6 } });
+  const humidList = r.renderForecastHours([humidHour], now);
+  assert.match(humidList, /<span class="fc-hour-wind"><\/span><span class="fc-hour-hum">84%<span class="fc-hour-hum-word"> humidity<\/span><\/span>/);
+  assert.match(humidList, /<span>Wind<\/span><span>Humidity<\/span>/);
+  assert.match(aired, /<span class="fc-hour-hum"><\/span>/);
+  // (Hidden from the eye on wide screens, not from screen readers: the column names are aria-hidden.)
+  assert.match(html, /\.fc-hour-hum-word \{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset\(50%\); white-space: nowrap; \}/);
+  assert.doesNotMatch(html, /\.fc-hour-hum-word \{ display: none/);
+  // The days take theirs from the same hours (so both tell the same numbers).
+  const byHour = vm.runInNewContext(`${extractFunction('utcHourKey')}\n${extractFunction('hourlyHumidity')}\nhourlyHumidity`, { Date, Number, Math, Map });
+  const map = byHour([humidHour, { startTime: '2026-10-02T00:00:00-05:00', relativeHumidity: { value: null } }, { startTime: 'soon', relativeHumidity: { value: 50 } }]);
+  assert.deepEqual([...map], [['2026-10-02T04', 84]]);
+  assert.match(extractFunction('openForecast'), /const extras = \{ \.\.\.forecast\.extras, humidity: hourlyHumidity\(forecast\.hours\) \};/);
   assert.equal(r.forecastEmoji('Mostly Sunny', true), '⛅');
   assert.equal(r.forecastEmoji('Clear', false), '🌙');
   assert.equal(r.forecastTemp({ temperature: null }), '—');
@@ -3999,6 +4014,20 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   assert.match(row.facts, /<p><b>Daylight:<\/b> first light 7:0\d AM · sunrise 7:2\d AM · sunset 7:1\d PM · last light 7:4\d PM \(11 h \d+ min of sun\)<\/p>/);
   assert.match(row.facts, /<p><b>Air quality:<\/b> up to 58, moderate — mostly ozone, worst around 3 PM\. Unusually sensitive people/);
   assert.match(row.facts, /<p><b>Pressure:<\/b> 30\.12 → 29\.94 inHg \(1020 → 1014 hPa\), falling sharply by 6 hPa; lowest 29\.93 inHg around 3 AM\.<\/p>/);
+  // Humidity, from the hourly forecast's hours (the 7-day one has none): the day's
+  // range at a glance, and when it's most and least humid, on the place's clock.
+  const humidity = hours(24, '2026-10-03T11', i => (i === 9 ? 45 : i === 20 ? 92 : 70));   // 3 PM low, 2 AM high (CDT)
+  const humid = k.forecastRowExtras(parts, { aqi: new Map(), pressure: new Map(), humidity }, sa);
+  assert.equal(humid.air, 'Humidity 45–92%');
+  assert.deepEqual({ ...humid.humidity }, { low: 45, high: 92 });
+  assert.match(humid.facts, /<p><b>Humidity:<\/b> 45% to 92% — most humid around 2 AM, driest around 3 PM\.<\/p>/);
+  // After air quality and pressure at a glance; one number when it holds all day.
+  assert.match(k.forecastRowExtras(parts, { ...extras, humidity }, sa).air, /inHg · Humidity 45–92%$/);
+  const flat = k.forecastRowExtras(parts, { humidity: hours(24, '2026-10-03T11', () => 80) }, sa);
+  assert.equal(flat.air, 'Humidity 80%');
+  assert.match(flat.facts, /<p><b>Humidity:<\/b> about 80% throughout\.<\/p>/);
+  // Hours that run out early in the row say so (half the row or more is needed).
+  assert.match(k.forecastRowExtras(parts, { humidity: hours(14, '2026-10-03T11', () => 60) }, sa).facts, /the hourly forecast runs to 7 PM\./);
 
   // An air-quality forecast ending inside the row: with half the row or more it is
   // shown and says where it stops; with less, it isn't passed off as the whole day.
@@ -4073,7 +4102,7 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   assert.match(raw.facts, /first light 7:0\d\u00A0AM/);
   assert.doesNotMatch(raw.facts, /\d (AM|PM)/);
   // Nothing to go on (no place, or a timestamp without its offset): nothing shown.
-  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', aqi: null });
+  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', aqi: null, humidity: null });
   assert.equal(k.forecastRowExtras([{ startTime: '2026-10-03T06:00', endTime: '2026-10-03T18:00' }], null, sa).sun, '');
   // EPA categories at their edges.
   assert.deepEqual([50, 51, 101, 151, 201, 301].map(v => k.aqiCategory(v).level), [1, 2, 3, 4, 5, 6]);
@@ -4094,7 +4123,7 @@ function forecastWeekKit() {
        'weekAirStrip', 'weekPressureStrip', 'renderWeekDetail', 'renderForecastWeek', 'weekHourHtml',
        'weekRowAt', 'weekHourAt', 'weekRowOf', 'weekHourIn', 'weekFirstHour'].map(extractFunction).join('\n')}
     return { forecastWeekModel, smoothPath, renderForecastWeek, renderWeekDetail, weekRowAt, weekHourAt, weekRowOf,
-             weekHourIn, weekFirstHour, use: model => { weekModel = model; } };
+             weekHourIn, weekFirstHour, weekHourHtml, use: model => { weekModel = model; } };
   })()`, { Date, escapeHtml });
 }
 
@@ -4115,7 +4144,8 @@ function sampleWeek() {
     return { startTime: iso(start), endTime: iso(start + 3600e3), isDaytime: local >= 7 && local < 19,
              temperature: Math.round(76 - 7 * Math.cos((local - 5) / 24 * 2 * Math.PI)), temperatureUnit: 'F',
              shortForecast: 'Clear', probabilityOfPrecipitation: { value: i > 20 && i < 26 ? 40 : 2 },
-             windDirection: 'N', windSpeed: '10 mph' };
+             windDirection: 'N', windSpeed: '10 mph',
+             relativeHumidity: { unitCode: 'wmoUnit:percent', value: Math.round(70 + 20 * Math.cos((local - 6) / 24 * 2 * Math.PI)) } };
   });
   const utc = ms => new Date(ms).toISOString().slice(0, 13);
   const extras = {
@@ -4191,6 +4221,16 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(week, /fc-hi">[^]*?High <\/span>82°<\/span><span class="fc-lo">[^]*?Low <\/span>70°/);
   assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>7:1\d PM<\/span><span class="fc-wk-pop">[^]*?30%/);
   assert.match(week, /<span class="fc-wk-aqi"><span class="fc-aqi fc-aqi-3">AQI 120 Unhealthy for sensitive groups<\/span>/);
+  // With the hours' humidity: each column's range, and each hour's in the tooltip.
+  const utcKey = iso => new Date(Date.parse(iso)).toISOString().slice(0, 13);
+  const humidity = new Map(hours.map(h => [utcKey(h.startTime), h.relativeHumidity.value]));
+  const humidModel = k.forecastWeekModel(days, hours, { ...extras, humidity }, point);
+  const humidWeek = k.renderForecastWeek(humidModel, Date.parse('2026-10-03T20:00:00-05:00'));
+  assert.match(humidWeek, /<span class="fc-wk-hum">Humidity <span>\d+–\d+%<\/span><\/span><span class="fc-wk-aqi">/);
+  assert.equal((humidWeek.match(/class="fc-wk-hum"/g) || []).length, 3);
+  assert.match(humidModel.rows[1].more.facts, /<p><b>Humidity:<\/b> \d+% to \d+% — most humid around \d+\s(AM|PM)/);
+  assert.match(k.weekHourHtml(humidModel.points[12]), /<span>Wind N 10 mph<\/span><span>Humidity 90%<\/span>/);
+  assert.doesNotMatch(week, /fc-wk-hum/, 'no humidity, no line');
   // The chart: a keyboard-reachable group; strips drawn for the eye only.
   assert.match(week, /<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: [^"]+">/);
   assert.match(week, /<div aria-hidden="true"><div class="fc-wk-strip fc-wk-temp"/);
@@ -4256,7 +4296,9 @@ test('wide screens: the week shows from 960 × 600 up; phones keep the list', ()
   assert.match(html, /\.fc-hour\.fc-hour-head \{ display: none; \}/);
   // …and its columns fit the 896 px dialog of a 960 px window (minimums + gaps + padding).
   const cols = html.match(/grid-template-columns: (56px 26px [^;]+);\s*gap: (\d+)px; padding: 8px (\d+)px;/);
-  const least = [...cols[1].matchAll(/(\d+)px/g)].reduce((sum, m) => sum + +m[1], 0) + 7 * +cols[2] + 2 * +cols[3];
+  const widths = [...cols[1].matchAll(/(\d+)px/g)].map(m => +m[1]);
+  const least = widths.reduce((sum, w) => sum + w, 0) + (widths.length - 1) * +cols[2] + 2 * +cols[3];
+  assert.equal(widths.length, 9, 'time, icon, temperature, rain, sky, wind, humidity, air quality, pressure');
   assert.ok(least <= 896, `hourly table needs ${least}px`);
   // A tap (no pointermove first) picks the day where it landed, and shows its hour there.
   assert.match(html, /const fraction = \(e\.clientX - box\.left\) \/ box\.width;\s*selectWeekDay\(weekRowAt\(fraction\)\);\s*showWeekHour\(weekHourIn\(fraction\)\);/);
@@ -4306,7 +4348,9 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   assert.match(strip, /title="Sunset">🌇 7:1\d PM<\/span>/);
   assert.match(strip, /title="Sunrise">🌅 7:2\d AM<\/span>/);
   // Row names stay on the left; air and pressure rows named only when there is data.
-  assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span class="fc-strip-unit">°F<\/span><span class="fc-strip-scale">(?:<i style="top:[\d.]+px">\d+°<\/i>)+<\/span><span><\/span><span>Rain<\/span><span>Wind mph<\/span><span>Air AQI<\/span><span>Pressure<\/span><\/div>/);
+  assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span class="fc-strip-unit">°F<\/span><span class="fc-strip-scale">(?:<i style="top:[\d.]+px">\d+°<\/i>)+<\/span><span><\/span><span>Rain<\/span><span>Wind mph<\/span><span>Humidity<\/span><span>Air AQI<\/span><span>Pressure<\/span><\/div>/);
+  // Each hour's humidity, in its own row.
+  assert.match(strip, /data-hour="12">(?:(?!data-hour=)[^])*?<span class="fc-strip-hum">90%<\/span>/);
   // The graph has a scale: gridlines on round steps, each named in the pinned column
   // at the same height; and each hour's temperature sits right above its dot.
   const ticks = [...strip.matchAll(/<i style="top:([\d.]+)px">(\d+)°<\/i>/g)].map(m => [+m[1], +m[2]]);
@@ -4331,7 +4375,8 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   const expected = lowTop + (+warm[3] - lowDeg) / (highDeg - lowDeg) * (highTop - lowTop);
   assert.ok(Math.abs(+warm[2] + 9 - expected) < 0.2);
   const bare = k.renderHourStrip(hours.slice(0, 5), now, null, null);
-  assert.match(bare, /<span>Wind mph<\/span><span><\/span><span><\/span><\/div>/);
+  // (Humidity comes with the NWS hours themselves: named even without the extras.)
+  assert.match(bare, /<span>Wind mph<\/span><span>Humidity<\/span><span><\/span><span><\/span><\/div>/);
   assert.doesNotMatch(strip, /fc-strip-temp/, 'the temperatures live on the graph, not in a row above it');
   // The warmest hour right on a gridline (72–80°F: 2° steps up to 80°) gets just
   // the room its label needs on top — not a whole extra step.

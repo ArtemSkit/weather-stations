@@ -934,6 +934,7 @@
   .fc-hour .fc-icon { font-size: 1.05rem; }
   .fc-hour-time { font-family: 'Space Mono', monospace; color: var(--text-muted); }
   .fc-hour .fc-temp { font-size: 0.8rem; }
+  .fc-hour-feels { display: block; font-size: 0.66rem; font-weight: 700; color: #ffb37a; }   /* feels 96° */
   .fc-hour-pop { color: var(--text-muted); }
   .fc-hour-short { color: var(--text-muted); }
   /* The narrowest phones (320 px): slimmer columns, so the last one still fits a
@@ -1638,7 +1639,8 @@
     min-height: 2.7em; font-size: 0.68rem; line-height: 1.35; color: var(--text-muted);
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
   }
-  .fc-wk-pop, .fc-wk-aqi, .fc-wk-hum { font-size: 0.66rem; color: var(--text-muted); }
+  .fc-wk-pop, .fc-wk-aqi, .fc-wk-hum, .fc-wk-feels { font-size: 0.66rem; color: var(--text-muted); }
+  .fc-wk-feels { font-weight: 700; color: #ffb37a; }   /* how hot it feels: the one to notice */
   .fc-wk-hum span { white-space: nowrap; }   /* "45–84%" stays whole; the word may sit above it */
   .fc-wk-sunset { font-size: 0.8rem; font-weight: 700; color: #ffb37a; }   /* sunset: the one to spot */
 
@@ -1668,6 +1670,8 @@
     font-size: 0.64rem; color: var(--text-muted); pointer-events: none;
   }
   .fc-wk-label .fc-aqi { color: var(--text-muted); }
+  .fc-wk-feels-line { fill: none; stroke: #ff8a5c; stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+  .fc-wk-key { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; }
   .fc-wk-line {
     fill: none; stroke: url(#fc-wk-heat); stroke-width: 2.5;
     stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
@@ -1725,15 +1729,16 @@
   /* ── Hourly: the next 48 hours at a glance (every screen) ── */
   .fc-strip-wrap { position: relative; border-bottom: 1px solid var(--border); }
   .fc-strip {
-    --strip-rows: 18px 32px 124px 18px 48px 38px 16px 18px 16px;   /* time, sky, temperature graph, sun, rain, wind, humidity, air, pressure */
+    /* (Its rows' heights, --strip-rows, come from renderHourStrip: rows with nothing to show fold away.) */
     display: flex; overflow-x: auto; overscroll-behavior-x: contain;
     scrollbar-width: thin; scrollbar-color: var(--border) transparent;
   }
   .fc-strip-labels {
     position: sticky; left: 0; z-index: 4; flex: 0 0 auto; width: 84px;
-    display: grid; grid-template-rows: var(--strip-rows); align-items: center;
+    /* (One column that never grows past the pinned width: a long name can't push the scale off.) */
+    display: grid; grid-template-rows: var(--strip-rows); grid-template-columns: minmax(0, 1fr); align-items: center;
     padding: 8px 8px 10px 14px; background: var(--surface); border-right: 1px solid var(--border);
-    font-size: 0.62rem; line-height: 1.2; color: var(--text-muted);
+    font-size: 0.7rem; line-height: 1.2; color: var(--text-muted);
   }
   .fc-strip-cols { position: relative; display: flex; flex: 0 0 auto; }
   .fc-strip-col {
@@ -1743,7 +1748,7 @@
   }
   .fc-strip-col:hover { background: rgba(255,255,255,0.05); }
   .fc-strip-day { box-shadow: inset 1px 0 var(--border); }
-  .fc-strip-time { font-size: 0.66rem; color: var(--text-muted); white-space: nowrap; }
+  .fc-strip-time { font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; }
   .fc-strip-day .fc-strip-time, .fc-strip-now .fc-strip-time { font-family: 'Syne', sans-serif; font-weight: 700; color: var(--text); }
   .fc-strip-now .fc-strip-time { color: var(--accent); }
   .fc-strip-icon { font-size: 1.35rem; line-height: 1; }
@@ -1763,11 +1768,24 @@
   }
   .fc-strip-rain { align-self: stretch; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 2px; }
   .fc-strip-rain i { width: 18px; border-radius: 3px 3px 0 0; background: #5aa9ff; }
-  .fc-strip-rain small, .fc-strip-wind small { font-size: 0.62rem; color: var(--text-muted); white-space: nowrap; }
-  .fc-strip-wind { display: flex; flex-direction: column; align-items: center; gap: 1px; }
-  .fc-strip-wind i { display: inline-block; font-style: normal; font-size: 0.9rem; line-height: 1; color: var(--text); }
-  .fc-strip-aqi { font-size: 0.66rem; }
-  .fc-strip-press, .fc-strip-hum { font-size: 0.6rem; color: var(--text-muted); }
+  /* The values under the graph: big enough to read at a glance, in full text; a
+     chance of rain under 10% (next to none) faint. */
+  .fc-strip-rain small, .fc-strip-wind small { font-size: 0.74rem; font-weight: 700; color: var(--text); white-space: nowrap; }
+  .fc-strip-rain small.fc-strip-faint { font-weight: 400; color: var(--text-muted); }
+  .fc-strip-wind { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .fc-strip-wind i { display: inline-block; font-style: normal; font-size: 1rem; line-height: 1; color: var(--text); }
+  .fc-strip-aqi { font-size: 0.74rem; font-weight: 700; }
+  /* Humidity and pressure: each a small line chart over its row (stripLineHtml). */
+  .fc-strip-val-sm { font-size: 12px; }
+  .fc-strip-hum-line path { fill: none; stroke: #4fd1c5; stroke-width: 2; stroke-linejoin: round; }
+  .fc-strip-press-line path { fill: none; stroke: #b9a7ff; stroke-width: 2; stroke-linejoin: round; }
+  /* The heat index: a dashed line in the warm end's colour, its peaks named. */
+  .fc-strip-feels { fill: none; stroke: #ff8a5c; stroke-width: 2; stroke-dasharray: 5 4; stroke-linecap: round; }
+  .fc-strip-feels-val { font-size: 12px; }
+  .fc-strip-key { display: flex; align-items: center; gap: 4px; font-size: 0.62rem; white-space: nowrap; }
+  .fc-strip-key i, .fc-wk-key i { width: 14px; border-top: 2px dashed #ff8a5c; }
+  /* A faint rule between the rows under the graph, so each reads as its own. */
+  .fc-strip-rule { position: absolute; left: 0; right: 0; z-index: 0; border-top: 1px solid rgba(113,147,181,0.16); pointer-events: none; }
   .fc-strip-band { position: absolute; top: 0; bottom: 0; z-index: 0; pointer-events: none; }
   .fc-strip-svg { position: absolute; left: 0; z-index: 2; overflow: visible; pointer-events: none; }
   .fc-strip-line { fill: none; stroke: url(#fc-strip-heat); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
@@ -1790,7 +1808,7 @@
   @media (pointer: coarse) { .fc-strip-nav { display: none; } }
   /* Phones: a slimmer column of row names, more room for the hours. */
   @media (max-width: 640px) {
-    .fc-strip-labels { width: 66px; padding-left: 10px; padding-right: 6px; font-size: 0.58rem; }
+    .fc-strip-labels { width: 66px; padding-left: 10px; padding-right: 6px; font-size: 0.62rem; }
     .fc-strip-prev { left: 74px; }
   }
   /* The hour picked in the strip, found in the list below. */
@@ -7108,6 +7126,44 @@ function forecastTemp(period) {
   return d ? `${d.f}°F<small>${d.c}°C</small>` : '—';
 }
 
+/**
+ * The heat index (°F) for a temperature (°F) and relative humidity (%): the NWS
+ * Weather Prediction Center's formula — a simple estimate first, and from 80°F the
+ * Rothfusz regression with its two corrections (very dry, or humid and mild). The
+ * NWS forecast grids' own heat index agrees with it to within a degree.
+ */
+function heatIndexF(f, rh) {
+  const simple = 0.5 * (f + 61 + (f - 68) * 1.2 + rh * 0.094);
+  if ((simple + f) / 2 < 80) return simple;
+  let hi = -42.379 + 2.04901523 * f + 10.14333127 * rh - 0.22475541 * f * rh - 0.00683783 * f * f -
+    0.05481717 * rh * rh + 0.00122874 * f * f * rh + 0.00085282 * f * rh * rh - 0.00000199 * f * f * rh * rh;
+  if (rh < 13 && f >= 80 && f <= 112) hi -= (13 - rh) / 4 * Math.sqrt((17 - Math.abs(f - 95)) / 17);
+  if (rh > 85 && f >= 80 && f <= 87) hi += (rh - 85) / 10 * ((87 - f) / 5);
+  return hi;
+}
+
+/**
+ * How hot an NWS hour feels (°F), where humidity makes it feel hotter: its heat
+ * index at 80°F and up when that is 2°F or more above the temperature — null
+ * otherwise (or when the hour has no humidity), so it shows only when it matters.
+ */
+function forecastHeatIndex(period) {
+  const d = forecastDegrees(period), rh = period?.relativeHumidity?.value;
+  // (Under 80°F the NWS gives none — its grids say the temperature — even where the
+  // simple estimate would round up past 80 on a humid night.)
+  if (!d || !Number.isFinite(rh) || d.f < 80) return null;
+  const hi = Math.round(heatIndexF(d.f, rh));
+  return hi >= 80 && hi >= d.f + 2 ? hi : null;
+}
+
+/** The NWS heat index level for a heat index (°F), and what it means for people. */
+function heatCategory(hi) {
+  if (hi >= 125) return { label: 'extreme danger', advice: 'heat stroke is highly likely' };
+  if (hi >= 103) return { label: 'danger', advice: 'heat cramps or heat exhaustion are likely, and heat stroke possible, with long exposure or activity' };
+  if (hi >= 90) return { label: 'extreme caution', advice: 'heat cramps or heat exhaustion are possible with long exposure or activity' };
+  return { label: 'caution', advice: 'fatigue is possible with long exposure or activity' };
+}
+
 /** A period's temperature in whole °F and °C, or null when it has none. */
 function forecastDegrees(period) {
   const t = period?.temperature;
@@ -7349,8 +7405,8 @@ function hpaToInHg(hpa) {
  */
 function forecastRowExtras(parts, extras, point) {
   const first = parts[0], last = parts[parts.length - 1];
-  // sunsetAt, aqi and humidity are plain values for the wide-screen week's day columns.
-  const out = { sun: '', air: '', facts: '', sunsetAt: '', aqi: null, humidity: null };
+  // sunsetAt, aqi, humidity and heat are plain values for the wide-screen week's day columns.
+  const out = { sun: '', air: '', facts: '', sunsetAt: '', aqi: null, humidity: null, heat: null };
   const facts = [];
 
   // Sun, on the place's own clock. A day row: that day's sunrise and sunset. A
@@ -7503,6 +7559,17 @@ function forecastRowExtras(parts, extras, point) {
     facts.push('<p><b>Humidity:</b> ' + (low === high ? 'about ' + high + '% throughout'
       : low + '% to ' + high + '% — most humid around ' + hourOf(wetKey) + ', driest around ' + hourOf(dryKey)) +
       runsOut(humid, 'hourly') + '.</p>');
+    // The heat index, from the same hours: how hot it feels at worst, where humidity
+    // makes it feel hotter (see forecastHeatIndex) — first at a glance, as it matters most.
+    const heat = [...(extras?.heat || new Map())].filter(([key]) => key >= from && key < to);
+    if (heat.length) {
+      const [hotKey, hot] = heat.reduce((a, b) => (b[1].feels > a[1].feels ? b : a));
+      const level = heatCategory(hot.feels);
+      out.heat = hot.feels;
+      out.air = 'Feels like up to ' + hot.feels + '°F' + (out.air ? ' · ' + out.air : '');
+      facts.push('<p><b>Heat index:</b> feels like up to ' + hot.feels + '°F around ' + hourOf(hotKey) +
+        ' (when it is ' + hot.f + '°F) — ' + level.label + ': ' + level.advice + '.</p>');
+    }
   }
 
   // A time never breaks across lines ("7:41 | PM"): a no-break space before AM/PM.
@@ -7558,7 +7625,7 @@ function renderForecastDays(periods, extras, point) {
 /**
  * The next 48 hours (hours already over are skipped): at a glance in the hour
  * strip (renderHourStrip), then in full, under a heading per day, each hour with
- * its humidity, air quality and pressure where known.
+ * its heat index (when it feels hotter), humidity, air quality and pressure where known.
  * @param {Object}  [extras] - fetchAirAndPressure's answer
  * @param {{lat:number, lon:number}} [point] - where the forecast is (for the nights)
  */
@@ -7581,6 +7648,7 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
     const air = extras?.aqi?.get(key);
     const hpa = extras?.pressure?.get(key);
     const rh = period.relativeHumidity?.value;
+    const feels = forecastHeatIndex(period);   // how hot it feels, when humidity adds to it
     // Every cell is always there (empty when unknown): on wide screens they line up
     // as table columns; on phones sky, wind and humidity share a line, air and
     // pressure the next. (The word "humidity" is for phones: the table's column says it.)
@@ -7592,7 +7660,7 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
     return `${heading}<li class="fc-hour">
       <span class="fc-hour-time">${when ? forecastHourLabel(when.hour) : ''}</span>
       <span class="fc-icon" aria-hidden="true">${forecastEmoji(period.shortForecast, period.isDaytime)}</span>
-      <span class="fc-temp">${forecastTemp(period)}</span>
+      <span class="fc-temp">${forecastTemp(period)}${feels != null ? '<span class="fc-hour-feels">feels ' + feels + '°</span>' : ''}</span>
       <span class="fc-hour-pop" style="--pop:${pop != null ? Math.round(pop) : 0}%">${popText}</span>
       <span class="fc-hour-short">` + cell('sky', escapeHtml(period.shortForecast || '')) +
         cell('wind', escapeHtml(wind)) + cell('hum', humidity) + extra + `</span>
@@ -7607,9 +7675,11 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
 
 /* ── The hours at a glance (every screen) ────────────────────────────────────
    The HOURLY tab opens with the next 48 hours side by side, one column per hour:
-   time, sky and temperature, a curve running through the temperatures, then each
-   hour's chance of rain (a bar), wind (an arrow pointing where it blows), humidity,
-   air quality and pressure — the nights shaded from sunset to sunrise, as in the week.
+   time, sky and temperature, a curve running through the temperatures (and a
+   dashed "feels like" line where humidity makes it feel hotter), then each hour's
+   chance of rain (a bar), wind (an arrow pointing where it blows), humidity and
+   pressure (each a small line chart of its own) and air quality — the nights
+   shaded from sunset to sunrise, as in the week.
    It scrolls sideways (swipe, or the ‹ › buttons with a mouse); the row names stay
    put on the left. Clicking an hour shows it in the full list below, which is also
    the accessible version of the same numbers. */
@@ -7624,38 +7694,120 @@ const STRIP_CURVE = { top: 58, height: 124, pad: 8, base: 12, label: 22 };
 /** The 16 compass points, for turning "NNE" into degrees. */
 const STRIP_COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 
+/** The strip's rows, top to bottom, with their heights in px (the CSS grid of the
+    pinned names and of every hour takes them from the strip: see renderHourStrip).
+    A row with nothing to show (no air quality, say) folds away. */
+const STRIP_ROWS = { time: 18, sky: 32, temp: 124, sun: 18, rain: 54, wind: 44, humidity: 50, air: 28, pressure: 50 };
+/** The space above the first row (px; the CSS pads the same). */
+const STRIP_PAD_TOP = 8;
+
+/**
+ * One row of the strip drawn as a small line chart (humidity, pressure): a smooth
+ * line through the hours on the row's own scale, with a dot and its value every
+ * few hours and at the highest and lowest — the trend at a glance and numbers big
+ * enough to read, without a number crowding every hour (each hour is in full in
+ * the list below).
+ * @param {(number|null)[]} values - one per hour (null: unknown)
+ * @param {number} top - the row's top in the strip (px)
+ * @param {number} height - the row's height (px)
+ * @param {number} span - the least range its scale shows (a flat line stays flat)
+ * @param {function(number): string} label - a value as text ("84%", "30.04")
+ * @param {number} every - a value every this many hours
+ * @param {string} kind - its class: fc-strip-{kind}-line
+ * @returns {string} '' with fewer than two known hours
+ */
+function stripLineHtml(values, top, height, span, label, every, kind) {
+  const known = values.map((v, i) => [i, v]).filter(([, v]) => v != null);
+  if (known.length < 2) return '';
+  const min = Math.min(...known.map(([, v]) => v)), max = Math.max(...known.map(([, v]) => v));
+  const mid = (min + max) / 2, half = Math.max(max - min, span) / 2;
+  // Room above for a value over its dot, a little below the lowest dot.
+  const y = v => 20 + (1 - (v - (mid - half)) / (2 * half)) * (height - 26);
+  const pts = known.map(([i, v]) => [i * STRIP_COL + STRIP_COL / 2, y(v), v, i]);
+  const highest = known.reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+  const lowest = known.reduce((a, b) => (b[1] < a[1] ? b : a))[0];
+  const marked = pts.filter(([, , , i]) => i % every === 0 || i === highest || i === lowest);
+  const width = values.length * STRIP_COL;
+  return '<svg class="fc-strip-svg fc-strip-' + kind + '-line" width="' + width + '" height="' + height +
+      '" viewBox="0 0 ' + width + ' ' + height + '" style="top:' + top + 'px" aria-hidden="true" focusable="false">' +
+    '<path d="' + smoothPath(pts) + '"/>' +
+    marked.map(([cx, cy]) => '<circle cx="' + weekNum(cx) + '" cy="' + weekNum(cy) + '" r="3"/>').join('') +
+    marked.map(([cx, cy, v]) => '<text class="fc-strip-val fc-strip-val-sm" x="' + weekNum(cx) + '" y="' +
+      weekNum(cy - 8) + '">' + label(v) + '</text>').join('') +
+  '</svg>';
+}
+
+/**
+ * The heat index's dashed line through the hours that feel hotter, joined to the
+ * temperature line at the hour before and after each stretch of them, so it peels
+ * off the curve and comes back to it.
+ * @param {{temp: ?number[], feels: ?number[]}[]} hours - each hour's [x, y] on both
+ *        lines, in order (feels null where it doesn't feel hotter)
+ * @returns {string} an SVG path's d ('' with none)
+ */
+function feelsPath(hours) {
+  let d = '';
+  hours.forEach((h, i) => {
+    if (!h.feels || hours[i - 1]?.feels) return;   // not the start of a stretch
+    let end = i;
+    while (hours[end + 1]?.feels) end++;
+    const run = hours.slice(i, end + 1).map(x => x.feels);
+    if (hours[i - 1]?.temp) run.unshift(hours[i - 1].temp);
+    if (hours[end + 1]?.temp) run.push(hours[end + 1].temp);
+    if (run.length > 1) d += smoothPath(run);
+  });
+  return d;
+}
+
 /** The hour strip as HTML ('' with fewer than two hours). */
 function renderHourStrip(hours, now, extras, point) {
   const t0 = Date.parse(hours[0]?.startTime), t1 = Date.parse(hours[hours.length - 1]?.endTime);
   if (hours.length < 2 || !(t1 > t0)) return '';
   const x = t => (t - t0) / 3_600_000 * STRIP_COL;
   const temps = hours.map(p => forecastDegrees(p)?.f);
+  const feels = hours.map(forecastHeatIndex);   // the heat index, where it feels hotter
   const known = temps.filter(Number.isFinite);
+  // Each stretch of hours that feel hotter gets its peak named (see feelsLabels).
+  const peaks = [];   // one per stretch: its hottest-feeling hour
+  feels.forEach((f, i) => {
+    if (f == null || feels[i - 1] != null) return;
+    let top = i;
+    for (let j = i; feels[j] != null; j++) if (feels[j] > feels[top]) top = j;
+    peaks.push(top);
+  });
   // The graph's scale: round steps (2°, 5° or 10°, to give a few gridlines) from
-  // the coolest hour's step to the warmest's, the top gridline near the top of the
-  // row — no empty band under the sky icons.
-  const min = Math.min(...known), max = Math.max(...known);
+  // the coolest hour's step to the warmest's — the heat index's highest included —
+  // the top gridline near the top of the row: no empty band under the sky icons.
+  const min = Math.min(...known), max = Math.max(...known, ...feels.filter(Number.isFinite));
   const step = max - min <= 10 ? 2 : max - min <= 24 ? 5 : 10;
   const low = Math.floor(min / step) * step;
   const plot = STRIP_CURVE.height - STRIP_CURVE.pad - STRIP_CURVE.base;
   // The top: the warmest hour's step — or, when its label (above its dot) would
   // rise out of the graph, just the few degrees more it needs, not a whole step.
-  const room = (STRIP_CURVE.label - STRIP_CURVE.pad) / plot;
-  const high = Math.max(Math.ceil(max / step) * step, low + step, (max - room * low) / (1 - room));
+  // (Where a stretch's "feels" label stacks over its hour's own label, that hour
+  // needs two labels' room above it: 36 px.)
+  const room = (STRIP_CURVE.label - STRIP_CURVE.pad) / plot, stacked = (36 - STRIP_CURVE.pad) / plot;
+  const high = Math.max(Math.ceil(max / step) * step, low + step, (max - room * low) / (1 - room),
+    ...peaks.filter(i => Number.isFinite(temps[i])).map(i => (temps[i] - stacked * low) / (1 - stacked)));
   const ticks = known.length
     ? Array.from({ length: Math.floor((high - low) / step + 1e-9) + 1 }, (_, i) => low + i * step) : [];
   const y = f => STRIP_CURVE.pad + (1 - (f - low) / (high - low)) * plot;
-  let anyAir = false, anyPressure = false, anyHumidity = false;
+
+  // What each hour knows beyond the NWS hour itself (air quality and pressure, by UTC hour).
+  const air = hours.map(p => extras?.aqi?.get(utcHourKey(p.startTime)) || null);
+  const hpa = hours.map(p => extras?.pressure?.get(utcHourKey(p.startTime)) ?? null);
+  const humidity = hours.map(p => (Number.isFinite(p.relativeHumidity?.value) ? Math.round(p.relativeHumidity.value) : null));
+  // The rows' heights (a row with nothing to show folds away) and where each starts.
+  const rows = { ...STRIP_ROWS,
+    humidity: humidity.some(v => v != null) ? STRIP_ROWS.humidity : 0,
+    air: air.some(Boolean) ? STRIP_ROWS.air : 0,
+    pressure: hpa.some(v => v != null) ? STRIP_ROWS.pressure : 0 };
+  const tops = {};
+  Object.keys(rows).reduce((top, name) => { tops[name] = top; return top + rows[name]; }, STRIP_PAD_TOP);
 
   const cols = hours.map((p, i) => {
     const when = forecastLocalTime(p.startTime);
     const pop = p.probabilityOfPrecipitation?.value;
-    const key = utcHourKey(p.startTime);
-    const air = extras?.aqi?.get(key), hpa = extras?.pressure?.get(key);
-    const rh = p.relativeHumidity?.value;
-    anyAir ||= !!air;
-    anyPressure ||= hpa != null;
-    anyHumidity ||= Number.isFinite(rh);
     const isNow = i === 0 && now >= t0;
     const newDay = when && when.hour === 0;
     // At midnight the day's name takes the time's place ("Sun").
@@ -7663,25 +7815,30 @@ function renderHourStrip(hours, now, extras, point) {
     // Wind: the arrow points where the wind blows (from NNE → toward SSW).
     const from = STRIP_COMPASS.indexOf(String(p.windDirection || '').toUpperCase());
     const speed = (String(p.windSpeed || '').match(/\d+/g) || []).join('–');
+    // Rain: a bar as tall as its chance (30 px for 100%) and the chance itself — in
+    // full text from 10%, faint below (a 2% chance is next to none).
+    const rain = pop != null ? Math.round(pop) : null;
     return '<div class="fc-strip-col' + (newDay ? ' fc-strip-day' : '') + (isNow ? ' fc-strip-now' : '') +
         '" data-hour="' + i + '">' +
       '<span class="fc-strip-time">' + escapeHtml(time) + '</span>' +
       '<span class="fc-strip-icon">' + forecastEmoji(p.shortForecast, p.isDaytime) + '</span>' +
       '<span class="fc-strip-curve"></span><span class="fc-strip-sunrow"></span>' +
-      '<span class="fc-strip-rain">' + (pop > 0 ? '<i style="height:' + Math.max(2, Math.round(pop / 100 * 30)) + 'px"></i>' : '') +
-        '<small>' + (pop != null ? Math.round(pop) + '%' : '') + '</small></span>' +
+      '<span class="fc-strip-rain">' + (rain > 0 ? '<i style="height:' + Math.max(2, Math.round(rain / 100 * 30)) + 'px"></i>' : '') +
+        '<small' + (rain != null && rain < 10 ? ' class="fc-strip-faint"' : '') + '>' + (rain != null ? rain + '%' : '') + '</small></span>' +
       // ("Variable" or another word: a ~ in place of the arrow.)
       '<span class="fc-strip-wind">' + (from >= 0 ? '<i style="transform:rotate(' + (from * 22.5 + 180) + 'deg)">↑</i>'
         : p.windDirection ? '<i>~</i>' : '') + '<small>' + escapeHtml(speed) + '</small></span>' +
-      '<span class="fc-strip-hum">' + (Number.isFinite(rh) ? Math.round(rh) + '%' : '') + '</span>' +
-      '<span class="fc-strip-aqi">' + (air ? '<span class="fc-aqi fc-aqi-' + aqiCategory(air.value).level + '">' + air.value + '</span>' : '') + '</span>' +
-      '<span class="fc-strip-press">' + (hpa != null ? hpaToInHg(hpa) : '') + '</span>' +
+      // (Humidity and pressure are drawn as lines over their rows: see stripLineHtml.)
+      '<span class="fc-strip-hum"></span>' +
+      '<span class="fc-strip-aqi">' + (air[i] ? '<span class="fc-aqi fc-aqi-' + aqiCategory(air[i].value).level + '">' + air[i].value + '</span>' : '') + '</span>' +
+      '<span class="fc-strip-press"></span>' +
     '</div>';
   }).join('');
 
   // The temperature graph: gridlines on the scale's round steps, the curve through
   // the middle of each column, and each hour's temperature right above its dot.
-  const pts = hours.map((p, i) => Number.isFinite(temps[i]) ? [i * STRIP_COL + STRIP_COL / 2, y(temps[i]), temps[i]] : null)
+  const mids = hours.map((_, i) => i * STRIP_COL + STRIP_COL / 2);
+  const pts = hours.map((p, i) => Number.isFinite(temps[i]) ? [mids[i], y(temps[i]), temps[i]] : null)
     .filter(Boolean);
   const width = hours.length * STRIP_COL;
   const line = smoothPath(pts);
@@ -7689,14 +7846,35 @@ function renderHourStrip(hours, now, extras, point) {
     'L' + weekNum(pts[0][0]) + ',' + STRIP_CURVE.height + 'Z' : '';
   const grid = ticks.map(t => '<line class="fc-strip-grid" x1="0" x2="' + width + '" y1="' + weekNum(y(t)) +
     '" y2="' + weekNum(y(t)) + '"/>').join('');
+  // The heat index: a dashed line where it feels hotter, and how hot at each
+  // stretch's peak — above that hour's temperature, never on top of it.
+  const feelsLine = feelsPath(hours.map((_, i) => ({
+    temp: Number.isFinite(temps[i]) ? [mids[i], y(temps[i])] : null,
+    feels: feels[i] != null ? [mids[i], y(feels[i])] : null })));
+  // (Kept inside the hours: a peak at the first or last hour would spill under the
+  // pinned row names or off the end — about 7.2 px a character at 12 px.)
+  const feelsLabels = peaks.map(i => {
+    const text = 'feels ' + feels[i] + '°', half = text.length * 3.6 + 2;
+    return '<text class="fc-strip-val fc-strip-feels-val" x="' + weekNum(Math.min(Math.max(mids[i], half), width - half)) + '" y="' +
+      weekNum(Math.max(12, Math.min(y(feels[i]) - 9, Number.isFinite(temps[i]) ? y(temps[i]) - 24 : Infinity))) +
+      '">' + text + '</text>';
+  }).join('');
   const curve = '<svg class="fc-strip-svg" width="' + width + '" height="' + STRIP_CURVE.height + '" viewBox="0 0 ' + width + ' ' +
       STRIP_CURVE.height + '" style="top:' + STRIP_CURVE.top + 'px" aria-hidden="true" focusable="false">' +
     '<defs><linearGradient id="fc-strip-heat" gradientUnits="userSpaceOnUse" x1="0" y1="' + STRIP_CURVE.pad + '" x2="0" y2="' +
       (STRIP_CURVE.height - STRIP_CURVE.base) + '"><stop offset="0" stop-color="#ffb37a"/><stop offset="1" stop-color="#8fd3ff"/></linearGradient></defs>' +
-    grid + (area ? '<path class="fc-strip-area" d="' + area + '"/>' : '') + '<path class="fc-strip-line" d="' + line + '"/>' +
+    grid + (area ? '<path class="fc-strip-area" d="' + area + '"/>' : '') +
+    (feelsLine ? '<path class="fc-strip-feels" d="' + feelsLine + '"/>' : '') + '<path class="fc-strip-line" d="' + line + '"/>' +
     pts.map(([cx, cy]) => '<circle cx="' + weekNum(cx) + '" cy="' + weekNum(cy) + '" r="3.5"/>').join('') +
     pts.map(([cx, cy, f]) => '<text class="fc-strip-val" x="' + weekNum(cx) + '" y="' + weekNum(cy - 9) + '">' + f + '°</text>').join('') +
+    feelsLabels +
     '</svg>';
+  // Humidity and pressure: each a line of its own, on its own scale.
+  const lines = stripLineHtml(humidity, tops.humidity, rows.humidity, 20, v => v + '%', 3, 'hum') +
+    stripLineHtml(hpa, tops.pressure, rows.pressure, 3.4, hpaToInHg, 6, 'press');
+  // Faint lines between the rows under the graph, so each reads as its own.
+  const rules = ['rain', 'wind', 'humidity', 'air', 'pressure'].filter(name => rows[name])
+    .map(name => '<span class="fc-strip-rule" style="top:' + tops[name] + 'px"></span>').join('');
 
   // The nights, and when the sun sets and rises (on the clock of the hour it falls
   // in: the 48 hours can span a daylight-saving change).
@@ -7719,20 +7897,24 @@ function renderHourStrip(hours, now, extras, point) {
     }
   }
 
-  // Row names, pinned on the left while the hours scroll (each row says what it is);
-  // the graph's row carries its scale, each step level with its gridline, with the
-  // unit right above the top number (at the foot of the sky row's empty cell).
+  // Row names, pinned on the left while the hours scroll (each row says what it is,
+  // with its unit); the graph's row carries its scale, each step level with its
+  // gridline, with the unit right above the top number (at the foot of the sky
+  // row's empty cell), and the dashed "feels like" line's key under it.
   const unit = ticks.length ? '<span class="fc-strip-unit">°F</span>' : '';
   const scale = '<span class="fc-strip-scale">' + ticks.map(t =>
     '<i style="top:' + weekNum(y(t)) + 'px">' + t + '°</i>').join('') + '</span>';
-  const labels = ['', unit, scale, '', 'Rain', 'Wind mph', anyHumidity ? 'Humidity' : '', anyAir ? 'Air AQI' : '', anyPressure ? 'Pressure' : '']
+  const key = feelsLine ? '<span class="fc-strip-key"><i></i>feels</span>' : '';   // (short: the column is narrow)
+  const labels = ['', unit, scale, key, 'Rain', 'Wind mph', rows.humidity ? 'Humidity' : '',
+    rows.air ? 'Air AQI' : '', rows.pressure ? 'Pressure inHg' : '']
     .map(text => (text.startsWith('<') ? text : '<span>' + text + '</span>')).join('');
   return '<div class="fc-strip-wrap">' +
     // Drawn for the eye: the list under it reads the same hours out in full.
     // (tabindex -1: browsers make a scroll box focusable by itself — not this one.)
-    '<div class="fc-strip" aria-hidden="true" tabindex="-1">' +
+    '<div class="fc-strip" aria-hidden="true" tabindex="-1" style="--strip-rows:' +
+        Object.values(rows).map(h => h + 'px').join(' ') + '">' +
       '<div class="fc-strip-labels">' + labels + '</div>' +
-      '<div class="fc-strip-cols" style="width:' + width + 'px">' + nights.join('') + cols + curve + marks.join('') + '</div>' +
+      '<div class="fc-strip-cols" style="width:' + width + 'px">' + nights.join('') + rules + cols + curve + lines + marks.join('') + '</div>' +
     '</div>' +
     // Mouse-only, like the strip they scroll: screen readers have the list.
     '<button type="button" class="fc-strip-nav fc-strip-prev" aria-hidden="true" tabindex="-1" title="Earlier hours">‹</button>' +
@@ -7838,12 +8020,14 @@ function forecastWeekModel(periods, hours, extras, point) {
   const points = (hours || []).map(period => {
     const key = utcHourKey(period.startTime), rh = period.relativeHumidity?.value;
     return { period, t: Date.parse(period.startTime) + 1_800_000, deg: forecastDegrees(period),
-             air: extras?.aqi?.get(key), hpa: extras?.pressure?.get(key), rh: Number.isFinite(rh) ? Math.round(rh) : null };
+             air: extras?.aqi?.get(key), hpa: extras?.pressure?.get(key), rh: Number.isFinite(rh) ? Math.round(rh) : null,
+             feels: forecastHeatIndex(period) };
   }).filter(h => h.deg && h.t >= t0 && h.t < t1);
   points.forEach(h => { h.x = xAt(h.t); });
   // Each strip its own scale (never two on one plot); a flat week still gets 4 units.
+  // (The heat index shares the temperature's °F scale: its highest is in it too.)
   const temps = points.map(h => h.deg.f), hpas = points.map(h => h.hpa).filter(v => v != null);
-  const lowT = Math.min(...temps), spanT = Math.max(Math.max(...temps) - lowT, 4);
+  const lowT = Math.min(...temps), spanT = Math.max(Math.max(...temps, ...points.map(h => h.feels ?? -Infinity)) - lowT, 4);
   const lowP = Math.min(...hpas), spanP = Math.max(Math.max(...hpas) - lowP, 4);
   return {
     rows, points, t0, t1, xAt, selected: 0,
@@ -7976,7 +8160,8 @@ function forecastWeekDayHtml(row, index, selected) {
       (pop != null ? '<span class="fc-wk-pop"><span aria-hidden="true">💧 </span>' + pop +
         '%<span class="sr-only"> chance of rain</span></span>' : '') +
     '</span>' +
-    // The day's humidity range (from its hours: see forecastRowExtras).
+    // How hot the day feels at worst, and its humidity range (from its hours: see forecastRowExtras).
+    (row.more.heat != null ? '<span class="fc-wk-feels">Feels up to ' + row.more.heat + '°</span>' : '') +
     (row.more.humidity ? '<span class="fc-wk-hum">Humidity <span>' + (row.more.humidity.low === row.more.humidity.high
       ? row.more.humidity.high : row.more.humidity.low + '–' + row.more.humidity.high) + '%</span></span>' : '') +
     (row.more.aqi != null ? '<span class="fc-wk-aqi">' + aqiHtml(row.more.aqi) + '</span>' : '') +
@@ -7988,6 +8173,8 @@ function weekTempStrip(model) {
   const { points, rows } = model;
   const xy = points.map(h => [h.x * WEEK_W, model.tempY(h.deg.f)]);
   const line = smoothPath(xy);
+  // The heat index, dashed, where it feels hotter (see feelsPath); named in the strip's label.
+  const feels = feelsPath(points.map((h, i) => ({ temp: xy[i], feels: h.feels != null ? [xy[i][0], model.tempY(h.feels)] : null })));
   const area = line + 'L' + weekNum(xy[xy.length - 1][0]) + ',' + WEEK_TEMP.height +
                'L' + weekNum(xy[0][0]) + ',' + WEEK_TEMP.height + 'Z';
   // The high in each day's daytime and the low in each night, where the curve covers
@@ -8010,11 +8197,12 @@ function weekTempStrip(model) {
   const gap = end < 0.88 ? '<span class="fc-wk-gap" style="left:' + weekPct((end + 1) / 2) +
     '">The hourly forecast doesn\'t reach this far yet</span>' : '';
   return '<div class="fc-wk-strip fc-wk-temp" style="height:' + WEEK_TEMP.height + 'px">' +
-    '<span class="fc-wk-label">Temperature (°F)</span>' +
+    '<span class="fc-wk-label">Temperature (°F)' + (feels ? '<span class="fc-wk-key"><i></i>feels like</span>' : '') + '</span>' +
     '<svg viewBox="0 0 ' + WEEK_W + ' ' + WEEK_TEMP.height + '" preserveAspectRatio="none" height="' + WEEK_TEMP.height + '" focusable="false">' +
       '<defs><linearGradient id="fc-wk-heat" gradientUnits="userSpaceOnUse" x1="0" y1="' + WEEK_TEMP.top +
         '" x2="0" y2="' + WEEK_TEMP.bottom + '"><stop offset="0" stop-color="#ffb37a"/><stop offset="1" stop-color="#8fd3ff"/></linearGradient></defs>' +
-      '<path class="fc-wk-area" d="' + area + '"/><path class="fc-wk-line" d="' + line + '"/>' +
+      '<path class="fc-wk-area" d="' + area + '"/>' + (feels ? '<path class="fc-wk-feels-line" d="' + feels + '"/>' : '') +
+      '<path class="fc-wk-line" d="' + line + '"/>' +
     '</svg>' + marks + gap + '</div>';
 }
 
@@ -8122,7 +8310,7 @@ function renderForecastWeek(model, now = Date.now()) {
   '</div>';
 }
 
-/** One hour in the chart's tooltip: when, temperature, sky, rain, wind, humidity, air, pressure. */
+/** One hour in the chart's tooltip: when, temperature (and how hot it feels), sky, rain, wind, humidity, air, pressure. */
 function weekHourHtml(h) {
   const p = h.period;
   const when = forecastLocalTime(p.startTime);
@@ -8131,6 +8319,7 @@ function weekHourHtml(h) {
   return [
     '<b>' + (when ? escapeHtml(when.day.split(',')[0]) + ', ' + forecastHourLabel(when.hour) : '') + '</b>',
     '<span class="fc-wk-tip-temp">' + forecastTemp(p) + '</span>',
+    h.feels != null ? '<span>Feels like ' + h.feels + '°F</span>' : '',
     p.shortForecast ? '<span>' + escapeHtml(p.shortForecast) + '</span>' : '',
     pop != null ? '<span>' + Math.round(pop) + '% chance of rain</span>' : '',
     wind ? '<span>Wind ' + escapeHtml(wind) + '</span>' : '',
@@ -8348,6 +8537,19 @@ function hourlyHumidity(hours) {
   return byHour;
 }
 
+/**
+ * The NWS hourly forecast's heat index by UTC hour, where it feels hotter (see
+ * forecastHeatIndex): "2026-10-03T20" → { feels: 98, f: 91 } — for the days.
+ */
+function hourlyHeat(hours) {
+  const byHour = new Map();
+  for (const period of hours || []) {
+    const feels = forecastHeatIndex(period), key = utcHourKey(period?.startTime);
+    if (feels != null && key) byHour.set(key, { feels, f: forecastDegrees(period).f });
+  }
+  return byHour;
+}
+
 /** Open the forecast for the area on the map (or load it again: the Retry button). */
 async function openForecast() {
   if (!forecastPoint) {
@@ -8376,8 +8578,8 @@ async function openForecast() {
     const forecast = await fetchAreaForecast(lat, lon);
     if (seq !== forecastSeq || !forecastDialog.open) return;   // closed, or opened again
     if (forecast.place) forecastPlace.textContent = forecast.place;
-    // (Open-Meteo's air quality and pressure, and the hours' humidity for the days.)
-    const extras = { ...forecast.extras, humidity: hourlyHumidity(forecast.hours) };
+    // (Open-Meteo's air quality and pressure, and the hours' humidity and heat index for the days.)
+    const extras = { ...forecast.extras, humidity: hourlyHumidity(forecast.hours), heat: hourlyHeat(forecast.hours) };
     weekModel = forecastWeekModel(forecast.days, forecast.hours, extras, point);
     weekHour = -1;
     // Both the phone list and the wide-screen week: CSS shows the one that fits.

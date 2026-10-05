@@ -914,7 +914,7 @@
      "Unhealthy for sensitive groups" is wider than the column. */
   .fc-hour-short, .fc-hour-air { display: flex; flex-wrap: wrap; column-gap: 12px; }
   .fc-hour-air { flex-basis: 100%; font-size: 0.66rem; }
-  .fc-hour-wind, .fc-hour-press { white-space: nowrap; }
+  .fc-hour-wind, .fc-hour-press, .fc-hour-hum { white-space: nowrap; }
   /* An unknown reading (no AQI for that hour, say) takes no gap before the next. */
   .fc-hour-short > :empty, .fc-hour-air > :empty { display: none; }
   .fc-hour.fc-hour-head { display: none; }   /* (outranks .fc-hour's grid) */
@@ -1570,9 +1570,12 @@
     /* Hourly: a table — one row per hour, its readings in aligned columns. */
     .fc-hour {
       /* (Its minimums fit the 896 px dialog of a 960 px window.) */
-      grid-template-columns: 56px 26px 112px 92px minmax(110px, 1.1fr) minmax(90px, 0.7fr) minmax(140px, 0.8fr) minmax(96px, 0.7fr);
-      gap: 12px; padding: 8px 20px;
+      grid-template-columns: 56px 26px 112px 92px minmax(110px, 1.1fr) minmax(90px, 0.7fr) minmax(64px, 0.5fr) minmax(130px, 0.8fr) minmax(96px, 0.7fr);
+      gap: 10px; padding: 8px 20px;
     }
+    /* The Humidity column says it for the eye; screen readers (which skip the column
+       names) still hear "84% humidity". */
+    .fc-hour-hum-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .fc-hour-short, .fc-hour-air { display: contents; }
     /* Empty cells stay here: they hold their column's place in the table. */
     .fc-hour-short > :empty, .fc-hour-air > :empty { display: block; }
@@ -1635,7 +1638,8 @@
     min-height: 2.7em; font-size: 0.68rem; line-height: 1.35; color: var(--text-muted);
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
   }
-  .fc-wk-pop, .fc-wk-aqi { font-size: 0.66rem; color: var(--text-muted); }
+  .fc-wk-pop, .fc-wk-aqi, .fc-wk-hum { font-size: 0.66rem; color: var(--text-muted); }
+  .fc-wk-hum span { white-space: nowrap; }   /* "45–84%" stays whole; the word may sit above it */
   .fc-wk-sunset { font-size: 0.8rem; font-weight: 700; color: #ffb37a; }   /* sunset: the one to spot */
 
   /* The chart: strips stacked on one time line, nights shaded behind all of them. */
@@ -1721,7 +1725,7 @@
   /* ── Hourly: the next 48 hours at a glance (every screen) ── */
   .fc-strip-wrap { position: relative; border-bottom: 1px solid var(--border); }
   .fc-strip {
-    --strip-rows: 18px 32px 124px 18px 48px 38px 18px 16px;   /* time, sky, temperature graph, sun, rain, wind, air, pressure */
+    --strip-rows: 18px 32px 124px 18px 48px 38px 16px 18px 16px;   /* time, sky, temperature graph, sun, rain, wind, humidity, air, pressure */
     display: flex; overflow-x: auto; overscroll-behavior-x: contain;
     scrollbar-width: thin; scrollbar-color: var(--border) transparent;
   }
@@ -1763,7 +1767,7 @@
   .fc-strip-wind { display: flex; flex-direction: column; align-items: center; gap: 1px; }
   .fc-strip-wind i { display: inline-block; font-style: normal; font-size: 0.9rem; line-height: 1; color: var(--text); }
   .fc-strip-aqi { font-size: 0.66rem; }
-  .fc-strip-press { font-size: 0.6rem; color: var(--text-muted); }
+  .fc-strip-press, .fc-strip-hum { font-size: 0.6rem; color: var(--text-muted); }
   .fc-strip-band { position: absolute; top: 0; bottom: 0; z-index: 0; pointer-events: none; }
   .fc-strip-svg { position: absolute; left: 0; z-index: 2; overflow: visible; pointer-events: none; }
   .fc-strip-line { fill: none; stroke: url(#fc-strip-heat); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
@@ -7345,8 +7349,8 @@ function hpaToInHg(hpa) {
  */
 function forecastRowExtras(parts, extras, point) {
   const first = parts[0], last = parts[parts.length - 1];
-  // sunsetAt and aqi are plain values for the wide-screen week's day columns.
-  const out = { sun: '', air: '', facts: '', sunsetAt: '', aqi: null };
+  // sunsetAt, aqi and humidity are plain values for the wide-screen week's day columns.
+  const out = { sun: '', air: '', facts: '', sunsetAt: '', aqi: null, humidity: null };
   const facts = [];
 
   // Sun, on the place's own clock. A day row: that day's sunrise and sunset. A
@@ -7488,6 +7492,19 @@ function forecastRowExtras(parts, extras, point) {
       '; lowest ' + hpaToInHg(low) + ' inHg around ' + hourOf(lowKey) + runsOut(pressure, 'pressure') + '.</p>');
   }
 
+  // Humidity, from the hours of the NWS hourly forecast (the 7-day one has none):
+  // the day's range, and when it's most and least humid.
+  const humid = within(extras?.humidity);
+  if (humid.length) {
+    const [dryKey, low] = humid.reduce((a, b) => (b[1] < a[1] ? b : a));
+    const [wetKey, high] = humid.reduce((a, b) => (b[1] > a[1] ? b : a));
+    out.humidity = { low, high };
+    out.air += (out.air ? ' · ' : '') + 'Humidity ' + (low === high ? high : low + '–' + high) + '%';
+    facts.push('<p><b>Humidity:</b> ' + (low === high ? 'about ' + high + '% throughout'
+      : low + '% to ' + high + '% — most humid around ' + hourOf(wetKey) + ', driest around ' + hourOf(dryKey)) +
+      runsOut(humid, 'hourly') + '.</p>');
+  }
+
   // A time never breaks across lines ("7:41 | PM"): a no-break space before AM/PM.
   const keepTimes = html => html.replace(/(\d) (AM|PM)\b/g, '$1\u00A0$2');
   out.sun = keepTimes(out.sun);
@@ -7541,7 +7558,7 @@ function renderForecastDays(periods, extras, point) {
 /**
  * The next 48 hours (hours already over are skipped): at a glance in the hour
  * strip (renderHourStrip), then in full, under a heading per day, each hour with
- * its air quality and pressure where known.
+ * its humidity, air quality and pressure where known.
  * @param {Object}  [extras] - fetchAirAndPressure's answer
  * @param {{lat:number, lon:number}} [point] - where the forecast is (for the nights)
  */
@@ -7563,9 +7580,12 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
     const key = utcHourKey(period.startTime);
     const air = extras?.aqi?.get(key);
     const hpa = extras?.pressure?.get(key);
+    const rh = period.relativeHumidity?.value;
     // Every cell is always there (empty when unknown): on wide screens they line up
-    // as table columns; on phones sky and wind share a line, air and pressure the next.
+    // as table columns; on phones sky, wind and humidity share a line, air and
+    // pressure the next. (The word "humidity" is for phones: the table's column says it.)
     const cell = (name, html) => '<span class="fc-hour-' + name + '">' + html + '</span>';
+    const humidity = Number.isFinite(rh) ? Math.round(rh) + '%<span class="fc-hour-hum-word"> humidity</span>' : '';
     const extra = air || hpa != null
       ? '<span class="fc-hour-air">' + cell('aqi', air ? aqiHtml(air.value) : '') +
         cell('press', hpa != null ? hpaToInHg(hpa) + ' inHg' : '') + '</span>' : '';
@@ -7575,12 +7595,12 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
       <span class="fc-temp">${forecastTemp(period)}</span>
       <span class="fc-hour-pop" style="--pop:${pop != null ? Math.round(pop) : 0}%">${popText}</span>
       <span class="fc-hour-short">` + cell('sky', escapeHtml(period.shortForecast || '')) +
-        cell('wind', escapeHtml(wind)) + extra + `</span>
+        cell('wind', escapeHtml(wind)) + cell('hum', humidity) + extra + `</span>
     </li>`;
   });
   // Column names for the wide-screen table (hidden on phones, where rows wrap).
   const head = '<li class="fc-hour fc-hour-head" aria-hidden="true"><span>Time</span><span></span>' +
-    '<span>Temperature</span><span>Rain</span><span>Sky</span><span>Wind</span>' +
+    '<span>Temperature</span><span>Rain</span><span>Sky</span><span>Wind</span><span>Humidity</span>' +
     (extras && (extras.aqi.size || extras.pressure.size) ? '<span>Air quality</span><span>Pressure</span>' : '') + '</li>';
   return renderHourStrip(upcoming, now, extras, point) + `<ul class="fc-hours">${head}${rows.join('')}</ul>`;
 }
@@ -7588,8 +7608,8 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
 /* ── The hours at a glance (every screen) ────────────────────────────────────
    The HOURLY tab opens with the next 48 hours side by side, one column per hour:
    time, sky and temperature, a curve running through the temperatures, then each
-   hour's chance of rain (a bar), wind (an arrow pointing where it blows), air
-   quality and pressure — the nights shaded from sunset to sunrise, as in the week.
+   hour's chance of rain (a bar), wind (an arrow pointing where it blows), humidity,
+   air quality and pressure — the nights shaded from sunset to sunrise, as in the week.
    It scrolls sideways (swipe, or the ‹ › buttons with a mouse); the row names stay
    put on the left. Clicking an hour shows it in the full list below, which is also
    the accessible version of the same numbers. */
@@ -7625,15 +7645,17 @@ function renderHourStrip(hours, now, extras, point) {
   const ticks = known.length
     ? Array.from({ length: Math.floor((high - low) / step + 1e-9) + 1 }, (_, i) => low + i * step) : [];
   const y = f => STRIP_CURVE.pad + (1 - (f - low) / (high - low)) * plot;
-  let anyAir = false, anyPressure = false;
+  let anyAir = false, anyPressure = false, anyHumidity = false;
 
   const cols = hours.map((p, i) => {
     const when = forecastLocalTime(p.startTime);
     const pop = p.probabilityOfPrecipitation?.value;
     const key = utcHourKey(p.startTime);
     const air = extras?.aqi?.get(key), hpa = extras?.pressure?.get(key);
+    const rh = p.relativeHumidity?.value;
     anyAir ||= !!air;
     anyPressure ||= hpa != null;
+    anyHumidity ||= Number.isFinite(rh);
     const isNow = i === 0 && now >= t0;
     const newDay = when && when.hour === 0;
     // At midnight the day's name takes the time's place ("Sun").
@@ -7651,6 +7673,7 @@ function renderHourStrip(hours, now, extras, point) {
       // ("Variable" or another word: a ~ in place of the arrow.)
       '<span class="fc-strip-wind">' + (from >= 0 ? '<i style="transform:rotate(' + (from * 22.5 + 180) + 'deg)">↑</i>'
         : p.windDirection ? '<i>~</i>' : '') + '<small>' + escapeHtml(speed) + '</small></span>' +
+      '<span class="fc-strip-hum">' + (Number.isFinite(rh) ? Math.round(rh) + '%' : '') + '</span>' +
       '<span class="fc-strip-aqi">' + (air ? '<span class="fc-aqi fc-aqi-' + aqiCategory(air.value).level + '">' + air.value + '</span>' : '') + '</span>' +
       '<span class="fc-strip-press">' + (hpa != null ? hpaToInHg(hpa) : '') + '</span>' +
     '</div>';
@@ -7702,7 +7725,7 @@ function renderHourStrip(hours, now, extras, point) {
   const unit = ticks.length ? '<span class="fc-strip-unit">°F</span>' : '';
   const scale = '<span class="fc-strip-scale">' + ticks.map(t =>
     '<i style="top:' + weekNum(y(t)) + 'px">' + t + '°</i>').join('') + '</span>';
-  const labels = ['', unit, scale, '', 'Rain', 'Wind mph', anyAir ? 'Air AQI' : '', anyPressure ? 'Pressure' : '']
+  const labels = ['', unit, scale, '', 'Rain', 'Wind mph', anyHumidity ? 'Humidity' : '', anyAir ? 'Air AQI' : '', anyPressure ? 'Pressure' : '']
     .map(text => (text.startsWith('<') ? text : '<span>' + text + '</span>')).join('');
   return '<div class="fc-strip-wrap">' +
     // Drawn for the eye: the list under it reads the same hours out in full.
@@ -7810,11 +7833,12 @@ function forecastWeekModel(periods, hours, extras, point) {
     const row = rows.find(r => t < r.end);
     return row.from + (t - row.start) / (row.end - row.start) * row.width;
   };
-  // Each hour at its middle, with its air quality and pressure (matched by UTC hour).
+  // Each hour at its middle, with its air quality and pressure (matched by UTC hour)
+  // and its humidity.
   const points = (hours || []).map(period => {
-    const key = utcHourKey(period.startTime);
+    const key = utcHourKey(period.startTime), rh = period.relativeHumidity?.value;
     return { period, t: Date.parse(period.startTime) + 1_800_000, deg: forecastDegrees(period),
-             air: extras?.aqi?.get(key), hpa: extras?.pressure?.get(key) };
+             air: extras?.aqi?.get(key), hpa: extras?.pressure?.get(key), rh: Number.isFinite(rh) ? Math.round(rh) : null };
   }).filter(h => h.deg && h.t >= t0 && h.t < t1);
   points.forEach(h => { h.x = xAt(h.t); });
   // Each strip its own scale (never two on one plot); a flat week still gets 4 units.
@@ -7952,6 +7976,9 @@ function forecastWeekDayHtml(row, index, selected) {
       (pop != null ? '<span class="fc-wk-pop"><span aria-hidden="true">💧 </span>' + pop +
         '%<span class="sr-only"> chance of rain</span></span>' : '') +
     '</span>' +
+    // The day's humidity range (from its hours: see forecastRowExtras).
+    (row.more.humidity ? '<span class="fc-wk-hum">Humidity <span>' + (row.more.humidity.low === row.more.humidity.high
+      ? row.more.humidity.high : row.more.humidity.low + '–' + row.more.humidity.high) + '%</span></span>' : '') +
     (row.more.aqi != null ? '<span class="fc-wk-aqi">' + aqiHtml(row.more.aqi) + '</span>' : '') +
   '</button>';
 }
@@ -8095,7 +8122,7 @@ function renderForecastWeek(model, now = Date.now()) {
   '</div>';
 }
 
-/** One hour in the chart's tooltip: when, temperature, sky, rain, wind, air, pressure. */
+/** One hour in the chart's tooltip: when, temperature, sky, rain, wind, humidity, air, pressure. */
 function weekHourHtml(h) {
   const p = h.period;
   const when = forecastLocalTime(p.startTime);
@@ -8107,6 +8134,7 @@ function weekHourHtml(h) {
     p.shortForecast ? '<span>' + escapeHtml(p.shortForecast) + '</span>' : '',
     pop != null ? '<span>' + Math.round(pop) + '% chance of rain</span>' : '',
     wind ? '<span>Wind ' + escapeHtml(wind) + '</span>' : '',
+    h.rh != null ? '<span>Humidity ' + h.rh + '%</span>' : '',
     h.air ? '<span>' + aqiHtml(h.air.value) + '</span>' : '',
     h.hpa != null ? '<span>Pressure ' + hpaToInHg(h.hpa) + ' inHg</span>' : ''
   ].filter(Boolean).join('');
@@ -8306,6 +8334,20 @@ function airSourcesHtml(extras) {
     : '') + (missing ? ' · ' + missing + ' unavailable right now' : '');
 }
 
+/**
+ * The NWS hourly forecast's relative humidity by UTC hour ("2026-10-03T20" → 84).
+ * The 7-day forecast has none: a day's humidity comes from its hours (see
+ * forecastRowExtras), so the days and the hours always tell the same numbers.
+ */
+function hourlyHumidity(hours) {
+  const byHour = new Map();
+  for (const period of hours || []) {
+    const value = period?.relativeHumidity?.value, key = utcHourKey(period?.startTime);
+    if (Number.isFinite(value) && key) byHour.set(key, Math.round(value));
+  }
+  return byHour;
+}
+
 /** Open the forecast for the area on the map (or load it again: the Retry button). */
 async function openForecast() {
   if (!forecastPoint) {
@@ -8334,7 +8376,8 @@ async function openForecast() {
     const forecast = await fetchAreaForecast(lat, lon);
     if (seq !== forecastSeq || !forecastDialog.open) return;   // closed, or opened again
     if (forecast.place) forecastPlace.textContent = forecast.place;
-    const extras = forecast.extras;
+    // (Open-Meteo's air quality and pressure, and the hours' humidity for the days.)
+    const extras = { ...forecast.extras, humidity: hourlyHumidity(forecast.hours) };
     weekModel = forecastWeekModel(forecast.days, forecast.hours, extras, point);
     weekHour = -1;
     // Both the phone list and the wide-screen week: CSS shows the one that fits.

@@ -1037,11 +1037,12 @@ test('the sky row shows the main cloud deck, not just the lowest layer', () => {
 const escapeHtmlSource = html.match(/function escapeHtml\(s\) \{[\s\S]*?\r?\n\}/)[0];
 /** The forecast rows' sun, air and pressure helpers, to run in a vm alongside the renderers. */
 const forecastExtrasSource = ['sunTimes', 'isoOffsetMinutes', 'clockLabel', 'durationLabel', 'utcHourKey',
-  'hasAir', 'hasPressure', 'aqiCategory', 'aqiHtml', 'hpaToInHg', 'forecastRowExtras', 'sunBands'].map(extractFunction).join('\n');
+  'hasAir', 'hasPressure', 'aqiCategory', 'aqiHtml', 'hpaToInHg', 'forecastRowExtras', 'sunBands',
+  'heatIndexF', 'forecastHeatIndex', 'heatCategory', 'feelsPath'].map(extractFunction).join('\n');
 /** The hour strip's helpers (the HOURLY tab's glance), for the same vms. */
-const hourStripSource = ['STRIP_COL', 'STRIP_CURVE', 'STRIP_COMPASS', 'weekNum']
+const hourStripSource = ['STRIP_COL', 'STRIP_CURVE', 'STRIP_COMPASS', 'STRIP_ROWS', 'STRIP_PAD_TOP', 'weekNum']
   .map(name => html.match(new RegExp(`const ${name}\\s*=.*;`))[0]).join('\n') + '\n' +
-  ['smoothPath', 'renderHourStrip'].map(extractFunction).join('\n');
+  ['smoothPath', 'stripLineHtml', 'renderHourStrip'].map(extractFunction).join('\n');
 
 test('station panel shows what weather.gov would: rounding, calm, clear, feels-like, pressure', () => {
   // Run the real renderWeather (and its helpers) against a stub page.
@@ -3867,6 +3868,10 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   const humidList = r.renderForecastHours([humidHour], now);
   assert.match(humidList, /<span class="fc-hour-wind"><\/span><span class="fc-hour-hum">84%<span class="fc-hour-hum-word"> humidity<\/span><\/span>/);
   assert.match(humidList, /<span>Wind<\/span><span>Humidity<\/span>/);
+  // A hot, humid hour: how hot it feels, under its temperature.
+  const sticky = Object.assign(hour('2026-10-01T23:00:00-05:00', '2026-10-02T00:00:00-05:00'), { temperature: 86, relativeHumidity: { value: 77 } });
+  assert.match(r.renderForecastHours([sticky], now), /<span class="fc-temp">86°F<small>30°C<\/small><span class="fc-hour-feels">feels 98°<\/span><\/span>/);
+  assert.doesNotMatch(humidList, /fc-hour-feels/);
   assert.match(aired, /<span class="fc-hour-hum"><\/span>/);
   // (Hidden from the eye on wide screens, not from screen readers: the column names are aria-hidden.)
   assert.match(html, /\.fc-hour-hum-word \{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset\(50%\); white-space: nowrap; \}/);
@@ -3875,7 +3880,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   const byHour = vm.runInNewContext(`${extractFunction('utcHourKey')}\n${extractFunction('hourlyHumidity')}\nhourlyHumidity`, { Date, Number, Math, Map });
   const map = byHour([humidHour, { startTime: '2026-10-02T00:00:00-05:00', relativeHumidity: { value: null } }, { startTime: 'soon', relativeHumidity: { value: 50 } }]);
   assert.deepEqual([...map], [['2026-10-02T04', 84]]);
-  assert.match(extractFunction('openForecast'), /const extras = \{ \.\.\.forecast\.extras, humidity: hourlyHumidity\(forecast\.hours\) \};/);
+  assert.match(extractFunction('openForecast'), /const extras = \{ \.\.\.forecast\.extras, humidity: hourlyHumidity\(forecast\.hours\), heat: hourlyHeat\(forecast\.hours\) \};/);
   assert.equal(r.forecastEmoji('Mostly Sunny', true), '⛅');
   assert.equal(r.forecastEmoji('Clear', false), '🌙');
   assert.equal(r.forecastTemp({ temperature: null }), '—');
@@ -3954,6 +3959,40 @@ test('night bands across the start and end of polar night and the midnight sun',
   assert.match(k.clockLabel(last.from, -480), /^1:5\d AM$/);
 });
 
+test('heat index: the NWS formula, shown only where humidity makes it feel hotter', () => {
+  const k = vm.runInNewContext(`(() => {
+    ${['forecastDegrees', 'heatIndexF', 'forecastHeatIndex', 'heatCategory', 'stripLineHtml', 'smoothPath'].map(extractFunction).join('\n')}
+    const STRIP_COL = 56;
+    const weekNum = v => Math.round(v * 10) / 10;
+    return { heatIndexF, forecastHeatIndex, heatCategory, stripLineHtml };
+  })()`, { Math, Number });
+  // As the NWS's own forecast grids give it (checked against Miami and Houston, Oct 2026).
+  for (const [f, rh, nws] of [[83, 82, 92], [85, 80, 97], [86, 77, 98], [80, 74, 83], [84, 65, 89], [100, 50, 118]]) {
+    assert.equal(Math.round(k.heatIndexF(f, rh)), nws, `${f}°F at ${rh}%`);
+  }
+  // Humid and mild (80–87°F over 85%): its correction adds a little.
+  assert.equal(Math.round(k.heatIndexF(85, 90)), 102);
+  // Very dry air: the formula's correction takes a little off (the air cools the skin).
+  assert.ok(k.heatIndexF(96, 10) < k.heatIndexF(96, 13) - 0.5);
+  // Shown only from 80°F up and when humidity adds 2°F or more; not without humidity.
+  const hour = (temperature, rh) => ({ temperature, temperatureUnit: 'F', relativeHumidity: { value: rh } });
+  assert.equal(k.forecastHeatIndex(hour(86, 77)), 98);
+  assert.equal(k.forecastHeatIndex(hour(76, 90)), null, 'under 80°F (77.5)');
+  assert.equal(k.forecastHeatIndex(hour(79, 90)), null, 'a humid 79°F night: none, as the NWS (not 81)');
+  assert.equal(k.forecastHeatIndex(hour(80, 90)), 86, 'from 80°F');
+  assert.equal(k.forecastHeatIndex(hour(82, 30)), null, 'dry: feels as it is');
+  assert.equal(k.forecastHeatIndex({ temperature: 90, temperatureUnit: 'F' }), null);
+  assert.equal(k.forecastHeatIndex(hour(30, 90)), null);
+  assert.equal(k.forecastHeatIndex({ ...hour(30, 70), temperatureUnit: 'C' }), 95, 'a °C forecast too (86°F)');
+  // The NWS's levels.
+  assert.deepEqual([85, 95, 110, 130].map(v => k.heatCategory(v).label), ['caution', 'extreme caution', 'danger', 'extreme danger']);
+  // A row drawn as a line: its values every few hours and at the extremes, '' with too little.
+  const svg = k.stripLineHtml([50, 52, 70, 60, 55, 54, 53], 300, 60, 20, v => v + '%', 3, 'hum');
+  assert.match(svg, /^<svg class="fc-strip-svg fc-strip-hum-line" width="392" height="60" viewBox="0 0 392 60" style="top:300px"/);
+  assert.deepEqual([...svg.matchAll(/>(\d+%)<\/text>/g)].map(m => m[1]), ['50%', '70%', '60%', '53%'], 'hours 0, 3 and 6, and the highest (2)');
+  assert.equal(k.stripLineHtml([null, 40, null], 0, 60, 20, v => v + '%', 3, 'hum'), '');
+});
+
 test('sun times match the US Naval Observatory to within a minute', () => {
   const k = forecastExtrasKit();
   // Reference times from aa.usno.navy.mil (rise/set and civil twilight), local clock.
@@ -4023,6 +4062,16 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   assert.equal(humid.air, 'Humidity 45–92%');
   assert.deepEqual({ ...humid.humidity }, { low: 45, high: 92 });
   assert.match(humid.facts, /<p><b>Humidity:<\/b> 45% to 92% — most humid around 2 AM, driest around 3 PM\.<\/p>/);
+  // The heat index, from the same hours: how hot the day feels at worst, first at a
+  // glance (it matters most), and in full with the NWS's level and what it means.
+  const heat = new Map([['2026-10-03T19', { feels: 96, f: 88 }], ['2026-10-03T20', { feels: 98, f: 89 }], ['2026-10-04T11', { feels: 120, f: 99 }]]);
+  const hot = k.forecastRowExtras(parts, { humidity, heat }, sa);
+  assert.equal(hot.air, 'Feels like up to 98°F · Humidity 45–92%');
+  assert.equal(hot.heat, 98);
+  assert.match(hot.facts, /<p><b>Humidity:[^]*<\/p><p><b>Heat index:<\/b> feels like up to 98°F around 3 PM \(when it is 89°F\) — extreme caution: heat cramps or heat exhaustion are possible with long exposure or activity\.<\/p>/);
+  // None where it doesn't feel hotter (or without the hours).
+  assert.equal(humid.heat, null);
+  assert.doesNotMatch(humid.facts, /Heat index/);
   // After air quality and pressure at a glance; one number when it holds all day.
   assert.match(k.forecastRowExtras(parts, { ...extras, humidity }, sa).air, /inHg · Humidity 45–92%$/);
   const flat = k.forecastRowExtras(parts, { humidity: hours(24, '2026-10-03T11', () => 80) }, sa);
@@ -4104,7 +4153,7 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   assert.match(raw.facts, /first light 7:0\d\u00A0AM/);
   assert.doesNotMatch(raw.facts, /\d (AM|PM)/);
   // Nothing to go on (no place, or a timestamp without its offset): nothing shown.
-  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', aqi: null, humidity: null });
+  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', aqi: null, humidity: null, heat: null });
   assert.equal(k.forecastRowExtras([{ startTime: '2026-10-03T06:00', endTime: '2026-10-03T18:00' }], null, sa).sun, '');
   // EPA categories at their edges.
   assert.deepEqual([50, 51, 101, 151, 201, 301].map(v => k.aqiCategory(v).level), [1, 2, 3, 4, 5, 6]);
@@ -4177,7 +4226,10 @@ test('wide screens: the week laid out on one time line, nights from the sun', ()
   assert.equal(model.points.length, 42);
   assert.ok(model.points.every((h, i) => i === 0 || h.x > model.points[i - 1].x));
   const temps = model.points.map(h => h.deg.f);
-  assert.equal(model.tempY(Math.max(...temps)), 60);
+  // (The heat index shares the °F scale: the hottest it feels is its top.)
+  const feels = model.points.map(h => h.feels).filter(v => v != null);
+  assert.ok(feels.length > 0 && Math.max(...feels) > Math.max(...temps));
+  assert.equal(model.tempY(Math.max(...feels)), 60);
   assert.equal(model.tempY(Math.min(...temps)), 150);
   // The nights: dusk after sunset (7:17 PM), dark from last light, dawn before
   // sunrise; the first night's dusk starts after the forecast does (at 6 PM).
@@ -4232,6 +4284,16 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.equal((humidWeek.match(/class="fc-wk-hum"/g) || []).length, 3);
   assert.match(humidModel.rows[1].more.facts, /<p><b>Humidity:<\/b> \d+% to \d+% — most humid around \d+\s(AM|PM)/);
   assert.match(k.weekHourHtml(humidModel.points[12]), /<span>Wind N 10 mph<\/span><span>Humidity 90%<\/span>/);
+  // The heat index: in the tooltip under the temperature, how hot each day feels at
+  // worst in its column, and a dashed line on the temperature strip (named in its label).
+  const hotHour = humidModel.points.find(h => h.feels != null);
+  assert.match(k.weekHourHtml(hotHour), /<span class="fc-wk-tip-temp">[^]*?<\/span><span>Feels like \d+°F<\/span>/);
+  const heat = new Map(humidModel.points.filter(h => h.feels != null)
+    .map(h => [utcKey(h.period.startTime), { feels: h.feels, f: h.deg.f }]));
+  const heatWeek = k.renderForecastWeek(k.forecastWeekModel(days, hours, { ...extras, humidity, heat }, point), Date.parse('2026-10-03T20:00:00-05:00'));
+  assert.match(heatWeek, /<span class="fc-wk-feels">Feels up to \d+°<\/span><span class="fc-wk-hum">/);
+  assert.match(heatWeek, /<path class="fc-wk-feels-line" d="M[^"]+"\/><path class="fc-wk-line"/);
+  assert.match(heatWeek, /<span class="fc-wk-label">Temperature \(°F\)<span class="fc-wk-key"><i><\/i>feels like<\/span><\/span>/);
   assert.doesNotMatch(week, /fc-wk-hum/, 'no humidity, no line');
   // The chart: a keyboard-reachable group; strips drawn for the eye only.
   assert.match(week, /<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: [^"]+">/);
@@ -4342,17 +4404,26 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   assert.match(strip, /data-hour="2">(?:(?!data-hour=)[^])*?<span class="fc-strip-wind"><i>~<\/i><small>10<\/small><\/span>/);
   assert.match(strip, /data-hour="21">(?:(?!data-hour=)[^])*?<span class="fc-strip-rain"><i style="height:12px"><\/i><small>40%<\/small><\/span>/);
   assert.match(strip, /data-hour="20">(?:(?!data-hour=)[^])*?<span class="fc-strip-aqi"><span class="fc-aqi fc-aqi-3">120<\/span><\/span>/);
-  assert.match(strip, /data-hour="0">(?:(?!data-hour=)[^])*?<span class="fc-strip-press">30\.06<\/span>/);
+  // Pressure and humidity: each a small line chart of its own, its values every few
+  // hours (pressure every 6, humidity every 3) and at the extremes, big enough to read.
+  assert.match(strip, /<svg class="fc-strip-svg fc-strip-press-line"[^>]*style="top:[\d.]+px"[^>]*><path d="M28,[^]*?>30\.06<\/text>/);
+  assert.match(strip, /<svg class="fc-strip-svg fc-strip-hum-line"[^>]*><path d="M28,[^]*?>90%<\/text>/);
+  // The rows' heights come from the strip (and a row with nothing to show folds away).
+  assert.match(strip, /<div class="fc-strip" aria-hidden="true" tabindex="-1" style="--strip-rows:18px 32px 124px 18px 54px 44px 50px 28px 50px">/);
   // The curve through each hour, a dot per hour; the nights shaded, sunset and sunrise marked.
-  assert.equal((strip.match(/<circle /g) || []).length, 30);
+  const tempGraph = strip.match(/<svg class="fc-strip-svg" width[^]*?<\/svg>/)[0];
+  assert.equal((tempGraph.match(/<circle /g) || []).length, 30);
   assert.match(strip, /<path class="fc-strip-line" d="M28,/);
   assert.match(strip, /<span class="fc-strip-band fc-wk-night" style="left:[\d.]+px;width:[\d.]+px">/);
   assert.match(strip, /title="Sunset">🌇 7:1\d PM<\/span>/);
   assert.match(strip, /title="Sunrise">🌅 7:2\d AM<\/span>/);
   // Row names stay on the left; air and pressure rows named only when there is data.
-  assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span class="fc-strip-unit">°F<\/span><span class="fc-strip-scale">(?:<i style="top:[\d.]+px">\d+°<\/i>)+<\/span><span><\/span><span>Rain<\/span><span>Wind mph<\/span><span>Humidity<\/span><span>Air AQI<\/span><span>Pressure<\/span><\/div>/);
-  // Each hour's humidity, in its own row.
-  assert.match(strip, /data-hour="12">(?:(?!data-hour=)[^])*?<span class="fc-strip-hum">90%<\/span>/);
+  assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span class="fc-strip-unit">°F<\/span><span class="fc-strip-scale">(?:<i style="top:[\d.]+px">\d+°<\/i>)+<\/span><span class="fc-strip-key"><i><\/i>feels<\/span><span>Rain<\/span><span>Wind mph<\/span><span>Humidity<\/span><span>Air AQI<\/span><span>Pressure inHg<\/span><\/div>/);
+  // The heat index: a dashed line on the temperature graph where it feels hotter,
+  // each stretch's peak named, and its key under the scale.
+  assert.match(strip, /<path class="fc-strip-feels" d="M[^"]+"\/><path class="fc-strip-line"/);
+  assert.match(strip, /<text class="fc-strip-val fc-strip-feels-val" x="[\d.]+" y="[\d.]+">feels \d+°<\/text>/);
+  assert.match(strip, /<span class="fc-strip-key"><i><\/i>feels<\/span><span>Rain<\/span>/);
   // The graph has a scale: gridlines on round steps, each named in the pinned column
   // at the same height; and each hour's temperature sits right above its dot.
   const ticks = [...strip.matchAll(/<i style="top:([\d.]+)px">(\d+)°<\/i>/g)].map(m => [+m[1], +m[2]]);
@@ -4369,7 +4440,24 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   assert.ok(texts.every((m, i) => m[1] === vals[i][1] && Math.abs(+m[2] - (+vals[i][2] - 9)) < 0.11));
   // The top gridline sits near the top of the graph (no empty band under the sky
   // icons), and every value's label stays inside the graph.
-  assert.ok(ticks[ticks.length - 1][0] <= 22, 'the top gridline near the top');
+  // (With a "feels" label stacked over its hour's own, the top band holds it: up to 36 px.)
+  assert.ok(ticks[ticks.length - 1][0] <= (/fc-strip-feels-val/.test(strip) ? 36 : 22), 'the top gridline near the top');
+  // A common summer day — a 70°F night, 90°F at 45% (feels 92) — the "feels" label
+  // clear of its hour's own label under it (13 px text), not on top of it.
+  const day = Array.from({ length: 30 }, (_, i) => ({
+    startTime: new Date(Date.parse('2026-07-01T10:00:00Z') + i * 3600e3).toISOString().replace('.000Z', '+00:00'),
+    endTime: new Date(Date.parse('2026-07-01T11:00:00Z') + i * 3600e3).toISOString().replace('.000Z', '+00:00'),
+    temperature: Math.round(70 + 20 * Math.max(0, Math.sin(Math.PI * Math.min(i, 24) / 24))), temperatureUnit: 'F',
+    relativeHumidity: { value: 45 }, shortForecast: 'Sunny', isDaytime: true }));
+  const summer = k.renderHourStrip(day, Date.parse('2026-07-01T10:00:00Z'), null, null);
+  const dayTemps = [...summer.matchAll(/<text class="fc-strip-val" x="([\d.]+)" y="([\d.]+)">\d+°<\/text>/g)].map(m => [+m[1], +m[2]]);
+  const dayFeels = [...summer.matchAll(/<text class="fc-strip-val fc-strip-feels-val" x="([\d.]+)" y="([\d.]+)">feels 92°<\/text>/g)].map(m => [+m[1], +m[2]]);
+  assert.equal(dayFeels.length, 1);
+  assert.ok(dayTemps.filter(([x]) => Math.abs(x - dayFeels[0][0]) < 40).every(([, ty]) => ty - dayFeels[0][1] >= 13));
+  // A peak at the first hour stays inside the hours (not under the pinned names).
+  const early = k.renderHourStrip(day.slice(12), Date.parse('2026-07-01T22:00:00Z'), null, null);
+  const firstFeels = early.match(/<text class="fc-strip-val fc-strip-feels-val" x="([\d.]+)"/);
+  assert.ok(firstFeels && +firstFeels[1] >= 'feels 92°'.length * 3.6, `x ${firstFeels?.[1]}`);
   assert.ok(texts.every(m => +m[2] >= 13), 'a label rising out of the graph');
   // A value's height on the graph matches the scale (the warmest hour against the ticks).
   const [lowTop, lowDeg] = ticks[0], [highTop, highDeg] = ticks[ticks.length - 1];
@@ -4379,6 +4467,8 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   const bare = k.renderHourStrip(hours.slice(0, 5), now, null, null);
   // (Humidity comes with the NWS hours themselves: named even without the extras.)
   assert.match(bare, /<span>Wind mph<\/span><span>Humidity<\/span><span><\/span><span><\/span><\/div>/);
+  // …and its air and pressure rows fold away (0 px), humidity kept.
+  assert.match(bare, /style="--strip-rows:18px 32px 124px 18px 54px 44px 50px 0px 0px"/);
   assert.doesNotMatch(strip, /fc-strip-temp/, 'the temperatures live on the graph, not in a row above it');
   // The warmest hour right on a gridline (72–80°F: 2° steps up to 80°) gets just
   // the room its label needs on top — not a whole extra step.
@@ -4392,13 +4482,16 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   assert.equal(k.renderHourStrip(hours.slice(0, 1), now, extras, point), '');
   // The CSS column and curve row match the drawing's numbers.
   assert.match(html, /\.fc-strip-col \{[^}]*flex: 0 0 56px; width: 56px;/);
-  assert.match(html, /--strip-rows: 18px 32px 124px 18px /);   // 8 + 18 + 32 = the graph's top, 58
+  // The rows come from one table: the graph's top is 8 + 18 + 32 = 58 and its height 124.
+  assert.match(html, /const STRIP_ROWS = \{ time: 18, sky: 32, temp: 124, sun: 18,/);
+  assert.match(html, /const STRIP_CURVE = \{ top: 58, height: 124,/);
+  assert.match(html, /const STRIP_PAD_TOP = 8;/);
   assert.match(html, /\.fc-strip-col \{[^}]*padding: 8px 0 10px;/);   // (the 8)
   // The sun chips sit in their own row under the curve, each on its own hour's clock.
   assert.match(strip, /<span class="fc-strip-sun" style="left:[\d.]+px;top:182px" title="Sunset">/);
   assert.match(html, /const offsetAt = t => isoOffsetMinutes\(\(hours\.find\(p => t < Date\.parse\(p\.endTime\)\) \|\| hours\[0\]\)\.startTime\);/);
   // Nothing in the aria-hidden strip takes focus; ‹ › are mouse-only.
-  assert.match(strip, /<div class="fc-strip" aria-hidden="true" tabindex="-1">/);
+  assert.match(strip, /<div class="fc-strip" aria-hidden="true" tabindex="-1" style="--strip-rows:[^"]+">/);
   assert.match(html, /const STRIP_CURVE = \{ top: 58, height: 124, pad: 8, base: 12, label: 22 \};/);
   // Clicking an hour shows it in the full list; ‹ › step six hours.
   assert.match(html, /fcHours\.querySelectorAll\('\.fc-hour:not\(\.fc-hour-head\)'\)\[\+col\.dataset\.hour\]/);

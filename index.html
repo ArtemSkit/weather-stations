@@ -629,6 +629,7 @@
   .live-chip-swatch {
     display: inline-block; width: 0.8em; height: 0.8em; margin-right: 5px; vertical-align: -0.08em;
     border-radius: 2px; outline: 1px solid rgba(255,255,255,0.4);
+    forced-color-adjust: none;   /* High Contrast keeps its colour: it matches the area's on the map */
   }
   /* Leaflet draws a little caret on directional tooltips — hide it for these chips. */
   .leaflet-tooltip.alert-area-label::before { display: none !important; }
@@ -934,7 +935,7 @@
   .fc-hour .fc-icon { font-size: 1.05rem; }
   .fc-hour-time { font-family: 'Space Mono', monospace; color: var(--text-muted); }
   .fc-hour .fc-temp { font-size: 0.8rem; }
-  .fc-hour-feels { display: block; font-size: 0.66rem; font-weight: 700; color: #ffb37a; }   /* feels 96° */
+  .fc-hour-feels { display: block; font-size: 0.66rem; font-weight: 700; color: #ffb37a; }   /* feels 96°F */
   .fc-hour-pop { color: var(--text-muted); }
   .fc-hour-short { color: var(--text-muted); }
   /* The narrowest phones (320 px): slimmer columns, so the last one still fits a
@@ -1570,9 +1571,10 @@
     .fc-week { display: block; }
     /* Hourly: a table — one row per hour, its readings in aligned columns. */
     .fc-hour {
-      /* (Its minimums fit the 896 px dialog of a 960 px window.) */
-      grid-template-columns: 56px 26px 112px 92px minmax(110px, 1.1fr) minmax(90px, 0.7fr) minmax(64px, 0.5fr) minmax(130px, 0.8fr) minmax(96px, 0.7fr);
-      gap: 10px; padding: 8px 20px;
+      /* (Its minimums, gaps and padding fit the 896 px dialog of a 960 px window, less
+         its 1 px borders and a 17 px scrollbar where the system shows them: 877 px.) */
+      grid-template-columns: 56px 26px 112px 92px minmax(106px, 1.1fr) minmax(90px, 0.7fr) minmax(64px, 0.5fr) minmax(130px, 0.8fr) minmax(96px, 0.7fr);
+      gap: 8px; padding: 8px 20px;
     }
     /* The Humidity column says it for the eye; screen readers (which skip the column
        names) still hear "84% humidity". */
@@ -5019,6 +5021,28 @@ function rememberOpenAlertCard(id) {
   while (openAlertCards.size > OPEN_ALERT_CARDS_LIMIT) openAlertCards.delete(openAlertCards.values().next().value);
 }
 
+/**
+ * Open or close the banner's list of alerts. Later renders (refreshes, new
+ * searches) keep it so; `remember` also keeps it for reloads (the user's own
+ * choice, not one made for them).
+ */
+function setAlertBannerExpanded(expanded, remember) {
+  alertBanner.classList.toggle('expanded', expanded);
+  alertBanner.querySelector('[data-role="toggle"]')?.setAttribute('aria-expanded', String(expanded));
+  alertBannerCollapsed = !expanded;
+  if (remember) {
+    try { localStorage.setItem(ALERT_BANNER_COLLAPSED_KEY, expanded ? '0' : '1'); } catch (_) { /* storage blocked */ }
+  }
+  updateAlertScrollHint();
+  if (liveAlertsOn) {
+    renderLiveLabels();          // the banner's new size frees or covers map labels
+    if (expanded) {
+      liveBannerSignature = null;  // redrawn with the lookups now on their way
+      renderLiveBanner();
+    }
+  }
+}
+
 /* Click delegation: toggle the banner, open a group or a card, show on the map. */
 alertBanner.addEventListener('click', e => {
   const control = e.target.closest('[data-role]');
@@ -5029,19 +5053,7 @@ alertBanner.addEventListener('click', e => {
   if (!control) return;
   const role = control.dataset.role;
   if (role === 'toggle') {
-    const expanded = alertBanner.classList.toggle('expanded');
-    control.setAttribute('aria-expanded', String(expanded));
-    // Remembered: later renders (refreshes, new searches, reloads) keep this.
-    alertBannerCollapsed = !expanded;
-    try { localStorage.setItem(ALERT_BANNER_COLLAPSED_KEY, expanded ? '0' : '1'); } catch (_) { /* storage blocked */ }
-    updateAlertScrollHint();
-    if (liveAlertsOn) {
-      renderLiveLabels();          // the banner's new size frees or covers map labels
-      if (expanded) {
-        liveBannerSignature = null;  // redrawn with the lookups now on their way
-        renderLiveBanner();
-      }
-    }
+    setAlertBannerExpanded(!alertBanner.classList.contains('expanded'), true);
   } else if (role === 'group') {
     const group = control.closest('.alert-group');
     const open = group.classList.toggle('open');
@@ -5087,8 +5099,16 @@ function zoomToAlert(id, label = '') {
   if (!bounds) { showToast('This alert\'s area isn\'t drawn on the map'); return; }
   clearAlertFocus();   // the previous one goes as the map moves off
   const mapBox = map.getContainer().getBoundingClientRect();
-  const box = alertBanner.getBoundingClientRect();
+  let box = alertBanner.getBoundingClientRect();
   const column = box.width < mapBox.width * 0.6;   // desktop: banner beside the area
+  // Phones: the open list spans the top of the map and would cover the area — fold
+  // it to its summary line (for now: a reload brings back the user's own setting),
+  // and keep the keyboard focus, which was on the button now hidden, on the banner.
+  if (!column && alertBanner.classList.contains('expanded')) {
+    setAlertBannerExpanded(false, false);
+    alertBanner.querySelector('[data-role="toggle"]')?.focus({ preventScroll: true });
+    box = alertBanner.getBoundingClientRect();
+  }
   const topLeft = column
     ? [Math.min(box.right - mapBox.left + 16, mapBox.width / 2), 16]
     : [16, Math.min(box.bottom - mapBox.top + 16, mapBox.height / 2)];
@@ -5908,6 +5928,7 @@ const liveHiddenEvents = new Set();  // alert types switched off in the colour k
 let liveAlertsSeq = 0;               // newest view request
 let liveAppliedSeq = 0;              // newest request whose answer is drawn; older answers are dropped
 let liveViewPending = false;         // the map moved and that view's answer isn't in yet
+let liveViewGen = 0;                 // counts those moves: which view a request was sent for
 let liveWaitsForSearch = false;      // opened on a search: the first load waits for its area
 let liveMoveTimer = 0, liveRefreshTimer = 0, liveRetryTimer = 0;
 let liveRefreshMissed = false;
@@ -6029,15 +6050,26 @@ function liveCacheMerge(saved, features, boxes, now) {
 function liveCacheTrim(saved, now) {
   let bytes = 0;
   return saved
-    .filter(piece => now - piece.at < LIVE_CACHE_MAX_AGE_MS && !liveAlertEnded(liveProps(piece.f.properties), now))
+    // (A piece saved "in the future" — the device's clock was set back since — has
+    // no age to trust: dropped, or it would outlive the 15 minutes.)
+    .filter(piece => now - piece.at < LIVE_CACHE_MAX_AGE_MS && piece.at - now < 60_000 &&
+                     !liveAlertEnded(liveProps(piece.f.properties), now))
     .sort((a, b) => b.at - a.at)
     .filter(piece => (bytes += piece.size) <= LIVE_CACHE_MAX_BYTES);
 }
 
-/** Whether a view lies inside a region downloaded within LIVE_FRESH_MS, at least as finely. */
+/**
+ * Whether a view lies inside a region downloaded within LIVE_FRESH_MS, at least as
+ * finely (or, wider than the world, sits around a whole-world answer's middle).
+ */
 function liveViewFresh(fresh, view, tolerance, now) {
   return fresh.some(v => now - v.at < LIVE_FRESH_MS && v.tol <= tolerance * 1.0001 &&
-                         v.boxes.some(box => box.contains(view)));
+                         (v.boxes.some(box => box.contains(view)) ||
+                          // A view a full turn wide or more (zoomed right out) fits in no copy
+                          // of the world: a whole-world answer stays fresh for it while its
+                          // middle stays near where that answer's shapes were placed.
+                          (v.around != null && view.getEast() - view.getWest() >= 360 &&
+                           Math.abs((view.getWest() + view.getEast()) / 2 - v.around) <= 45)));
 }
 
 /** The device's store for the saved copy (null where the browser allows none). */
@@ -6182,6 +6214,7 @@ async function loadLiveAlerts(confirmingEmpty = false) {
   liveLastRequestAt = Date.now();
   liveLoadOwed = false;
   const seq = ++liveAlertsSeq;
+  const gen = liveViewGen;   // the view (as moved to) this request is for
   clearTimeout(liveRetryTimer);
   const b = map.getBounds().pad(0.15);
   const boxes = liveQueryBoxes(b.getWest(), b.getSouth(), b.getEast(), b.getNorth());
@@ -6209,7 +6242,9 @@ async function loadLiveAlerts(confirmingEmpty = false) {
     // beats the newer one is still drawn (it only replaces its own box), so a user
     // who keeps nudging the map sees alerts arrive instead of none at all.
     if (seq <= liveAppliedSeq || !liveAlertsOn) return;
-    const newest = seq === liveAlertsSeq;
+    // (Nor is it, once the map has moved on: the moved view's request may not be
+    // sent yet — in its 350 ms pause, waiting its 2 s turn, or owed to a drag's end.)
+    const newest = seq === liveAlertsSeq && gen === liveViewGen;
     answers.forEach(({ response, data }) => {
       if (!response.ok || !Array.isArray(data?.features)) throw new Error(`HTTP ${response.status}`);
     });
@@ -6244,9 +6279,16 @@ async function loadLiveAlerts(confirmingEmpty = false) {
     const now = Date.now();
     // (An older record this answer touches is dropped: its outlines here were just
     // replaced by these, perhaps coarser — zoomed out — so it no longer says how fine.)
-    liveFreshViews = [...liveFreshViews.filter(v => now - v.at < LIVE_FRESH_MS &&
+    // (So is one reaching over half a turn away: replaceLivePieces just dropped the
+    // pieces over a full turn away, and one of those can stretch into it.)
+    const reachesFar = box => Math.max(Math.abs(box.getWest() - nearLon), Math.abs(box.getEast() - nearLon)) > 180;
+    // A whole-world answer is fresh only on the copy of the world its shapes were
+    // placed on (around nearLon): its boxes above stretch around every copy.
+    const wholeWorld = boxes.length === 1 && boxes[0].east - boxes[0].west >= 360;
+    liveFreshViews = [...liveFreshViews.filter(v => now - v.at < LIVE_FRESH_MS && !v.boxes.some(reachesFar) &&
                                                     !v.boxes.some(b => queried.some(q => q.intersects(b)))),
-                      { boxes: queried, tol: detail, at: now }];
+                      { boxes: wholeWorld ? [L.latLngBounds([b.getSouth(), nearLon - 180], [b.getNorth(), nearLon + 180])] : queried,
+                        around: wholeWorld ? nearLon : null, tol: detail, at: now }];
     liveCache = liveCacheMerge(liveCache, unique, boxes, now);
     saveLiveCache();
     scheduleLiveExpiry();
@@ -6446,11 +6488,14 @@ function toggleLiveAlertType(event, button) {
     if (hide) liveAlertsLayer.removeLayer(piece.layer); else liveAlertsLayer.addLayer(piece.layer);
   }
   if (!hide) restackLivePieces();
-  renderLiveLabels();    // a hidden type loses its labels…
-  renderLiveBanner();    // …and its banner cards
+  renderLiveBanner();    // a hidden type loses its banner cards…
+  renderLiveLabels();    // …and its labels (placed clear of the banner's new size)
 }
 
 /* Name chips on the live areas ("FLOOD", "HEAT"), like the searched area's own. */
+// In their own pane just under the markers (600): a chip takes clicks (its alert's
+// popup), so over a station or the search pin it would steal theirs.
+map.createPane('liveLabels').style.zIndex = 590;
 const liveLabelLayer = L.layerGroup().addTo(map);
 const LIVE_LABEL_LIMIT = 30;   // a zoomed-out view can hold hundreds of alerts
 let liveChipLit = null;        // the alert lit up by the chip under the pointer
@@ -6482,8 +6527,9 @@ let liveLabelObstaclesSeen = '';   // the key the chips on the map were placed a
 // The chips are placed again when the station panel opens, closes or changes size
 // (a phone's sheet grows when its readings arrive), once it has slid in (it opens
 // below the screen and only then moves up over the map), when the map buttons'
-// control changes (watched once it exists: see LiveAlertsControl), and when pin
-// mode's banner comes or goes (see setTapMode) — but only if
+// control changes (watched once it exists: see LiveAlertsControl), when the alert
+// banner changes size (a refresh, a newly searched place, a group opened or
+// closed), and when pin mode's banner comes or goes (see setTapMode) — but only if
 // that moved something: a new LIVE ALERTS count also resizes the control, right
 // after a view update that has just placed them.
 function replaceLiveLabelsIfCrowded() {
@@ -6491,6 +6537,7 @@ function replaceLiveLabelsIfCrowded() {
 }
 const liveLabelSpace = new ResizeObserver(replaceLiveLabelsIfCrowded);
 liveLabelSpace.observe(popupPanel);
+liveLabelSpace.observe(alertBanner);   // (it shows, grows and shrinks with the alerts in view)
 popupPanel.addEventListener('animationend', e => { if (e.target === popupPanel) replaceLiveLabelsIfCrowded(); });
 
 /** The alerts drawn in the current view: alert id → the props and pieces in view. */
@@ -6668,7 +6715,7 @@ function renderLiveLabels() {
     // The chip stands for its alert, like its area: a pointer, the alert lit up on
     // hover, its popup on a click — also where the chip isn't over the area itself
     // (the middle of a scattered or ring-shaped area, or a chip nudged in from the edge).
-    L.tooltip({ permanent: true, direction: 'center', interactive: true,
+    L.tooltip({ pane: 'liveLabels', permanent: true, direction: 'center', interactive: true,
                 className: 'alert-area-label live-area-label' })
       .setLatLng(at)
       .setContent(chipHtml(props.prod_type, text))
@@ -6723,8 +6770,8 @@ function prefetchLiveAlertPlaces() {
 /** Everything that follows the view in live mode: count and key, labels, banner. */
 function renderLiveView() {
   renderLiveLegend();
+  renderLiveBanner();   // first: the chips are placed clear of it at its new size
   renderLiveLabels();
-  renderLiveBanner();
 }
 
 /**
@@ -6848,8 +6895,10 @@ function scheduleLiveExpiry() {
   for (const piece of livePieces) due = Math.min(due, piece.at + LIVE_CACHE_MAX_AGE_MS, liveAlertEndsAt(piece.props));
   for (const piece of liveCache) due = Math.min(due, piece.at + LIVE_CACHE_MAX_AGE_MS, liveAlertEndsAt(liveProps(piece.f.properties)));
   if (due === Infinity) return;
-  // (A moment past it, so the piece is surely due when the timer runs.)
-  liveExpiryTimer = setTimeout(pruneLivePieces, Math.max(0, due - Date.now()) + 50);
+  // (A moment past it, so the piece is surely due when the timer runs. Capped at the
+  // longest wait a timer takes, about 24 days — a longer one fires at once, and a
+  // drawn piece dated ahead by a clock set back would then wake this in a loop.)
+  liveExpiryTimer = setTimeout(pruneLivePieces, Math.min(Math.max(0, due - Date.now()) + 50, 2 ** 31 - 1));
 }
 // Back to the page: timers may have been slowed or frozen meanwhile (a phone puts
 // the app to sleep), so take off at once whatever came due while away.
@@ -6876,6 +6925,7 @@ map.on('moveend', () => {
   // The page's own start-up moves aren't the opening search's: wait for it.
   if (liveWaitsForSearch) return;
   liveViewPending = true;          // what came into view isn't counted until its answer is in
+  liveViewGen++;                   // (and an answer sent for the view before doesn't count as its)
   renderLiveView();                // labels and banner follow what's drawn in view now
   clearTimeout(liveMoveTimer);
   liveMoveTimer = setTimeout(() => {
@@ -7394,14 +7444,16 @@ function hpaToInHg(hpa) {
 }
 
 /**
- * A forecast row's sun, air and pressure facts: the summary lines (a glance) and
- * the paragraphs shown when the row is opened.
+ * A forecast row's sun, humidity, heat index, air and pressure facts: the summary
+ * lines (a glance) and the paragraphs shown when the row is opened.
  * @param {Object[]} parts   - the row's NWS periods (a day and its night, or one)
- * @param {Object}  [extras] - fetchAirAndPressure's answer
+ * @param {Object}  [extras] - fetchAirAndPressure's answer, with the NWS hourly
+ *                             humidity and heat index (see openForecast)
  * @param {{lat:number, lon:number}} [point] - where the forecast is
- * @returns {{sun: string, air: string, facts: string, sunsetAt: string, aqi: ?number}} HTML
- *          ('' where nothing is known), plus the plain sunset time and worst AQI the
- *          wide-screen week's day columns show
+ * @returns {{sun: string, air: string, facts: string, sunsetAt: string, aqi: ?number,
+ *            humidity: ?{low:number, high:number}, heat: ?number}} HTML ('' where
+ *          nothing is known), plus the plain sunset time, worst AQI, humidity range
+ *          and highest heat index the wide-screen week's day columns show
  */
 function forecastRowExtras(parts, extras, point) {
   const first = parts[0], last = parts[parts.length - 1];
@@ -7488,7 +7540,7 @@ function forecastRowExtras(parts, extras, point) {
     }
   }
 
-  // Air and pressure: the hours the row covers, from its first period's start to
+  // Humidity, heat, air and pressure: the hours the row covers, from its first period's start to
   // its last one's end, as UTC hour keys (in which string order is time order).
   const from = utcHourKey(first?.startTime), to = utcHourKey(last?.endTime);
   const rowHours = (Date.parse(last?.endTime) - Date.parse(first?.startTime)) / 3_600_000;
@@ -7513,10 +7565,12 @@ function forecastRowExtras(parts, extras, point) {
   };
   // "; the air-quality forecast runs to 8 AM" when it ends before the row's last
   // hour (hours missing elsewhere, say a gap in the data, are no end).
+  // (It runs to the end of its last hour: data for 4–5 PM runs to 5 PM.)
   const runsOut = (hours, what) => {
     const lastKey = hours[hours.length - 1][0];
+    const endKey = new Date(Date.parse(lastKey + ':00:00Z') + 3_600_000).toISOString().slice(0, 13);
     return lastKey < utcHourKey(new Date(Date.parse(last.endTime) - 3_600_000).toISOString())
-      ? '; the ' + what + ' forecast runs to ' + hourOf(lastKey) : '';
+      ? '; the ' + what + ' forecast runs to ' + hourOf(endKey) : '';
   };
 
   const air = within(extras?.aqi);
@@ -7582,9 +7636,10 @@ function forecastRowExtras(parts, extras, point) {
 /**
  * The 7-day forecast as one row per day: the day's sky, its high and the night's
  * low (↑ 73° ↓ 63°, with °C below), the night's sky, the higher of the two rain
- * chances and the day's wind, then the sunset and sunrise, and the air quality
- * and pressure where known. Each row opens to the forecaster's full wording for
- * the day and the night, then the daylight, air and pressure in detail.
+ * chances and the day's wind, then the sunset and sunrise, and the humidity, heat
+ * index, air quality and pressure where known. Each row opens to the forecaster's
+ * full wording for the day and the night, then the daylight, humidity, heat, air
+ * and pressure in detail.
  * @param {Object[]} periods - the NWS 7-day periods
  * @param {Object}  [extras] - fetchAirAndPressure's answer
  * @param {{lat:number, lon:number}} [point] - where the forecast is (for the sun)
@@ -7660,7 +7715,7 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
     return `${heading}<li class="fc-hour">
       <span class="fc-hour-time">${when ? forecastHourLabel(when.hour) : ''}</span>
       <span class="fc-icon" aria-hidden="true">${forecastEmoji(period.shortForecast, period.isDaytime)}</span>
-      <span class="fc-temp">${forecastTemp(period)}${feels != null ? '<span class="fc-hour-feels">feels ' + feels + '°</span>' : ''}</span>
+      <span class="fc-temp">${forecastTemp(period)}${feels != null ? '<span class="fc-hour-feels">feels ' + feels + '°F</span>' : ''}</span>
       <span class="fc-hour-pop" style="--pop:${pop != null ? Math.round(pop) : 0}%">${popText}</span>
       <span class="fc-hour-short">` + cell('sky', escapeHtml(period.shortForecast || '')) +
         cell('wind', escapeHtml(wind)) + cell('hum', humidity) + extra + `</span>
@@ -8298,7 +8353,7 @@ function renderForecastWeek(model, now = Date.now()) {
     // The strips are drawn for the eye; keyboard and screen-reader users step
     // through the hours with the arrow keys (read out below), and the HOURLY tab
     // lists them all.
-    '<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: temperature, chance of rain, air quality and pressure. Use the arrow keys to go through the hours and Enter to pick that day.">' +
+    '<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: temperature, how hot it feels, chance of rain, humidity, air quality and pressure. Use the arrow keys to go through the hours and Enter to pick that day.">' +
       '<div class="fc-wk-back" aria-hidden="true">' + backdrop + '</div>' +
       '<div aria-hidden="true">' + strips + '</div>' +
       '<span class="fc-wk-cursor" aria-hidden="true" hidden></span><span class="fc-wk-dot" aria-hidden="true" hidden></span>' +

@@ -1309,6 +1309,25 @@ test('alert times never invent an end and show a future start', () => {
   // with a "moveend" of its own.)
   assert.match(zoom, /map\.flyToBounds\(bounds, \{ \.\.\.options, duration: ALERT_FOCUS_FLIGHT_S \}\);[\s\S]*?map\.once\('moveend', show\);/);
   assert.match(html, /const ALERT_FOCUS_FLIGHT_S = 0\.6;/);
+  // On phones (the banner a strip across the top) the open list would cover the
+  // area: it folds first — not remembered for reloads — and the room left for the
+  // banner is measured after, with the focus kept on the banner's summary button.
+  assert.match(zoom, /let box = alertBanner\.getBoundingClientRect\(\);\s*const column = [^\n]*\n[\s\S]*?if \(!column && alertBanner\.classList\.contains\('expanded'\)\) \{\s*setAlertBannerExpanded\(false, false\);\s*alertBanner\.querySelector\('\[data-role="toggle"\]'\)\?\.focus\(\{ preventScroll: true \}\);\s*box = alertBanner\.getBoundingClientRect\(\);\s*\}\s*const topLeft = column/);
+  const classes = new Set(['visible', 'expanded']), attrs = {}, stored = {};
+  const bannerKit = { alertBannerCollapsed: false, liveAlertsOn: false, ALERT_BANNER_COLLAPSED_KEY: 'k', hints: 0,
+    alertBanner: { classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)), contains: c => classes.has(c) },
+                   querySelector: () => ({ setAttribute: (k, v) => { attrs[k] = v; } }) },
+    localStorage: { setItem: (k, v) => { stored[k] = v; } } };
+  vm.runInNewContext(`${extractFunction('setAlertBannerExpanded')}
+    function updateAlertScrollHint() { hints++; }
+    setAlertBannerExpanded(false, false);   // folded for the user (Show this area on the map)`, bannerKit);
+  assert.equal(classes.has('expanded'), false);
+  assert.equal(attrs['aria-expanded'], 'false');
+  assert.equal(bannerKit.alertBannerCollapsed, true, 'later renders keep it folded');
+  assert.deepEqual(Object.keys(stored), [], 'but a reload brings back the user\'s own setting');
+  assert.equal(bannerKit.hints, 1);
+  // The summary button is the user's own choice: remembered.
+  assert.match(html, /if \(role === 'toggle'\) \{\s*setAlertBannerExpanded\(!alertBanner\.classList\.contains\('expanded'\), true\);/);
   // A new search takes it away too.
   assert.match(extractFunction('loadStationsAt'), /clearStations\(\);\s*clearAlertFocus\(\);/);
   const focus = extractFunction('showAlertFocus');
@@ -3226,8 +3245,10 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(html, /#map\.live-alerts-on \.wx-alert-area,\s*#map\.live-alerts-on \.alert-area-label:not\(\.live-area-label\) \{ display: none; \}/);
   // Live mode: name chips on the live areas, and the banner lists the alerts in
   // view (rebuilt only when that set changes), following every move of the map.
-  assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;[\s\S]*?liveViewPending = true;[^\n]*\n\s*renderLiveView\(\);/);
-  assert.match(extractFunction('renderLiveView'), /renderLiveLegend\(\);\s*renderLiveLabels\(\);\s*renderLiveBanner\(\);/);
+  assert.match(html, /map\.on\('moveend', \(\) => \{\s*if \(!liveAlertsOn\) return;[\s\S]*?liveViewPending = true;[^\n]*\n\s*liveViewGen\+\+;[^\n]*\n\s*renderLiveView\(\);/);
+  // (The banner first: the chips are placed clear of it at its new size.)
+  assert.match(extractFunction('renderLiveView'), /renderLiveLegend\(\);\s*renderLiveBanner\(\);[^\n]*\n\s*renderLiveLabels\(\);/);
+  assert.match(extractFunction('toggleLiveAlertType'), /renderLiveBanner\(\);[^\n]*\n\s*renderLiveLabels\(\);/);
   assert.match(extractFunction('renderLiveBanner'), /if \(signature === liveBannerSignature\) return;[\s\S]*renderAlertBanner\(features, true\);/);
   // (Held while the moved view's answer is on its way: no shrink-and-refill.)
   assert.match(extractFunction('renderLiveBanner'), /if \(!liveAlertsOn \|\| liveViewPending\) return;/);
@@ -3236,7 +3257,9 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   assert.match(extractFunction('renderLiveLabels'), /L\.point\(Math\.min\(Math\.max\(x, half \+ 4\), size\.x - half - 4\), Math\.min\(Math\.max\(y, 14\), size\.y - 14\)\)[\s\S]*?containerPointToLatLng\(pt\)/);
   // Chip widths are measured (the wide type defeats a guess), on a probe removed after.
   assert.match(extractFunction('renderLiveLabels'), /probe\.innerHTML = chipHtml\(type, text\); halves\.set\(text, probe\.offsetWidth \/ 2\);[\s\S]*probe\.remove\(\);\s*\}$/);
-  // Each chip leads with a swatch of its area's own colour (the text is lightened).
+  // Each chip leads with a swatch of its area's own colour (the text is lightened),
+  // kept in High Contrast mode too (it pairs the chip with its area's colour on the map).
+  assert.match(html, /\.live-chip-swatch \{[^}]*forced-color-adjust: none;/);
   assert.match(extractFunction('renderLiveLabels'), /<span class="live-chip-swatch" aria-hidden="true" style="background:\$\{liveAlertColor\(type\)\}"><\/span>/);
   // Fixed elements (the station panel, locate, the badge) count as shown: no offsetParent test.
   assert.match(extractFunction('liveLabelObstacles'), /document\.getElementById\('fab-locate'\), document\.getElementById\('app-version'\)\]\s*\.filter\(el => el && el\.getClientRects\(\)\.length\)/);
@@ -3249,7 +3272,8 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   // …and are placed again whenever the station panel opens, closes or changes size,
   // or the map buttons' control does (its colour key opening, the buttons folding).
   assert.match(html, /new LiveAlertsControl\(\)\.addTo\(map\);\s*\/\/[^\n]*\n\s*liveLabelSpace\.observe\(document\.querySelector\('\.live-alerts-ctl'\)\);/);
-  assert.match(html, /const liveLabelSpace = new ResizeObserver\(replaceLiveLabelsIfCrowded\);\s*liveLabelSpace\.observe\(popupPanel\);\s*popupPanel\.addEventListener\('animationend', e => \{ if \(e\.target === popupPanel\) replaceLiveLabelsIfCrowded\(\); \}\);/);
+  // (And the alert banner: shown, grown or shrunk by a refresh or a new search.)
+  assert.match(html, /const liveLabelSpace = new ResizeObserver\(replaceLiveLabelsIfCrowded\);\s*liveLabelSpace\.observe\(popupPanel\);\s*liveLabelSpace\.observe\(alertBanner\);[^\n]*\n\s*popupPanel\.addEventListener\('animationend', e => \{ if \(e\.target === popupPanel\) replaceLiveLabelsIfCrowded\(\); \}\);/);
   // …but only when something they avoid moved: a new LIVE ALERTS count resizes the
   // control right after a view update has placed them, and that needs no second go.
   const crowd = { liveAlertsOn: true, boxes: [{ left: 0, top: 500, right: 120.4, bottom: 540 }], placed: 0, Math };
@@ -3310,6 +3334,10 @@ test('live alerts: NWS colours, readable popup text, one view request at a time'
   // A name chip stands for its alert too (also off its area): its popup on a click,
   // the alert lit up on hover — and a light left on by a redrawn chip put out.
   const chipCode = extractFunction('renderLiveLabels');
+  // (In a pane under the markers, 600: a chip over a station or the search pin
+  // would otherwise take its clicks, hover and drag.)
+  assert.match(html, /map\.createPane\('liveLabels'\)\.style\.zIndex = 590;/);
+  assert.match(chipCode, /L\.tooltip\(\{ pane: 'liveLabels', permanent: true, direction: 'center', interactive: true,/);
   assert.match(chipCode, /interactive: true,[\s\S]*?\.on\('click', e => clickLiveAlert\(props, e\)\)\s*\.on\('mouseover', \(\) => \{ liveChipLit = props\.cap_id; highlightLiveAlert\(props\.cap_id, true\); \}\)\s*\.on\('mouseout', \(\) => \{ liveChipLit = null; highlightLiveAlert\(props\.cap_id, false\); \}\)/);
   assert.match(chipCode, /^function renderLiveLabels\(\) \{\s*\/\/[^\n]*\n\s*if \(liveChipLit\) \{ highlightLiveAlert\(liveChipLit, false\); liveChipLit = null; \}/);
 
@@ -3376,6 +3404,9 @@ test('live alerts saved on the device: replaced per box, 15 minutes at most, end
   const ended = { ...saved[1], f: feature('x', [-75, 40, -74, 41], { ends: past }) };
   assert.equal(k.liveCacheTrim([old, ended], now).length, 0);
   assert.equal(k.liveCacheTrim([{ ...old, at: now - 14 * 60_000 }], now).length, 1);
+  // Saved "in the future" (the clock was set back since): its age is unknown, so it goes.
+  assert.equal(k.liveCacheTrim([{ ...old, at: now + 3_600_000 }], now).length, 0);
+  assert.equal(k.liveCacheTrim([{ ...old, at: now + 1000 }], now).length, 1, 'a second or so: clock jitter, kept');
   // Over its size, the oldest go first.
   const big = (id, at) => ({ ...saved[0], f: feature(id, [-100, 40, -99, 41]), at, size: 5_000_000 });
   assert.deepEqual(Array.from(k.liveCacheTrim([big('old', now - 2000), big('new', now - 1000)], now), p => p.f.properties.cap_id), ['new']);
@@ -3449,6 +3480,13 @@ test('live alerts: taken off the moment they turn 15 minutes old or end, not at 
   ctx.liveCache = [{ at: now - 20 * 60_000, f: { properties: warning } }];
   schedule();
   assert.ok(timers[1].ms <= 100);
+  // A drawn piece dated far ahead (the clock set back 30 days): the wait is capped at
+  // a timer's longest, not overflowed into firing at once, over and over.
+  ctx.liveCache = [];
+  ctx.livePieces = new Set([{ at: now + 30 * 86_400_000, props: warning }]);
+  schedule();
+  assert.equal(timers[2].ms, 2 ** 31 - 1);
+  timers.length = 2;
   ctx.livePieces = new Set(); ctx.liveCache = [];
   schedule();
   ctx.liveAlertsOn = false; ctx.liveCache = [{ at: now }];
@@ -3490,8 +3528,41 @@ test('live alerts: a view downloaded moments ago (as finely) needs no new downlo
   // A newer answer touching a recorded region supersedes it (its outlines there were
   // replaced, perhaps coarser): zoomed out then back in, the view is downloaded again.
   const load = extractFunction('loadLiveAlerts');
-  assert.match(load, /liveFreshViews\.filter\(v => now - v\.at < LIVE_FRESH_MS &&\s*!v\.boxes\.some\(b => queried\.some\(q => q\.intersects\(b\)\)\)\)/);
-  assert.match(load, /\{ boxes: queried, tol: detail, at: now \}/);
+  assert.match(load, /liveFreshViews\.filter\(v => now - v\.at < LIVE_FRESH_MS && !v\.boxes\.some\(reachesFar\) &&\s*!v\.boxes\.some\(b => queried\.some\(q => q\.intersects\(b\)\)\)\)/);
+  // A whole-world answer is fresh only on the copy of the world its shapes were placed
+  // on, not every copy (its replaced region is): a long pan at that zoom downloads again.
+  const lonBox = (w, e) => ({ getWest: () => w, getEast: () => e, getSouth: () => -60, getNorth: () => 80,
+    contains: v => v.w >= w && v.e <= e, intersects: o => o.getWest() <= e && o.getEast() >= w });
+  const fresh2 = vm.runInNewContext(`(() => {
+    const LIVE_FRESH_MS = 60_000;
+    let liveFreshViews = [];
+    ${extractFunction('liveViewFresh')}
+    return (boxes, b, queried, nearLon, now, detail = 1) => {
+      ${load.match(/const reachesFar = [\s\S]*?tol: detail, at: now \}\];/)[0]}
+      return liveFreshViews;
+    };
+  })()`, { L: { latLngBounds: ([, w], [, e]) => lonBox(w, e) } });
+  const world = [{ west: -180, east: 180 }];
+  const wide = (w, e) => ({ w, e, s: 0, n: 0, getWest: () => w, getEast: () => e });   // (a view)
+  // (A 400° view asked for around -100: its shapes were placed on -280…80.)
+  let views = fresh2(world, lonBox(-300, 100), [lonBox(-1e6, 1e6)], -100, now);
+  assert.equal(views.length, 1);
+  assert.equal([views[0].boxes[0].getWest(), views[0].boxes[0].getEast()].join(), '-280,80', 'the copy drawn, not the whole-world box');
+  assert.equal(k.liveViewFresh(views, wide(-200, 0), 1, now), true);
+  assert.equal(k.liveViewFresh(views, wide(-180, 90), 1, now), false, 'reaching onto the next copy, never drawn');
+  assert.equal(k.liveViewFresh(views, wide(150, 350), 1, now), false, 'panned onto the next copy');
+  // Zoomed right out, the view itself is over a full turn wide and fits in no copy:
+  // fresh while its middle stays within 45° of where the shapes were placed (-100).
+  assert.equal(views[0].around, -100);
+  assert.equal(k.liveViewFresh(views, wide(-400, 200), 1, now), true, 'a 600° view around -100');
+  assert.equal(k.liveViewFresh(views, wide(-360, 240), 1, now), true, 'nudged 40°');
+  assert.equal(k.liveViewFresh(views, wide(-300, 300), 1, now), false, 'panned 100°: downloaded around its new middle');
+  assert.equal(k.liveViewFresh(views, wide(-400, 200), 0.5, now), false, 'zoomed in: needs finer outlines');
+  // A region over half a turn from where an answer was placed may hold a piece just
+  // dropped (replaceLivePieces' farAway rule: over a full turn): it goes too, and
+  // coming back, it's downloaded again.
+  views = fresh2([{ west: -110, east: -90 }, { west: 170, east: 180 }], null, [lonBox(610, 630)], 620, now + 1000);
+  assert.equal(views.map(v => v.boxes[0].getWest()).join(), '610', 'the old region (-280…80) is gone');
 });
 
 test('live alerts: the saved copy is drawn at once on opening, unless an answer beat it', async () => {
@@ -3553,7 +3624,7 @@ test('live alerts: requests spaced 2 s apart, the saved copy kept in step and er
   const timers = [], cleared = [];
   const gap = {
     liveAlertsOn: true, liveWaitsForSearch: false, liveLastRequestAt: Date.now() - 500, liveAlertsSeq: 0,
-    liveGapTimer: 0, liveLoadOwed: true, mapMoving: false, Date, LIVE_MIN_GAP_MS: 2000,
+    liveGapTimer: 0, liveLoadOwed: true, mapMoving: false, Date, LIVE_MIN_GAP_MS: 2000, liveViewGen: 0,
     setTimeout: (fn, ms) => timers.push({ fn, ms }) && timers.length, clearTimeout: id => cleared.push(id),
     clearTimeout2: null, liveRetryTimer: 0,
     map: { getBounds: () => { throw new Error('sent'); } }   // the request itself starts here
@@ -3579,8 +3650,14 @@ test('live alerts: requests spaced 2 s apart, the saved copy kept in step and er
   await assert.rejects(loadFn(), /sent/);
   assert.equal(gap.liveAlertsSeq, 1);
   assert.equal(gap.liveLoadOwed, false);
+  // Once the map has moved on, the answer for the view before isn't the newest, even
+  // while the moved view's request isn't sent yet (in its 350 ms pause, waiting its
+  // turn, or owed to a drag's end): the count keeps its "…" (it'd describe the view
+  // before), and no doubtful empty answer is re-checked for that old view.
+  assert.match(load, /const seq = \+\+liveAlertsSeq;\s*const gen = liveViewGen;/);
+  assert.match(load, /const newest = seq === liveAlertsSeq && gen === liveViewGen;/);   // (each move counts: see the moveend test)
   // Each drawn answer is fresh for a minute and saved in place of what was there.
-  assert.match(load, /replaceLivePieces\(features, queried, nearLon\);[\s\S]*?\{ boxes: queried, tol: detail, at: now \}[\s\S]*?liveCache = liveCacheMerge\(liveCache, unique, boxes, now\);\s*saveLiveCache\(\);/);
+  assert.match(load, /replaceLivePieces\(features, queried, nearLon\);[\s\S]*?\{ boxes: wholeWorld \? \[L\.latLngBounds\(\[b\.getSouth\(\), nearLon - 180\], \[b\.getNorth\(\), nearLon \+ 180\]\)\] : queried,\s*around: wholeWorld \? nearLon : null, tol: detail, at: now \}[\s\S]*?liveCache = liveCacheMerge\(liveCache, unique, boxes, now\);\s*saveLiveCache\(\);/);
   // A move inside a fresh region needs no download; the 2-minute check always downloads.
   assert.match(html, /if \(!liveLoadOwed && liveViewFresh\(liveFreshViews, map\.getBounds\(\), liveAlertTolerance\(map\.getZoom\(\)\), Date\.now\(\)\)\) \{\s*liveViewPending = false;\s*renderLiveView\(\);\s*\} else loadLiveAlerts\(\);/);
   assert.match(extractFunction('refreshLiveAlerts'), /if \(!liveAlertsOn\) return;\s*pruneLivePieces\(\);[\s\S]*loadLiveAlerts\(\);/);
@@ -3872,7 +3949,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.match(humidList, /<span>Wind<\/span><span>Humidity<\/span>/);
   // A hot, humid hour: how hot it feels, under its temperature.
   const sticky = Object.assign(hour('2026-10-01T23:00:00-05:00', '2026-10-02T00:00:00-05:00'), { temperature: 86, relativeHumidity: { value: 77 } });
-  assert.match(r.renderForecastHours([sticky], now), /<span class="fc-temp">86°F<small>30°C<\/small><span class="fc-hour-feels">feels 98°<\/span><\/span>/);
+  assert.match(r.renderForecastHours([sticky], now), /<span class="fc-temp">86°F<small>30°C<\/small><span class="fc-hour-feels">feels 98°F<\/span><\/span>/);   // (°F: it follows the °C)
   assert.doesNotMatch(humidList, /fc-hour-feels/);
   assert.match(aired, /<span class="fc-hour-hum"><\/span>/);
   // (Hidden from the eye on wide screens, not from screen readers: the column names are aria-hidden.)
@@ -4080,12 +4157,12 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   assert.equal(flat.air, 'Humidity 80%');
   assert.match(flat.facts, /<p><b>Humidity:<\/b> about 80% throughout\.<\/p>/);
   // Hours that run out early in the row say so (half the row or more is needed).
-  assert.match(k.forecastRowExtras(parts, { humidity: hours(14, '2026-10-03T11', () => 60) }, sa).facts, /the hourly forecast runs to 7 PM\./);
+  assert.match(k.forecastRowExtras(parts, { humidity: hours(14, '2026-10-03T11', () => 60) }, sa).facts, /the hourly forecast runs to 8 PM\./);
 
   // An air-quality forecast ending inside the row: with half the row or more it is
   // shown and says where it stops; with less, it isn't passed off as the whole day.
   const half = k.forecastRowExtras(parts, { aqi: hours(13, '2026-10-03T11', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, sa);
-  assert.match(half.facts, /worst around 6 AM; the air-quality forecast runs to 6 PM\./);
+  assert.match(half.facts, /worst around 6 AM; the air-quality forecast runs to 7 PM\./);   // (to the end of its last hour, 6–7 PM)
   // The night the clocks fall back (2 AM CDT → 1 AM CST): hours after the change
   // are told on the new clock — 10:00 UTC is 4 AM CST, not 5 AM.
   const fallBackNight = [{ isDaytime: false, startTime: '2026-10-31T18:00:00-05:00', endTime: '2026-11-01T06:00:00-06:00' }];
@@ -4294,6 +4371,8 @@ test('wide screens: day columns, chart strips and the picked day', () => {
     .map(h => [utcKey(h.period.startTime), { feels: h.feels, f: h.deg.f }]));
   const heatWeek = k.renderForecastWeek(k.forecastWeekModel(days, hours, { ...extras, humidity, heat }, point), Date.parse('2026-10-03T20:00:00-05:00'));
   assert.match(heatWeek, /<span class="fc-wk-feels">Feels up to \d+°<\/span><span class="fc-wk-hum">/);
+  // The chart's label names what its arrow-key read-out says (how hot it feels, humidity).
+  assert.match(heatWeek, /aria-label="Hour by hour: temperature, how hot it feels, chance of rain, humidity, air quality and pressure\./);
   assert.match(heatWeek, /<path class="fc-wk-feels-line" d="M[^"]+"\/><path class="fc-wk-line"/);
   assert.match(heatWeek, /<span class="fc-wk-label">Temperature \(°F\)<span class="fc-wk-key"><i><\/i>feels like<\/span><\/span>/);
   assert.doesNotMatch(week, /fc-wk-hum/, 'no humidity, no line');
@@ -4365,7 +4444,8 @@ test('wide screens: the week shows from 960 × 600 up; phones keep the list', ()
   const widths = [...cols[1].matchAll(/(\d+)px/g)].map(m => +m[1]);
   const least = widths.reduce((sum, w) => sum + w, 0) + (widths.length - 1) * +cols[2] + 2 * +cols[3];
   assert.equal(widths.length, 9, 'time, icon, temperature, rain, sky, wind, humidity, air quality, pressure');
-  assert.ok(least <= 896, `hourly table needs ${least}px`);
+  // (896 px less the dialog's 1 px borders and a 17 px scrollbar, where shown.)
+  assert.ok(least <= 896 - 2 - 17, `hourly table needs ${least}px`);
   // A tap (no pointermove first) picks the day where it landed, and shows its hour there.
   assert.match(html, /const fraction = \(e\.clientX - box\.left\) \/ box\.width;\s*selectWeekDay\(weekRowAt\(fraction\)\);\s*showWeekHour\(weekHourIn\(fraction\)\);/);
   assert.match(html, /showWeekHour\(weekHourIn\(\(e\.clientX - box\.left\) \/ box\.width\)\);/);

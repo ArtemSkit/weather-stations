@@ -4251,7 +4251,7 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
 /** The wide-screen week view's functions in a vm, with everything they lean on. */
 function forecastWeekKit() {
   const escapeHtml = v => String(v ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
-  const consts = ['WEEK_W', 'WEEK_TEMP', 'WEEK_RAIN', 'WEEK_PRESSURE', 'weekPct', 'weekNum', 'weekEdge']
+  const consts = ['WEEK_W', 'WEEK_TEMP', 'WEEK_RAIN', 'WEEK_AIR', 'WEEK_PRESSURE', 'weekPct', 'weekNum', 'weekEdge', 'weekName']
     .map(name => html.match(new RegExp(`const ${name}\\s*=.*;`))[0]).join('\n');
   return vm.runInNewContext(`(() => {
     let weekModel = null;
@@ -4259,7 +4259,7 @@ function forecastWeekKit() {
     ${['forecastDayPairs', 'forecastLocalTime', 'forecastHourLabel', 'forecastDegrees', 'forecastEmoji',
        'forecastTemp'].map(extractFunction).join('\n')}
     ${forecastExtrasSource}
-    ${['forecastWeekModel', 'weekScale', 'weekNights', 'smoothPath', 'forecastWeekDayHtml', 'weekGrid', 'weekAxis',
+    ${['forecastWeekModel', 'weekScale', 'weekNights', 'smoothPath', 'forecastWeekDayHtml', 'weekGrid', 'weekTicks',
        'weekTempStrip', 'weekRainStrip', 'weekAirStrip', 'weekPressureStrip', 'renderWeekDetail', 'renderForecastWeek',
        'weekHourHtml', 'weekRowAt', 'weekHourAt', 'weekRowOf', 'weekHourIn', 'weekFirstHour'].map(extractFunction).join('\n')}
     return { forecastWeekModel, weekScale, smoothPath, renderForecastWeek, renderWeekDetail, weekRowAt, weekHourAt, weekRowOf,
@@ -4321,8 +4321,8 @@ test('wide screens: the week laid out on one time line, nights from the sun', ()
   // The °F scale on round steps covers it all, its ends at the plot's top and bottom.
   const { tScale } = model;
   assert.ok(tScale.from <= Math.min(...temps) && tScale.to >= Math.max(...feels), `${tScale.from}…${tScale.to}`);
-  assert.equal(model.tempY(tScale.to), 40);
-  assert.equal(model.tempY(tScale.from), 160);
+  assert.equal(model.tempY(tScale.to), 54);
+  assert.equal(model.tempY(tScale.from), 166);
   const steps = tScale.ticks.slice(1).map((t, i) => t - tScale.ticks[i]);
   assert.ok(steps.every(st => st === steps[0]) && [1, 2, 5, 10, 20].includes(steps[0]), String(tScale.ticks));
   assert.ok(tScale.ticks.length - 1 <= 6, 'at most 6 steps');
@@ -4403,23 +4403,34 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   // The chart's label names what its arrow-key read-out says (how hot it feels, humidity).
   assert.match(heatWeek, /aria-label="Hour by hour: temperature, how hot it feels, chance of rain, humidity, air quality and pressure\./);
   assert.match(heatWeek, /<path class="fc-wk-feels-line" d="M[^"]+"\/><path class="fc-wk-line"/);
-  // The dashed line's key sits in the axis column, under the °F scale.
-  assert.match(heatWeek, /<div class="fc-wk-axis" style="height:190px"><span class="fc-wk-axis-name">Temperature<span class="fc-wk-axis-unit">°F<\/span><\/span>(<span class="fc-wk-tick" style="top:[\d.]+px">\d+°<\/span>)+<span class="fc-wk-axis-key"><i><\/i>feels like<\/span><\/div>/);
+  // Each strip's name (with the dashed line's key) is on the chart at its top right:
+  // away from the scale numbers and the next days, over the far end, and never
+  // crossed by the "now" line near the left.
+  assert.match(heatWeek, /<div class="fc-wk-strip fc-wk-temp" style="height:196px"><span class="fc-wk-label">Temperature \(°F\)<span class="fc-wk-key"><i><\/i>feels like<\/span><\/span>/);
+  assert.match(heatWeek, /<span class="fc-wk-label">Chance of rain \(%\)<\/span>/);
+  assert.match(heatWeek, /<span class="fc-wk-label">Pressure \(inHg\)<\/span>/);
+  assert.match(html, /\.fc-wk-label \{\s*position: absolute; top: 4px; right: 8px; z-index: 1;[^}]*max-width: calc\(100% - 16px\); overflow: hidden;/);
   // The chart on top, the day columns under it, then the picked day.
   assert.ok(heatWeek.indexOf('class="fc-wk-chart"') < heatWeek.indexOf('class="fc-wk-days"'), 'chart before the days');
   assert.ok(heatWeek.indexOf('class="fc-wk-days"') < heatWeek.indexOf('class="fc-wk-detail"'), 'days before the details');
-  // Each strip's name, unit and scale are in an axis column beside the chart — nothing
-  // is written over the plot, so no line runs through a label — with the steps level
-  // with gridlines across the plot. The axis blocks match the strips' heights, and the
-  // days sit under the chart only.
-  assert.doesNotMatch(heatWeek + html, /fc-wk-label/);
-  assert.match(heatWeek, /<div class="fc-wk-graph"><div class="fc-wk-axes" aria-hidden="true">[^]*?<\/div><div class="fc-wk-chart" tabindex="0"/);
+  // The scale numbers: a slim column beside the chart, each level with a gridline
+  // across the plot; its blocks match the strips' heights, and the days sit under the
+  // chart only. The names are readable (not the column's small print).
+  assert.match(heatWeek, /<div class="fc-wk-graph"><div class="fc-wk-axes" aria-hidden="true"><div class="fc-wk-axis" style="height:196px">(<span class="fc-wk-tick" style="top:[\d.]+px">\d+°<\/span>)+<\/div>[^]*?<\/div><div class="fc-wk-chart" tabindex="0"/);
+  assert.match(html, /\.fc-wk-label \{[^}]*font-size: 0\.74rem;/);
+  assert.match(html, /\.fc-wk-tick \{[^}]*font-size: 0\.7rem;/);
   const axisHeights = [...heatWeek.matchAll(/<div class="fc-wk-axis" style="height:(\d+)px">/g)].map(m => +m[1]);
   const stripHeights = [...heatWeek.matchAll(/<div class="fc-wk-strip fc-wk-\w+" style="height:(\d+)px">/g)].map(m => +m[1]);
   assert.deepEqual(axisHeights, stripHeights);
   assert.ok((heatWeek.match(/<line class="fc-wk-grid"/g) || []).length >= 10, 'gridlines');
-  assert.match(html, /\.fc-wk-axes \{ flex: 0 0 88px;/);
-  assert.match(html, /\.fc-wk-axed \.fc-wk-days \{ margin-left: 87px; border-left: 1px solid var\(--border\); \}/);
+  assert.match(html, /\.fc-wk-axes \{ flex: 0 0 42px;/);
+  assert.match(html, /\.fc-wk-axed \.fc-wk-days \{ margin-left: 41px; border-left: 1px solid var\(--border\); \}/);
+  // Every name stays above the data's own labels: a high's label (~30 px over its dot),
+  // a rain peak's (~16 px over its bar), a pressure label (~10 px either side of its dot).
+  const room = vm.runInNewContext(`(() => { ${['WEEK_TEMP', 'WEEK_RAIN', 'WEEK_AIR', 'WEEK_PRESSURE']
+    .map(name => html.match(new RegExp(`const ${name} *= \\{[^}]*\\};`))[0]).join('\n')}
+    return [WEEK_TEMP.top - 30, WEEK_RAIN.top - 16, WEEK_AIR.top, WEEK_PRESSURE.top - 10]; })()`);
+  for (const top of room) assert.ok(top >= 23, `data labels start at ${top} px, under the name (4–23 px)`);
   assert.doesNotMatch(week, /fc-wk-hum/, 'no humidity, no line');
   // The chart: a keyboard-reachable group; strips drawn for the eye only.
   assert.match(week, /<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: [^"]+">/);
@@ -4435,7 +4446,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   // Rain: a bar per hour on a labelled scale (0–50% here: the week stays under it),
   // each day's highest chance written over its bar; the air key lists only the
   // categories present, in the axis column; pressure extremes.
-  assert.match(week, /<span class="fc-wk-axis-name">Rain<span class="fc-wk-axis-unit">% chance<\/span><\/span><span class="fc-wk-tick" style="top:84px">0%<\/span><span class="fc-wk-tick" style="top:56px">25%<\/span><span class="fc-wk-tick" style="top:28px">50%<\/span>/);
+  assert.match(week, /<div class="fc-wk-axis" style="height:104px"><span class="fc-wk-tick" style="top:96px">0%<\/span><span class="fc-wk-tick" style="top:69px">25%<\/span><span class="fc-wk-tick" style="top:42px">50%<\/span><\/div>/);
   assert.match(week, /<g class="fc-wk-rain-bars"><rect x="[\d.]+" y="[\d.]+" width="[\d.]+" height="[\d.]+"\/>/);
   assert.match(week, /<span class="fc-wk-pk[^"]*" style="left:[\d.]+%;top:[\d.]+px">40%<\/span>/);
   // Two days' peaks an hour apart (Tonight's last, Sunday's first): only the higher
@@ -4444,8 +4455,8 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   close.hours.forEach((h, i) => { h.probabilityOfPrecipitation = { value: i === 11 ? 30 : i === 12 ? 20 : 2 }; });
   const closeWeek = k.renderForecastWeek(k.forecastWeekModel(close.days, close.hours, close.extras, close.point));
   assert.deepEqual([...closeWeek.matchAll(/class="fc-wk-pk[^"]*"[^>]*>(\d+)%</g)].map(m => m[1]), ['30']);
-  assert.match(week, /<span class="fc-wk-axis-name">Air quality<\/span><span class="fc-wk-axis-keys"><span class="fc-aqi fc-aqi-1">Good<\/span><span class="fc-aqi fc-aqi-3">Unhealthy for sensitive groups<\/span><\/span>/);
-  assert.match(week, /<span class="fc-wk-axis-name">Pressure<span class="fc-wk-axis-unit">inHg<\/span><\/span><span class="fc-wk-tick" style="top:[\d.]+px">\d+\.\d\d<\/span>/);
+  assert.match(week, />Air quality <span class="fc-aqi fc-aqi-1">Good<\/span><span class="fc-aqi fc-aqi-3">Unhealthy for sensitive groups<\/span><\/span>/);
+  assert.match(week, /<div class="fc-wk-axis" style="height:100px">(<span class="fc-wk-tick" style="top:[\d.]+px">\d+\.\d\d<\/span>)+<\/div>/);
   assert.equal((week.match(/fc-wk-pt-ph|fc-wk-pt-pl/g) || []).length, 2);
   // Past the hourly forecast's reach, the columns say so.
   assert.match(week, /The hourly forecast doesn&#39;t reach this far yet|The hourly forecast doesn't reach this far yet/);

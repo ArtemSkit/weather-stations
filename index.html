@@ -1715,23 +1715,18 @@
   .fc-wk-sunset { font-size: 0.8rem; font-weight: 700; color: #ffb37a; }   /* sunset: the one to spot */
 
   /* The chart: strips stacked on one time line, nights shaded behind all of them. */
-  /* The chart and, on its left, the axis column: each strip's name and unit, and its
-     scale's steps level with the gridlines across the plot (as tall as its strip). */
+  /* The chart and, on its left, a slim column of each strip's scale numbers, level
+     with the gridlines across the plot (each block as tall as its strip). */
   .fc-wk-graph { display: flex; border-bottom: 1px solid var(--border); }
-  .fc-wk-axes { flex: 0 0 88px; border-right: 1px solid var(--border); color: var(--text-muted); }
+  .fc-wk-axes { flex: 0 0 42px; border-right: 1px solid var(--border); }
   .fc-wk-axis { position: relative; }
   .fc-wk-axis + .fc-wk-axis { border-top: 1px solid rgba(30,58,95,0.55); }   /* (as the strips: they line up) */
-  .fc-wk-axis-name { position: absolute; left: 10px; top: 5px; font-size: 0.62rem; line-height: 1.25; white-space: nowrap; }
-  .fc-wk-axis-unit { display: block; opacity: 0.75; }
   .fc-wk-tick {
-    position: absolute; right: 8px; transform: translateY(-50%);
-    font-family: 'Space Mono', monospace; font-size: 0.62rem; line-height: 1; white-space: nowrap;
+    position: absolute; right: 5px; transform: translateY(-50%);
+    font-family: 'Space Mono', monospace; font-size: 0.7rem; line-height: 1; color: var(--text-muted); white-space: nowrap;
   }
-  .fc-wk-axis-key { position: absolute; left: 10px; bottom: 6px; display: flex; align-items: center; gap: 4px; font-size: 0.6rem; white-space: nowrap; }
-  .fc-wk-axis-keys { position: absolute; left: 10px; right: 6px; top: 22px; display: grid; gap: 0; font-size: 0.6rem; line-height: 12px; }
-  .fc-wk-axis-keys .fc-aqi { color: var(--text-muted); }
-  /* The days under the chart only (not the axis column), each right under its hours. */
-  .fc-wk-axed .fc-wk-days { margin-left: 87px; border-left: 1px solid var(--border); }
+  /* The days under the chart only (not the scale column), each right under its hours. */
+  .fc-wk-axed .fc-wk-days { margin-left: 41px; border-left: 1px solid var(--border); }
   .fc-wk-chart { position: relative; flex: 1 1 auto; min-width: 0; outline: none; cursor: crosshair; }
   /* The keyboard focus ring, drawn on a layer over the strips' contents (their
      labelled points would cover a ring drawn on the chart itself) and the tooltip's edge. */
@@ -1754,6 +1749,19 @@
   .fc-wk-strip { position: relative; }
   .fc-wk-strip + .fc-wk-strip { border-top: 1px solid rgba(30,58,95,0.55); }
   .fc-wk-strip svg { display: block; width: 100%; overflow: visible; }
+  /* Each strip's name (and key) on the chart, at its top right: away from the scale
+     numbers and the next days (where the forecast is surest and the eye goes first),
+     over the far end, and never crossed by the "now" line near the left edge. */
+  .fc-wk-label {
+    position: absolute; top: 4px; right: 8px; z-index: 1; display: flex; align-items: center; gap: 12px;
+    padding: 2px 7px; border-radius: 4px; background: rgba(17,24,39,0.94);
+    font-size: 0.74rem; line-height: 1.25; color: #c3cfdf; white-space: nowrap; pointer-events: none;
+    /* (Never wider than the chart: a week of many air categories in a narrow window
+       would otherwise spill left over the scale numbers.) */
+    max-width: calc(100% - 16px); overflow: hidden;
+  }
+  .fc-wk-label .fc-aqi { color: #c3cfdf; }
+  .fc-wk-key { display: inline-flex; align-items: center; gap: 5px; }
   .fc-wk-feels-line { fill: none; stroke: #ff8a5c; stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
   .fc-wk-line {
     fill: none; stroke: url(#fc-wk-heat); stroke-width: 2.5;
@@ -1878,7 +1886,7 @@
   .fc-strip-feels { fill: none; stroke: #ff8a5c; stroke-width: 2; stroke-dasharray: 5 4; stroke-linecap: round; }
   .fc-strip-feels-val { font-size: 12px; }
   .fc-strip-key { display: flex; align-items: center; gap: 4px; font-size: 0.62rem; white-space: nowrap; }
-  .fc-strip-key i, .fc-wk-axis-key i { width: 14px; border-top: 2px dashed #ff8a5c; }
+  .fc-strip-key i, .fc-wk-key i { width: 14px; border-top: 2px dashed #ff8a5c; }
   /* A faint rule between the rows under the graph, so each reads as its own. */
   .fc-strip-rule { position: absolute; left: 0; right: 0; z-index: 0; border-top: 1px solid rgba(113,147,181,0.16); pointer-events: none; }
   .fc-strip-band { position: absolute; top: 0; bottom: 0; z-index: 0; pointer-events: none; }
@@ -8120,11 +8128,12 @@ window.addEventListener('resize', () => {
 /** The chart's width in SVG units (stretched to fit; strokes keep their width). */
 const WEEK_W = 1000;
 /** Strip heights in px, and where each plot lies inside its strip: its scale's top
-    at `top`, its bottom (or 0%) at `bottom`/`base`. Each strip's name, unit and scale
-    are in the axis column on its left (.fc-wk-axes), never over the plot. */
-const WEEK_TEMP     = { height: 190, top: 40, bottom: 160 };   // a high's label above its dot, a low's below
-const WEEK_RAIN     = { height: 92, top: 28, base: 84 };       // a day's highest chance written over its bar
-const WEEK_PRESSURE = { height: 104, top: 34, bottom: 82 };    // its labels beside their dots
+    at `top`, its bottom (or 0%) at `bottom`/`base`. Above `top`, the strip's name
+    (4–23 px: .fc-wk-label) stays clear of the data's own labels. */
+const WEEK_TEMP     = { height: 196, top: 54, bottom: 166 };   // a high's label above its dot, a low's below
+const WEEK_RAIN     = { height: 104, top: 42, base: 96 };      // a day's highest chance written over its bar
+const WEEK_AIR      = { height: 50, top: 30, band: 14 };
+const WEEK_PRESSURE = { height: 100, top: 36, bottom: 84 };    // its labels beside their dots
 
 let weekModel = null;   // the open forecast's week, for the chart's pointer and keys
 let weekHour  = -1;     // the hour the chart's cursor is on; -1 = none
@@ -8347,23 +8356,24 @@ function weekGrid(ys) {
 }
 
 /**
- * A strip's block in the axis column (as tall as the strip): its name and unit, its
- * scale's steps level with their gridlines, and anything else it needs (a key).
+ * A strip's block in the scale column (as tall as the strip): its scale's steps,
+ * each level with its gridline.
  * @param {[number, string][]} ticks - [height in px, text]
  */
-function weekAxis(name, unit, height, ticks = [], extra = '') {
-  return '<div class="fc-wk-axis" style="height:' + height + 'px"><span class="fc-wk-axis-name">' + name +
-    (unit ? '<span class="fc-wk-axis-unit">' + unit + '</span>' : '') + '</span>' +
-    ticks.map(([y, text]) => '<span class="fc-wk-tick" style="top:' + weekNum(y) + 'px">' + text + '</span>').join('') +
-    extra + '</div>';
+function weekTicks(height, ticks = []) {
+  return '<div class="fc-wk-axis" style="height:' + height + 'px">' +
+    ticks.map(([y, text]) => '<span class="fc-wk-tick" style="top:' + weekNum(y) + 'px">' + text + '</span>').join('') + '</div>';
 }
+
+/** A strip's name (and key) on the chart (at its top right: see .fc-wk-label). */
+const weekName = html => '<span class="fc-wk-label">' + html + '</span>';
 
 /** The temperature strip: the curve (warm to cool), each day's high and each night's low. */
 function weekTempStrip(model) {
   const { points, rows } = model;
   const xy = points.map(h => [h.x * WEEK_W, model.tempY(h.deg.f)]);
   const line = smoothPath(xy);
-  // The heat index, dashed, where it feels hotter (see feelsPath); its key is in the axis column.
+  // The heat index, dashed, where it feels hotter (see feelsPath); its key is by the strip's name.
   const feels = feelsPath(points.map((h, i) => ({ temp: xy[i], feels: h.feels != null ? [xy[i][0], model.tempY(h.feels)] : null })));
   const area = line + 'L' + weekNum(xy[xy.length - 1][0]) + ',' + WEEK_TEMP.bottom +
                'L' + weekNum(xy[0][0]) + ',' + WEEK_TEMP.bottom + 'Z';
@@ -8388,9 +8398,9 @@ function weekTempStrip(model) {
     '">The hourly forecast doesn\'t reach this far yet</span>' : '';
   const ticks = model.tScale.ticks;
   return {
-    axis: weekAxis('Temperature', '°F', WEEK_TEMP.height, ticks.map(t => [model.tempY(t), t + '°']),
-      feels ? '<span class="fc-wk-axis-key"><i></i>feels like</span>' : ''),
+    axis: weekTicks(WEEK_TEMP.height, ticks.map(t => [model.tempY(t), t + '°'])),
     plot: '<div class="fc-wk-strip fc-wk-temp" style="height:' + WEEK_TEMP.height + 'px">' +
+      weekName('Temperature (°F)' + (feels ? '<span class="fc-wk-key"><i></i>feels like</span>' : '')) +
       '<svg viewBox="0 0 ' + WEEK_W + ' ' + WEEK_TEMP.height + '" preserveAspectRatio="none" height="' + WEEK_TEMP.height + '" focusable="false">' +
         '<defs><linearGradient id="fc-wk-heat" gradientUnits="userSpaceOnUse" x1="0" y1="' + WEEK_TEMP.top +
           '" x2="0" y2="' + WEEK_TEMP.bottom + '"><stop offset="0" stop-color="#ffb37a"/><stop offset="1" stop-color="#8fd3ff"/></linearGradient></defs>' +
@@ -8435,27 +8445,23 @@ function weekRainStrip(model) {
       ';top:' + weekNum(y(chance(peak))) + 'px">' + Math.round(chance(peak)) + '%</span>').join('');
   const ticks = [0, top / 2, top];
   return {
-    axis: weekAxis('Rain', '% chance', WEEK_RAIN.height, ticks.map(t => [y(t), t + '%'])),
+    axis: weekTicks(WEEK_RAIN.height, ticks.map(t => [y(t), t + '%'])),
     plot: '<div class="fc-wk-strip fc-wk-rain" style="height:' + WEEK_RAIN.height + 'px">' +
+      weekName('Chance of rain (%)') +
       '<svg viewBox="0 0 ' + WEEK_W + ' ' + WEEK_RAIN.height + '" preserveAspectRatio="none" height="' + WEEK_RAIN.height + '" focusable="false">' +
         weekGrid(ticks.map(y)) + '<g class="fc-wk-rain-bars">' + bars + '</g>' +
       '</svg>' + peaks + (most ? '' : '<span class="fc-wk-none">No rain expected</span>') + '</div>'
   };
 }
 
-/**
- * The air strip: each hour in its EPA colour, its key (the categories shown) in the
- * axis column, one per line; the strip as tall as the key needs.
- */
+/** The air strip: each hour in its EPA colour, the key (the categories shown) by its name. */
 function weekAirStrip(model) {
   const { points } = model;
   const levels = new Set();
   points.forEach(h => { if (h.air) levels.add(aqiCategory(h.air.value).level); });
   if (!levels.size) return null;
   const names = [...levels].sort().map(level => [level, aqiCategory([0, 25, 75, 125, 175, 250, 350][level]).label]);
-  // (About 12 characters to a line in the column: "Unhealthy for sensitive groups" takes three.)
-  const lines = names.reduce((sum, [, label]) => sum + Math.ceil((label.length + 2) / 12), 0);
-  const height = Math.max(46, 26 + lines * 12 + 8), bandTop = 24, bandBottom = bandTop + 14;
+  const { height, top: bandTop, band } = WEEK_AIR, bandBottom = bandTop + band;
   const cells = points.map((h, i) => {
     if (!h.air) return '';
     const left = i ? (points[i - 1].x + h.x) / 2 : h.x;
@@ -8463,11 +8469,10 @@ function weekAirStrip(model) {
     return '<rect class="fc-aqi-' + aqiCategory(h.air.value).level + '" x="' + weekNum(left * WEEK_W) + '" y="' + bandTop +
            '" width="' + weekNum(Math.max(right - left, 0.001) * WEEK_W) + '" height="' + (bandBottom - bandTop) + '"/>';
   }).join('');
-  const key = '<span class="fc-wk-axis-keys">' +
-    names.map(([level, label]) => '<span class="fc-aqi fc-aqi-' + level + '">' + label + '</span>').join('') + '</span>';
+  const key = names.map(([level, label]) => '<span class="fc-aqi fc-aqi-' + level + '">' + label + '</span>').join('');
   return {
-    axis: weekAxis('Air quality', '', height, [], key),
-    plot: '<div class="fc-wk-strip fc-wk-air" style="height:' + height + 'px">' +
+    axis: weekTicks(height),
+    plot: '<div class="fc-wk-strip fc-wk-air" style="height:' + height + 'px">' + weekName('Air quality ' + key) +
       '<svg viewBox="0 0 ' + WEEK_W + ' ' + height + '" preserveAspectRatio="none" height="' + height + '" focusable="false">' +
         cells + '</svg></div>'
   };
@@ -8483,8 +8488,9 @@ function weekPressureStrip(model) {
     weekNum(model.pressureY(h.hpa)) + 'px"><b>' + hpaToInHg(h.hpa) + '</b></span>';
   const ticks = model.pScale.ticks.map(t => [model.pressureY(t * 33.86389), t.toFixed(2)]);
   return {
-    axis: weekAxis('Pressure', 'inHg', WEEK_PRESSURE.height, ticks),
+    axis: weekTicks(WEEK_PRESSURE.height, ticks),
     plot: '<div class="fc-wk-strip fc-wk-pressure" style="height:' + WEEK_PRESSURE.height + 'px">' +
+      weekName('Pressure (inHg)') +
       '<svg viewBox="0 0 ' + WEEK_W + ' ' + WEEK_PRESSURE.height + '" preserveAspectRatio="none" height="' + WEEK_PRESSURE.height + '" focusable="false">' +
         weekGrid(ticks.map(([y]) => y)) + '<path class="fc-wk-pressure-line" d="' + line + '"/></svg>' +
       mark(top, 'ph') + mark(low, 'pl') + '</div>'
@@ -8516,10 +8522,10 @@ function renderForecastWeek(model, now = Date.now()) {
   const strips = points.length >= 2
     ? [weekTempStrip(model), weekRainStrip(model), weekAirStrip(model), weekPressureStrip(model)].filter(Boolean) : [];
   return '<div class="fc-week' + (strips.length ? ' fc-wk-axed' : '') + '">' +
-    // The chart on top, each day's column right under its hours, and on its left the
-    // axis column: each strip's name, unit and scale (nothing written over the plot).
-    // The strips are drawn for the eye; keyboard and screen-reader users step through
-    // the hours with the arrow keys (read out below), and the HOURLY tab lists them all.
+    // The chart on top, each day's column right under its hours, and on its left a
+    // slim column of the strips' scale numbers. The strips are drawn for the eye;
+    // keyboard and screen-reader users step through the hours with the arrow keys
+    // (read out below), and the HOURLY tab lists them all.
     '<div class="fc-wk-graph">' +
       (strips.length ? '<div class="fc-wk-axes" aria-hidden="true">' + strips.map(st => st.axis).join('') + '</div>' : '') +
       '<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: temperature, how hot it feels, chance of rain, humidity, air quality and pressure. Use the arrow keys to go through the hours and Enter to pick that day.">' +

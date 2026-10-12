@@ -831,10 +831,7 @@
   #forecast-btn:not([hidden]) ~ .status-bar { margin-left: 0; }
 
   #forecast-dialog {
-    /* Centred across, its top edge fixed (the page's global margin reset would pin it
-       top-left): the 7 DAYS and HOURLY tabs differ in height, and a dialog centred
-       up and down too made the head and tabs jump at each switch. */
-    margin: 24px auto auto;
+    margin: auto;   /* centred: the page's global margin reset would pin it top-left */
     padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
     background: var(--surface); color: var(--text);
     /* A desktop window too narrow (or short) for the wide layout below: use most of
@@ -1597,10 +1594,10 @@
 
   /* ════════════════════════════════════════════════════════════════════════════
      FORECAST ON WIDE SCREENS — the week at a glance (section 14D)
-     From 720 × 600 px up the 7-day list gives way to a timeline: the days side by
-     side over one continuous chart of their hours, the nights shaded from sunset
-     to sunrise; from 960 px the dialog grows to use the screen. After the phone
-     rules, so a large touch screen (a tablet) gets it too.
+     From 720 × 600 px up the 7-day list gives way to a timeline: one continuous
+     chart of the days' hours, the nights shaded from sunset to sunrise, over the
+     days side by side; from 960 × 600 px the dialog grows to use the screen.
+     After the phone rules, so a large touch screen (a tablet) gets it too.
      ════════════════════════════════════════════════════════════════════════════ */
   .fc-week { display: none; }
   @media (min-width: 720px) and (min-height: 600px) {
@@ -1611,8 +1608,7 @@
     #forecast-dialog {
       width: min(1880px, calc(100vw - 64px));   /* big monitors: use them (text keeps its size, the chart widens) */
       max-height: min(94vh, 1400px); max-height: min(94dvh, 1400px);   /* tall monitors too */
-      margin: 3vh auto auto; margin: 3dvh auto auto;   /* (top edge fixed: see above) */
-      border-radius: 10px; border-bottom: 1px solid var(--border);
+      margin: auto; border-radius: 10px; border-bottom: 1px solid var(--border);
     }
     .fc-foot { padding-bottom: 8px; }
     /* The hourly table (see the 820 px rules above) with roomier columns. */
@@ -1625,7 +1621,7 @@
     .fc-hour-day { padding-left: 20px; }
   }
 
-  /* The days: columns as wide as their hours, hairlines between, the picked one lit. */
+  /* The days (under the chart): columns as wide as their hours, hairlines between, the picked one lit. */
   .fc-wk-days { display: grid; border-bottom: 1px solid var(--border); }
   .fc-wk-day {
     display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0;
@@ -1680,7 +1676,7 @@
   /* A 720–960 px window: every column keeps what reads at a glance — the sky's
      icon, the high and low, the chance of rain and, on a hot day, how hot it feels
      ("Feels 102°"). The sky in words, the sunset, the humidity and the air quality
-     go out of sight (still read out with the day; the chart under the days and the
+     go out of sight (still read out with the day; the chart over the days and the
      picked day's details show them), so a column isn't a cramped stack. Slimmer
      padding and names keep a part-day column's name ("Tonight") whole. */
   @media (max-width: 959px) {
@@ -1710,7 +1706,10 @@
 
   /* The chart: strips stacked on one time line, nights shaded behind all of them. */
   .fc-wk-chart { position: relative; border-bottom: 1px solid var(--border); outline: none; cursor: crosshair; }
-  .fc-wk-chart:focus-visible { box-shadow: inset 0 0 0 2px var(--text); }
+  /* The keyboard focus ring, drawn on a layer over the strips' name bands (which
+     would cover a ring drawn on the chart itself) and over the tooltip's edge. */
+  .fc-wk-chart::after { content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+  .fc-wk-chart:focus-visible::after { box-shadow: inset 0 0 0 2px var(--text); }
   .fc-wk-back { position: absolute; inset: 0; pointer-events: none; }
   .fc-wk-back > span { position: absolute; top: 0; bottom: 0; }
   .fc-wk-night    { background: rgba(2,5,14,0.55); }
@@ -1720,17 +1719,22 @@
   .fc-wk-sep { width: 1px; background: var(--border); }
   .fc-wk-sel { background: rgba(0,212,255,0.05); box-shadow: inset 1px 0 rgba(0,212,255,0.4), inset -1px 0 rgba(0,212,255,0.4); }
   .fc-wk-now { width: 0; border-left: 1px solid var(--accent); }
-  /* Under the strip name, on a backing like the other labels. */
+  /* Under the temperature strip's name band, on a backing like the other labels. */
   .fc-wk-now > span {
-    position: absolute; top: 28px; left: 5px; padding: 0 5px; border-radius: 3px;
+    position: absolute; top: 27px; left: 5px; padding: 0 5px; border-radius: 3px;
     background: rgba(17,24,39,0.92); font-size: 0.68rem; font-weight: 700; color: var(--accent);
   }
   .fc-wk-strip { position: relative; }
   .fc-wk-strip + .fc-wk-strip { border-top: 1px solid rgba(30,58,95,0.55); }
   .fc-wk-strip svg { display: block; width: 100%; overflow: visible; }
+  /* Each strip's name in a solid band across the chart's full width, over the
+     nights and the lines behind (day dividers, the picked day, "now"): they stop
+     at it instead of running through a label. (22 px: each strip's plot lies under
+     it — see WEEK_TEMP and the rest.) */
   .fc-wk-label {
-    position: absolute; left: 8px; top: 5px; z-index: 1; display: flex; flex-wrap: wrap; gap: 4px 12px;
-    padding: 1px 6px; border-radius: 3px; background: rgba(17,24,39,0.9);   /* lines never run through it */
+    position: absolute; left: 0; right: 0; top: 0; height: 22px; z-index: 1;
+    display: flex; align-items: center; gap: 12px; padding: 0 10px; overflow: hidden; white-space: nowrap;
+    background: var(--surface); border-bottom: 1px solid rgba(30,58,95,0.55);
     font-size: 0.64rem; color: var(--text-muted); pointer-events: none;
   }
   .fc-wk-label .fc-aqi { color: var(--text-muted); }
@@ -1891,7 +1895,7 @@
     .fc-tabs [role="tab"] { border-bottom-color: Canvas; }
     .fc-tabs [role="tab"][aria-selected="true"] { border-bottom-color: Highlight; }
     .fc-wk-day[aria-selected="true"] { outline: 3px solid Highlight; outline-offset: -3px; }
-    .fc-wk-chart:focus-visible { outline: 2px solid Highlight; outline-offset: -2px; }
+    .fc-wk-chart:focus-visible::after { outline: 2px solid Highlight; outline-offset: -2px; }   /* (over the name bands) */
     .fc-wk-pt b, .fc-wk-now > span { border: 1px solid CanvasText; }
   }
 
@@ -8079,20 +8083,21 @@ window.addEventListener('resize', () => {
 });
 
 /* ── The week at a glance (from 720 × 600 px) ────────────────────────────────
-   On a wide enough screen the 7-day forecast becomes a timeline: the days side by side,
-   and under them one continuous chart of their hours — temperature, chance of
-   rain, air quality and pressure, each on its own strip and scale — with every
-   night shaded from sunset to sunrise. Each day's column sits right above its own
-   hours. Picking a day (or a spot on the chart) shows its full forecast below.
+   On a wide enough screen the 7-day forecast becomes a timeline: one continuous
+   chart of the days' hours — temperature, chance of rain, air quality and
+   pressure, each on its own strip and scale — with every night shaded from sunset
+   to sunrise, and the days side by side under it, each day's column right below
+   its own hours. Picking a day (or a spot on the chart) shows its full forecast below.
    Phones keep the list (renderForecastDays); CSS shows one or the other. */
 
 /** The chart's width in SVG units (stretched to fit; strokes keep their width). */
 const WEEK_W = 1000;
-/** Strip heights in px, and where each plot lies inside its strip. */
+/** Strip heights in px, and where each plot lies inside its strip — all of it under
+    the strip's name band (22 px across the top: see .fc-wk-label). */
 const WEEK_TEMP     = { height: 192, top: 60, bottom: 150 };   // room for the labels above and below
-const WEEK_RAIN     = { height: 58, base: 52, full: 32 };   // a 100% chance rises `full` px
-const WEEK_AIR      = { height: 40, top: 24, band: 8 };
-const WEEK_PRESSURE = { height: 80, top: 32, bottom: 56 };   // room under the low's label
+const WEEK_RAIN     = { height: 62, base: 56, full: 32 };   // a 100% chance rises `full` px (to 24)
+const WEEK_AIR      = { height: 44, top: 28, band: 8 };
+const WEEK_PRESSURE = { height: 88, top: 40, bottom: 64 };   // the high's label (beside its dot) clear of the band; room under the low's
 
 let weekModel = null;   // the open forecast's week, for the chart's pointer and keys
 let weekHour  = -1;     // the hour the chart's cursor is on; -1 = none
@@ -8106,7 +8111,7 @@ const weekEdge = x => (x < 0.05 ? ' fc-wk-pt-start' : x > 0.92 ? ' fc-wk-pt-end'
 
 /**
  * The week laid out: the day columns (a day and its night, as in the list), the
- * hours placed under them, the nights to shade and each strip's scale.
+ * hours placed over them, the nights to shade and each strip's scale.
  * @returns {Object|null} null when the NWS sent no usable periods
  */
 function forecastWeekModel(periods, hours, extras, point) {
@@ -8416,18 +8421,18 @@ function renderForecastWeek(model, now = Date.now()) {
     ? weekTempStrip(model) + weekRainStrip(model) + weekAirStrip(model) + weekPressureStrip(model)
     : '<p class="fc-empty">The NWS sent no hourly forecast for these days.</p>';
   return '<div class="fc-week">' +
-    '<div class="fc-wk-days" role="tablist" aria-label="Days" style="grid-template-columns:' +
-      rows.map(row => 'minmax(0,' + row.width.toFixed(4) + 'fr)').join(' ') + '">' +
-      rows.map((row, i) => forecastWeekDayHtml(row, i, i === model.selected)).join('') + '</div>' +
-    // The strips are drawn for the eye; keyboard and screen-reader users step
-    // through the hours with the arrow keys (read out below), and the HOURLY tab
-    // lists them all.
+    // The chart on top, each day's column right under its hours. The strips are
+    // drawn for the eye; keyboard and screen-reader users step through the hours
+    // with the arrow keys (read out below), and the HOURLY tab lists them all.
     '<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: temperature, how hot it feels, chance of rain, humidity, air quality and pressure. Use the arrow keys to go through the hours and Enter to pick that day.">' +
       '<div class="fc-wk-back" aria-hidden="true">' + backdrop + '</div>' +
       '<div aria-hidden="true">' + strips + '</div>' +
       '<span class="fc-wk-cursor" aria-hidden="true" hidden></span><span class="fc-wk-dot" aria-hidden="true" hidden></span>' +
       '<div class="fc-wk-tip" aria-hidden="true" hidden></div>' +
     '</div>' +
+    '<div class="fc-wk-days" role="tablist" aria-label="Days" style="grid-template-columns:' +
+      rows.map(row => 'minmax(0,' + row.width.toFixed(4) + 'fr)').join(' ') + '">' +
+      rows.map((row, i) => forecastWeekDayHtml(row, i, i === model.selected)).join('') + '</div>' +
     '<p class="sr-only" id="fc-wk-readout" aria-live="polite"></p>' +
     '<div class="fc-wk-detail" id="fc-wk-detail" role="tabpanel" aria-labelledby="fc-wk-tab-' + model.selected + '">' +
       renderWeekDetail(model, model.selected) + '</div>' +

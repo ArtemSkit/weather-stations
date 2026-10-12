@@ -4388,6 +4388,18 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(heatWeek, /aria-label="Hour by hour: temperature, how hot it feels, chance of rain, humidity, air quality and pressure\./);
   assert.match(heatWeek, /<path class="fc-wk-feels-line" d="M[^"]+"\/><path class="fc-wk-line"/);
   assert.match(heatWeek, /<span class="fc-wk-label">Temperature \(°F\)<span class="fc-wk-key"><i><\/i>feels like<\/span><\/span>/);
+  // The chart on top, the day columns under it, then the picked day.
+  assert.ok(heatWeek.indexOf('class="fc-wk-chart"') < heatWeek.indexOf('class="fc-wk-days"'), 'chart before the days');
+  assert.ok(heatWeek.indexOf('class="fc-wk-days"') < heatWeek.indexOf('class="fc-wk-detail"'), 'days before the details');
+  // Each strip's name is a solid band across the full width, over the nights and the
+  // lines behind (dividers, the picked day, "now"): no line runs through a label —
+  // and every plot lies under the 22 px band.
+  assert.match(html, /\.fc-wk-label \{\s*position: absolute; left: 0; right: 0; top: 0; height: 22px; z-index: 1;[^}]*background: var\(--surface\);/);
+  const bandRoom = vm.runInNewContext(`(() => { ${['WEEK_TEMP', 'WEEK_RAIN', 'WEEK_AIR', 'WEEK_PRESSURE']
+    .map(name => html.match(new RegExp(`const ${name} *= \\{[^}]*\\};`))[0]).join('\n')}
+    return [WEEK_TEMP.top - 30, WEEK_RAIN.base - WEEK_RAIN.full, WEEK_AIR.top, WEEK_PRESSURE.top - 12]; })()`);
+  // (A high's label stands ~30 px over its dot; a pressure label's half height is ~12 px.)
+  for (const top of bandRoom) assert.ok(top >= 22, `a plot starts at ${top} px, under the 22 px band`);
   assert.doesNotMatch(week, /fc-wk-hum/, 'no humidity, no line');
   // The chart: a keyboard-reachable group; strips drawn for the eye only.
   assert.match(week, /<div class="fc-wk-chart" tabindex="0" role="group" aria-label="Hour by hour: [^"]+">/);
@@ -4479,10 +4491,10 @@ test('wide screens: the week shows from 720 × 600 up; phones keep the list', ()
   const between = html.match(/@media \(min-width: 720px\) \{[\s\S]*?\r?\n  \}\r?\n/)[0];
   assert.match(between, /\.fc-place, \.fc-now \{ display: inline-block;/);
   assert.match(html, /max-height: min\(94dvh, 1400px\);/);
-  // Its top edge stays put (centred across only): the tabs differ in height, and a
-  // dialog centred up and down made the head and tabs jump at each switch.
-  assert.match(html, /#forecast-dialog \{[^}]*margin: 24px auto auto;/);
-  assert.match(html, /margin: 3vh auto auto; margin: 3dvh auto auto;/);
+  // Centred on the screen, up and down too (not pinned to the top).
+  assert.match(html, /#forecast-dialog \{\s*margin: auto;/);
+  assert.match(html, /max-height: min\(94dvh, 1400px\);[^\n]*\n\s*margin: auto; border-radius: 10px;/);
+  assert.doesNotMatch(html, /margin: 24px auto auto|3dvh auto auto/);
   // A tap (no pointermove first) picks the day where it landed, and shows its hour there.
   assert.match(html, /const fraction = \(e\.clientX - box\.left\) \/ box\.width;\s*selectWeekDay\(weekRowAt\(fraction\)\);\s*showWeekHour\(weekHourIn\(fraction\)\);/);
   assert.match(html, /showWeekHour\(weekHourIn\(\(e\.clientX - box\.left\) \/ box\.width\)\);/);
@@ -4495,7 +4507,10 @@ test('wide screens: the week shows from 720 × 600 up; phones keep the list', ()
   assert.match(html, /\.fc-wk-pt b \{[^}]*background: rgba\(17,24,39,0\.92\);[^}]*font-weight: 700; font-size: 0\.86rem;/);
   assert.match(html, /const weekEdge = x => \(x < 0\.05 \? ' fc-wk-pt-start' : x > 0\.92 \? ' fc-wk-pt-end' : ''\);/);
   // High Contrast keeps the picked day and the chart's focus visible.
-  assert.match(html, /@media \(forced-colors: active\) \{[^@]*?\.fc-wk-day\[aria-selected="true"\] \{ outline: 3px solid Highlight;[^}]*\}\s*\.fc-wk-chart:focus-visible \{ outline: 2px solid Highlight;/);
+  assert.match(html, /@media \(forced-colors: active\) \{[^@]*?\.fc-wk-day\[aria-selected="true"\] \{ outline: 3px solid Highlight;[^}]*\}\s*\.fc-wk-chart:focus-visible::after \{ outline: 2px solid Highlight;/);
+  // The focus ring is drawn on a layer over the strips' solid name bands, which
+  // would hide a ring (or outline) on the chart itself along their rows.
+  assert.match(html, /\.fc-wk-chart::after \{ content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none; \}\s*\.fc-wk-chart:focus-visible::after \{ box-shadow: inset 0 0 0 2px var\(--text\); \}/);
   // …and the forecast's open tab too (its accent underline is replaced there).
   assert.match(html, /@media \(forced-colors: active\) \{[^@]*?\.fc-tabs \[role="tab"\] \{ border-bottom-color: Canvas; \}\s*\.fc-tabs \[role="tab"\]\[aria-selected="true"\] \{ border-bottom-color: Highlight; \}/);
 });

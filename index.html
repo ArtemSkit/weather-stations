@@ -832,7 +832,11 @@
 
   #forecast-dialog {
     margin: auto;   /* centred: the page's global margin reset would pin it top-left */
-    padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+    padding: 0; border: 1px solid var(--border); border-radius: 8px;
+    /* Never a scroll box itself (clip, not hidden: a hidden box can still be scrolled
+       by the page — scrollIntoView, focus — which slid the head and the close button
+       out of reach). Only the body inside scrolls. */
+    overflow: hidden; overflow: clip;
     background: var(--surface); color: var(--text);
     /* A desktop window too narrow (or short) for the wide layout below: use most of
        it — a small box in a big window left the hours squeezed into a few lines. */
@@ -841,8 +845,11 @@
     box-shadow: 0 20px 60px rgba(0,0,0,0.7);
   }
   #forecast-dialog::backdrop { background: rgba(5,7,12,0.6); }
-  /* The sheet fills the dialog, so a click on the dialog itself is a backdrop click. */
-  .fc-sheet { display: flex; flex-direction: column; max-height: inherit; }
+  /* The sheet fills the dialog, so a click on the dialog itself is a backdrop click.
+     (A flex child, sized to the dialog inside its borders: copying the dialog's
+     max-height made it 2 px taller than the room inside them.) */
+  #forecast-dialog[open] { display: flex; flex-direction: column; }
+  .fc-sheet { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   .fc-head {
     display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
     padding: 14px 14px 10px 16px; border-bottom: 1px solid var(--border);
@@ -862,7 +869,10 @@
   }
   .fc-tabs [role="tab"][aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   .fc-tabs [role="tab"]:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
-  .fc-body { overflow-y: auto; flex: 1; min-height: 0; overscroll-behavior: contain; }
+  /* (Positioned: the visually hidden words for screen readers in it — "humidity",
+     "AQI" — are placed in it and scroll with it, not against the dialog, where the
+     rows far down the list stretched the dialog to scroll too.) */
+  .fc-body { position: relative; overflow-y: auto; flex: 1; min-height: 0; overscroll-behavior: contain; }
   .fc-body [role="tabpanel"]:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
   .fc-empty { padding: 18px 16px; margin: 0; font-size: 0.75rem; color: var(--text-muted); }
   .fc-retry {

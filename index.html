@@ -592,8 +592,9 @@
     clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
   }
 
-  /* "▾ More alerts below": pinned to the banner's bottom edge while its list
-     continues past what fits — so the alerts further down aren't missed. */
+  /* "▾ More alerts below" (or "▾ More of this alert below" when only the rest of an
+     opened alert is left: see updateAlertScrollHint): pinned to the banner's bottom
+     edge while its list continues past what fits — so nothing further down is missed. */
   .alert-more {
     display: none; position: sticky; bottom: 0; flex-shrink: 0;
     justify-content: center; padding: 18px 0 6px; margin-top: -8px; cursor: pointer;
@@ -5108,12 +5109,28 @@ function restoreAlertBannerFocus(key) {
 }
 
 /**
- * The banner scrolls when its list is longer than the room it has: show the
- * "▾ More alerts below" bar at its bottom edge while there is more to scroll to.
+ * The banner scrolls when its list is longer than the room it has: show a bar at
+ * its bottom edge while there is more to scroll to — "▾ More alerts below" when
+ * another alert (a card, or a group of them) starts past that edge, else "▾ More
+ * of this alert below": only the rest of the alert being read (an opened card's
+ * text) is left, and saying more alerts follow would be untrue.
  */
 function updateAlertScrollHint() {
   const more = alertBanner.scrollHeight - alertBanner.clientHeight - alertBanner.scrollTop > 8;
   alertBanner.classList.toggle('has-more', more && alertBanner.classList.contains('expanded'));
+  const bar = alertBanner.querySelector('.alert-more');
+  if (!more || !bar) return;
+  // The list is one column, so its alerts start lower the later they come: whether
+  // any starts past the edge is whether the last one shown does (one look per scroll,
+  // not one per alert). (The bar covers the banner's last ~28 px: an alert starting
+  // under it is below too. Cards in a closed group have no boxes, so they don't count.)
+  const edge = alertBanner.getBoundingClientRect().bottom - 28;
+  const all = alertBanner.querySelectorAll('.alert-card, .alert-group');
+  let last = null;
+  for (let i = all.length - 1; i >= 0 && !last; i--) if (all[i].getClientRects().length) last = all[i];
+  const another = !!last && last.getBoundingClientRect().top >= edge;
+  const text = another ? '▾ More alerts below' : '▾ More of this alert below';
+  if (bar.textContent !== text) bar.textContent = text;
 }
 alertBanner.addEventListener('scroll', updateAlertScrollHint, { passive: true });
 window.addEventListener('resize', updateAlertScrollHint);

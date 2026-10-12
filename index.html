@@ -1934,8 +1934,16 @@
     .fc-wk-pt b, .fc-wk-pk, .fc-wk-now > span { border: 1px solid CanvasText; }
   }
 
-  /* The picked day in full: the forecaster's words beside its daylight, air and pressure. */
-  .fc-wk-detail { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 0 28px; padding: 16px 20px 6px; }
+  /* The picked day in full: the forecaster's words beside its daylight, air and pressure.
+     Every day's is there, stacked in one grid cell with only the picked one shown, so
+     the panel is always as tall as the day with the most to say: picking another day
+     never changes its height (which made the whole dialog jump). */
+  .fc-wk-detail { display: grid; padding: 16px 20px 6px; }
+  .fc-wk-pane {
+    grid-area: 1 / 1; visibility: hidden;   /* (hidden ones are skipped by screen readers and Tab too) */
+    display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 0 28px; align-content: start;
+  }
+  .fc-wk-pane-on { visibility: visible; }
   .fc-wk-title { margin: 0 0 8px; font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1rem; }
   .fc-wk-detail p { margin: 0 0 10px; max-width: 72ch; font-size: 0.76rem; line-height: 1.6; color: var(--text-muted); }
   .fc-wk-detail p b { color: var(--text); }
@@ -8540,8 +8548,10 @@ function renderForecastWeek(model, now = Date.now()) {
       rows.map(row => 'minmax(0,' + row.width.toFixed(4) + 'fr)').join(' ') + '">' +
       rows.map((row, i) => forecastWeekDayHtml(row, i, i === model.selected)).join('') + '</div>' +
     '<p class="sr-only" id="fc-wk-readout" aria-live="polite"></p>' +
+    // Every day's details, stacked: the panel keeps the height of the longest (see CSS).
     '<div class="fc-wk-detail" id="fc-wk-detail" role="tabpanel" aria-labelledby="fc-wk-tab-' + model.selected + '">' +
-      renderWeekDetail(model, model.selected) + '</div>' +
+      rows.map((row, i) => '<div class="fc-wk-pane' + (i === model.selected ? ' fc-wk-pane-on' : '') + '">' +
+        renderWeekDetail(model, i) + '</div>').join('') + '</div>' +
   '</div>';
 }
 
@@ -8629,7 +8639,8 @@ function selectWeekDay(index, focusTab) {
   const band = fcDays.querySelector('.fc-wk-sel'), detail = fcDays.querySelector('#fc-wk-detail');
   if (band) { band.style.left = weekPct(row.from); band.style.width = weekPct(row.width); }
   if (detail) {
-    detail.innerHTML = renderWeekDetail(model, index);
+    // (Shown in place of the last: all are drawn, so the panel's height stays put.)
+    detail.querySelectorAll('.fc-wk-pane').forEach((pane, i) => pane.classList.toggle('fc-wk-pane-on', i === index));
     detail.setAttribute('aria-labelledby', 'fc-wk-tab-' + index);
   }
   if (focusTab) tabs[index]?.focus();

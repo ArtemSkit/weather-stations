@@ -4464,6 +4464,15 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(week, /The hourly forecast doesn&#39;t reach this far yet|The hourly forecast doesn't reach this far yet/);
   // The picked day in full, escaped, with its facts.
   assert.match(week, /<div class="fc-wk-detail" id="fc-wk-detail" role="tabpanel" aria-labelledby="fc-wk-tab-0">/);
+  // Every day's details are there, stacked in one grid cell with only the picked one
+  // shown: the panel is as tall as the day with the most to say, so picking another
+  // day never changes its height (the whole dialog jumped with it).
+  assert.equal((week.match(/<div class="fc-wk-pane( fc-wk-pane-on)?">/g) || []).length, model.rows.length);
+  assert.equal((week.match(/fc-wk-pane-on/g) || []).length, 1);
+  assert.match(week, /<div class="fc-wk-pane fc-wk-pane-on"><div class="fc-wk-words"><h3 class="fc-wk-title">Saturday, Oct 3<\/h3>/);
+  assert.match(html, /\.fc-wk-pane \{\s*grid-area: 1 \/ 1; visibility: hidden;[^}]*\}\s*\.fc-wk-pane-on \{ visibility: visible; \}/);
+  assert.match(extractFunction('selectWeekDay'), /detail\.querySelectorAll\('\.fc-wk-pane'\)\.forEach\(\(pane, i\) => pane\.classList\.toggle\('fc-wk-pane-on', i === index\)\);/);
+  assert.doesNotMatch(extractFunction('selectWeekDay'), /innerHTML/);
   assert.match(k.renderWeekDetail(model, 1), /<h3 class="fc-wk-title">Sunday, Oct 4<\/h3><p><b>Sunday:<\/b> Sunday &#60;words&#62;\.<\/p><p><b>Sunday Night:<\/b>/);
   assert.match(k.renderWeekDetail(model, 1), /<div class="fc-wk-facts"><p><b>Daylight:<\/b>/);
   assert.equal(k.renderWeekDetail(model, 9), '');

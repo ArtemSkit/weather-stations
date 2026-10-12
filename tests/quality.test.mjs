@@ -1314,6 +1314,27 @@ test('alert times never invent an end and show a future start', () => {
   // next 60 each time a record arrives (which never ends past the cache's size).
   assert.match(extractFunction('prefetchLiveAlertPlaces'), /\.slice\(0, LIVE_PLACES_PREFETCH\)\s*\.filter\(f => !alertAreaDesc\(f\)\)/);
   assert.match(extractFunction('loadAlertCardDetails'), /updateAlertScrollHint\(\);\s*\/\/ the card's new height/);
+  // The bar says "More alerts below" only while another alert (a card or a group)
+  // starts past the banner's bottom edge (under the bar's ~28 px); when only the rest
+  // of the opened alert is left to scroll to, it says so. Cards in a closed group
+  // (no boxes) don't count.
+  const hint = (tops, { hidden = [] } = {}) => {
+    const bar = { textContent: '▾ More alerts below' };
+    const els = tops.map((top, i) => ({ getClientRects: () => (hidden.includes(i) ? [] : [{}]), getBoundingClientRect: () => ({ top }) }));
+    const classes = new Set(['expanded']);
+    const ctx = { alertBanner: {
+      scrollHeight: 900, clientHeight: 400, scrollTop: 0,
+      classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)), contains: c => classes.has(c) },
+      querySelector: sel => (sel === '.alert-more' ? bar : null),
+      querySelectorAll: () => els,
+      getBoundingClientRect: () => ({ bottom: 500 }) } };
+    vm.runInNewContext(`${extractFunction('updateAlertScrollHint')} updateAlertScrollHint();`, ctx);
+    return [classes.has('has-more'), bar.textContent];
+  };
+  assert.deepEqual(hint([100, 300, 520]), [true, '▾ More alerts below'], 'a card starts below the edge');
+  assert.deepEqual(hint([100, 300, 480]), [true, '▾ More alerts below'], 'one starts under the bar');
+  assert.deepEqual(hint([100, 300]), [true, '▾ More of this alert below'], 'only the opened card\'s text is left');
+  assert.deepEqual(hint([100, 300, 520], { hidden: [2] }), [true, '▾ More of this alert below'], 'a closed group\'s card is no alert below');
   // "Show this area on the map" then picks the area out once the map has landed
   // (a newer zoom wins): glow, moving dashed outline, a flash and its name — gone
   // after a few seconds or at a click on the map, and never taking clicks.

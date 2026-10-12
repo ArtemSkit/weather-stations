@@ -831,10 +831,16 @@
   #forecast-btn:not([hidden]) ~ .status-bar { margin-left: 0; }
 
   #forecast-dialog {
-    margin: auto;   /* centred: the page's global margin reset would pin it top-left */
+    /* Centred across, its top edge fixed (the page's global margin reset would pin it
+       top-left): the 7 DAYS and HOURLY tabs differ in height, and a dialog centred
+       up and down too made the head and tabs jump at each switch. */
+    margin: 24px auto auto;
     padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
     background: var(--surface); color: var(--text);
-    width: min(560px, calc(100vw - 32px)); max-width: none; max-height: min(82vh, 760px);
+    /* A desktop window too narrow (or short) for the wide layout below: use most of
+       it — a small box in a big window left the hours squeezed into a few lines. */
+    width: min(880px, calc(100vw - 48px)); max-width: none;
+    max-height: min(calc(100vh - 48px), 1200px); max-height: min(calc(100dvh - 48px), 1200px);
     box-shadow: 0 20px 60px rgba(0,0,0,0.7);
   }
   #forecast-dialog::backdrop { background: rgba(5,7,12,0.6); }
@@ -1550,31 +1556,23 @@
     .fc-tabs [role="tab"] { padding: 6px 12px; }
   }
 
-  /* ════════════════════════════════════════════════════════════════════════════
-     FORECAST ON WIDE SCREENS — the week at a glance (section 14D)
-     From 960 × 600 px up the dialog grows to use the screen, and the 7-day list
-     gives way to a timeline: the days side by side over one continuous chart of
-     their hours, the nights shaded from sunset to sunrise. After the phone rules,
-     so a large touch screen (a tablet in landscape) gets it too.
-     ════════════════════════════════════════════════════════════════════════════ */
-  .fc-week { display: none; }
-  @media (min-width: 960px) and (min-height: 600px) {
-    #forecast-dialog {
-      width: min(1880px, calc(100vw - 64px));   /* big monitors: use them (text keeps its size, the chart widens) */
-      max-height: min(94vh, 1000px); max-height: min(94dvh, 1000px);
-      margin: auto; border-radius: 10px; border-bottom: 1px solid var(--border);
-    }
-    .fc-foot { padding-bottom: 8px; }
-    .fc-place, .fc-now { display: inline-block; margin-right: 18px; }   /* one line: room for the week */
+  /* From 720 px wide (a narrow desktop window, a tablet): the head on one line, and
+     each hour on one line (the 820 px table below replaces these rows). */
+  @media (min-width: 720px) {
+    .fc-place, .fc-now { display: inline-block; margin-right: 18px; }
     .fc-now[hidden] { display: none; }
-    #fc-days > .fc-day { display: none; }   /* the phone list */
-    .fc-week { display: block; }
-    /* Hourly: a table — one row per hour, its readings in aligned columns. */
+    .fc-hour-air { flex-basis: auto; }   /* AQI and pressure beside the wind, wrapping only when short of room */
+  }
+
+  /* From 820 px wide: the hours as a table — one row per hour, its readings in
+     aligned columns under their names (the sky's words get the room left over and
+     wrap in their own column), instead of rows that wrap each its own way. */
+  @media (min-width: 820px) {
     .fc-hour {
-      /* (Its minimums, gaps and padding fit the 896 px dialog of a 960 px window, less
-         its 1 px borders and a 17 px scrollbar where the system shows them: 877 px.) */
-      grid-template-columns: 56px 26px 112px 92px minmax(106px, 1.1fr) minmax(90px, 0.7fr) minmax(64px, 0.5fr) minmax(130px, 0.8fr) minmax(96px, 0.7fr);
-      gap: 8px; padding: 8px 20px;
+      /* (Fixed columns, gaps and padding take 590 px: an 820 px window's 772 px dialog,
+         less its borders and a 17 px scrollbar, leaves the sky 163 px.) */
+      grid-template-columns: 46px 24px 84px 56px minmax(0, 1fr) 78px 52px 86px 72px;
+      gap: 8px; padding: 8px 14px;
     }
     /* The Humidity column says it for the eye; screen readers (which skip the column
        names) still hear "84% humidity". */
@@ -1589,9 +1587,40 @@
     }
     .fc-hour-sky { color: var(--text); }
     .fc-hour-air > span { font-size: 0.72rem; }
+    .fc-hour-aqi .fc-aqi-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .fc-hour.fc-hour-head {
       display: grid; padding-top: 10px; padding-bottom: 8px; border-top: 0;
       font-size: 0.64rem; color: var(--text-muted);
+    }
+    .fc-hour-day { padding-left: 14px; }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     FORECAST ON WIDE SCREENS — the week at a glance (section 14D)
+     From 720 × 600 px up the 7-day list gives way to a timeline: the days side by
+     side over one continuous chart of their hours, the nights shaded from sunset
+     to sunrise; from 960 px the dialog grows to use the screen. After the phone
+     rules, so a large touch screen (a tablet) gets it too.
+     ════════════════════════════════════════════════════════════════════════════ */
+  .fc-week { display: none; }
+  @media (min-width: 720px) and (min-height: 600px) {
+    #fc-days > .fc-day { display: none; }   /* the phone list */
+    .fc-week { display: block; }
+  }
+  @media (min-width: 960px) and (min-height: 600px) {
+    #forecast-dialog {
+      width: min(1880px, calc(100vw - 64px));   /* big monitors: use them (text keeps its size, the chart widens) */
+      max-height: min(94vh, 1400px); max-height: min(94dvh, 1400px);   /* tall monitors too */
+      margin: 3vh auto auto; margin: 3dvh auto auto;   /* (top edge fixed: see above) */
+      border-radius: 10px; border-bottom: 1px solid var(--border);
+    }
+    .fc-foot { padding-bottom: 8px; }
+    /* The hourly table (see the 820 px rules above) with roomier columns. */
+    .fc-hour {
+      /* (Its minimums, gaps and padding fit the 896 px dialog of a 960 px window, less
+         its 1 px borders and a 17 px scrollbar where the system shows them: 877 px.) */
+      grid-template-columns: 56px 26px 112px 92px minmax(106px, 1.1fr) minmax(90px, 0.7fr) minmax(64px, 0.5fr) minmax(130px, 0.8fr) minmax(96px, 0.7fr);
+      padding: 8px 20px;
     }
     .fc-hour-day { padding-left: 20px; }
   }
@@ -1623,10 +1652,43 @@
     .fc-wk-short { display: inline; }
     .fc-wk-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   }
+  /* "Tonight" too wide for its column becomes "Night". "Tonight" is about 6 em of
+     its name's size: 71 px at the 0.74rem of a 720–960 px window, 77 px at 0.8rem
+     (960–1280 px), 85 px at 0.88rem (wider). Each limit below has 2 px to spare. */
+  .fc-wk-tiny { display: none; }
+  @container (max-width: 73px) {
+    .fc-wk-tiny { display: inline; }
+    .fc-wk-mid { display: none; }
+  }
+  @media (min-width: 960px) {
+    @container (max-width: 79px) {
+      .fc-wk-tiny { display: inline; }
+      .fc-wk-mid { display: none; }
+    }
+  }
+  @media (min-width: 1280px) {
+    @container (max-width: 87px) {
+      .fc-wk-tiny { display: inline; }
+      .fc-wk-mid { display: none; }
+    }
+  }
   @media (max-width: 1279px) {
     .fc-wk-day { padding-left: 11px; padding-right: 8px; }
     .fc-wk-name { font-size: 0.8rem; }
     .fc-wk-sunset { font-size: 0.74rem; }
+  }
+  /* A 720–960 px window: every column keeps what reads at a glance — the sky's
+     icon, the high and low, the chance of rain and, on a hot day, how hot it feels
+     ("Feels 102°"). The sky in words, the sunset, the humidity and the air quality
+     go out of sight (still read out with the day; the chart under the days and the
+     picked day's details show them), so a column isn't a cramped stack. Slimmer
+     padding and names keep a part-day column's name ("Tonight") whole. */
+  @media (max-width: 959px) {
+    .fc-wk-day { padding-left: 8px; padding-right: 5px; }
+    .fc-wk-name { font-size: 0.74rem; }
+    .fc-wk-sky, .fc-wk-sunset, .fc-wk-hum, .fc-wk-aqi, .fc-wk-upto {
+      position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+    }
   }
   .fc-wk-date { margin-top: -4px; font-size: 0.64rem; color: var(--text-muted); }
   .fc-wk-main { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 2px; }
@@ -7435,7 +7497,10 @@ function aqiCategory(value) {
 /** "AQI 42 Good" as HTML, with a dot in the EPA's colour for the category. */
 function aqiHtml(value) {
   const category = aqiCategory(value);
-  return '<span class="fc-aqi fc-aqi-' + category.level + '">AQI ' + value + ' ' + category.label + '</span>';
+  // (The word in a span of its own: the hourly table, whose column is named "Air
+  // quality", shows just "42 Good" — screen readers still hear "AQI".)
+  return '<span class="fc-aqi fc-aqi-' + category.level + '"><span class="fc-aqi-word">AQI </span>' +
+    value + ' ' + category.label + '</span>';
 }
 
 /** Sea-level pressure in hPa as inHg ("30.01"), the unit the station panel shows. */
@@ -7453,11 +7518,11 @@ function hpaToInHg(hpa) {
  * @returns {{sun: string, air: string, facts: string, sunsetAt: string, aqi: ?number,
  *            humidity: ?{low:number, high:number}, heat: ?number}} HTML ('' where
  *          nothing is known), plus the plain sunset time, worst AQI, humidity range
- *          and highest heat index the wide-screen week's day columns show
+ *          and highest heat index the week-at-a-glance's day columns show
  */
 function forecastRowExtras(parts, extras, point) {
   const first = parts[0], last = parts[parts.length - 1];
-  // sunsetAt, aqi, humidity and heat are plain values for the wide-screen week's day columns.
+  // sunsetAt, aqi, humidity and heat are plain values for the week-at-a-glance's day columns.
   const out = { sun: '', air: '', facts: '', sunsetAt: '', aqi: null, humidity: null, heat: null };
   const facts = [];
 
@@ -7704,9 +7769,10 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
     const hpa = extras?.pressure?.get(key);
     const rh = period.relativeHumidity?.value;
     const feels = forecastHeatIndex(period);   // how hot it feels, when humidity adds to it
-    // Every cell is always there (empty when unknown): on wide screens they line up
-    // as table columns; on phones sky, wind and humidity share a line, air and
-    // pressure the next. (The word "humidity" is for phones: the table's column says it.)
+    // Every cell is always there (empty when unknown): from an 820 px window they line
+    // up as table columns; narrower, sky, wind and humidity share a line, air and
+    // pressure the next (or the same, from 720 px). (The word "humidity" is for those
+    // rows: the table's column says it.)
     const cell = (name, html) => '<span class="fc-hour-' + name + '">' + html + '</span>';
     const humidity = Number.isFinite(rh) ? Math.round(rh) + '%<span class="fc-hour-hum-word"> humidity</span>' : '';
     const extra = air || hpa != null
@@ -7721,7 +7787,7 @@ function renderForecastHours(periods, now = Date.now(), extras, point) {
         cell('wind', escapeHtml(wind)) + cell('hum', humidity) + extra + `</span>
     </li>`;
   });
-  // Column names for the wide-screen table (hidden on phones, where rows wrap).
+  // Column names for the table (from an 820 px window; hidden narrower, where rows wrap).
   const head = '<li class="fc-hour fc-hour-head" aria-hidden="true"><span>Time</span><span></span>' +
     '<span>Temperature</span><span>Rain</span><span>Sky</span><span>Wind</span><span>Humidity</span>' +
     (extras && (extras.aqi.size || extras.pressure.size) ? '<span>Air quality</span><span>Pressure</span>' : '') + '</li>';
@@ -8012,8 +8078,8 @@ window.addEventListener('resize', () => {
   if (forecastDialog.open && !fcHours.hidden) updateHourStripNav(fcHours.querySelector('.fc-strip'));
 });
 
-/* ── The week at a glance (wide screens) ─────────────────────────────────────
-   On a wide screen the 7-day forecast becomes a timeline: the days side by side,
+/* ── The week at a glance (from 720 × 600 px) ────────────────────────────────
+   On a wide enough screen the 7-day forecast becomes a timeline: the days side by side,
    and under them one continuous chart of their hours — temperature, chance of
    rain, air quality and pressure, each on its own strip and scale — with every
    night shaded from sunset to sunrise. Each day's column sits right above its own
@@ -8204,7 +8270,10 @@ function forecastWeekDayHtml(row, index, selected) {
       ' aria-selected="' + selected + '" aria-controls="fc-wk-detail" tabindex="' + (selected ? 0 : -1) + '">' +
     // The full name, and a short one ("Wed") the CSS swaps in where columns are narrow.
     '<span class="fc-wk-name"><span class="fc-wk-long">' + escapeHtml(name || '') + '</span>' +
-      '<span class="fc-wk-short" aria-hidden="true">' + escapeHtml(shortName) + '</span></span>' +
+      // ("Tonight" in a column too narrow even for it — an evening's part-day column
+      // — becomes "Night", its date under it: see the CSS.)
+      '<span class="fc-wk-short" aria-hidden="true">' + (shortName === 'Tonight'
+        ? '<span class="fc-wk-mid">Tonight</span><span class="fc-wk-tiny">Night</span>' : escapeHtml(shortName)) + '</span></span>' +
     '<span class="fc-wk-date">' + escapeHtml(date || '') + '</span>' +
     '<span class="fc-wk-main"><span class="fc-wk-icon" aria-hidden="true">' + forecastEmoji(main.shortForecast, !!row.day) +
       '</span><span class="fc-wk-temps">' + (temps || '—') + '</span></span>' +
@@ -8216,7 +8285,7 @@ function forecastWeekDayHtml(row, index, selected) {
         '%<span class="sr-only"> chance of rain</span></span>' : '') +
     '</span>' +
     // How hot the day feels at worst, and its humidity range (from its hours: see forecastRowExtras).
-    (row.more.heat != null ? '<span class="fc-wk-feels">Feels up to ' + row.more.heat + '°</span>' : '') +
+    (row.more.heat != null ? '<span class="fc-wk-feels">Feels <span class="fc-wk-upto">up to </span>' + row.more.heat + '°</span>' : '') +
     (row.more.humidity ? '<span class="fc-wk-hum">Humidity <span>' + (row.more.humidity.low === row.more.humidity.high
       ? row.more.humidity.high : row.more.humidity.low + '–' + row.more.humidity.high) + '%</span></span>' : '') +
     (row.more.aqi != null ? '<span class="fc-wk-aqi">' + aqiHtml(row.more.aqi) + '</span>' : '') +

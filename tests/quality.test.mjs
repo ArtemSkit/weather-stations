@@ -3908,7 +3908,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     [day('Saturday', 90, { startTime: '2026-10-03T06:00:00-05:00', endTime: '2026-10-03T18:00:00-05:00' })],
     { aqi: new Map(Array.from({ length: 12 }, (_, i) => ['2026-10-03T' + (11 + i), { value: 120, pollutant: 'ozone' }])), pressure: new Map() },
     { lat: 29.42, lon: -98.49 });
-  assert.match(sat.replace(/\u00A0/g, ' '), /<span class="fc-sun"><span class="fc-sunset">[^<]*<span aria-hidden="true">🌇 <\/span>Sunset 7:1\d PM<\/span>[^]*?<\/span><span class="fc-air"><span class="fc-aqi fc-aqi-3">AQI 120 Unhealthy for sensitive groups<\/span><\/span><\/summary><p><b>Saturday:<\/b> Saturday details\.<\/p><p><b>Daylight:<\/b>/);
+  assert.match(sat.replace(/\u00A0/g, ' '), /<span class="fc-sun"><span class="fc-sunset">[^<]*<span aria-hidden="true">🌇 <\/span>Sunset 7:1\d PM<\/span>[^]*?<\/span><span class="fc-air"><span class="fc-aqi fc-aqi-3"><span class="fc-aqi-word">AQI <\/span>120 Unhealthy for sensitive groups<\/span><\/span><\/summary><p><b>Saturday:<\/b> Saturday details\.<\/p><p><b>Daylight:<\/b>/);
   // Without them (no place, no data) a row is as before.
   assert.doesNotMatch(days, /fc-sun|fc-air|Daylight/);
   const now = Date.parse('2026-10-01T22:30:00-05:00');
@@ -3928,12 +3928,12 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   // Each hour gets its air quality and pressure, matched by UTC hour (23:00 CDT = 04 UTC).
   const aired = r.renderForecastHours([hour('2026-10-01T23:00:00-05:00', '2026-10-02T00:00:00-05:00')], now,
     { aqi: new Map([['2026-10-02T04', { value: 44, pollutant: 'ozone' }]]), pressure: new Map([['2026-10-02T04', 1013.25]]) });
-  assert.match(aired, /<span class="fc-hour-air"><span class="fc-hour-aqi"><span class="fc-aqi fc-aqi-1">AQI 44 Good<\/span><\/span><span class="fc-hour-press">29\.92 inHg<\/span><\/span>/);
-  // Every cell is there even when empty, so the wide-screen table's columns line up.
+  assert.match(aired, /<span class="fc-hour-air"><span class="fc-hour-aqi"><span class="fc-aqi fc-aqi-1"><span class="fc-aqi-word">AQI <\/span>44 Good<\/span><\/span><span class="fc-hour-press">29\.92 inHg<\/span><\/span>/);
+  // Every cell is there even when empty, so the table's columns line up (from 820 px).
   assert.match(aired, /<span class="fc-hour-sky">Clear<\/span><span class="fc-hour-wind"><\/span>/);
   // Phones hide those empty cells (no stray gap) and let a long AQI wrap; the table keeps them.
   assert.match(html, /\.fc-hour-wind, \.fc-hour-press, \.fc-hour-hum \{ white-space: nowrap; \}/);
-  assert.doesNotMatch(html, /\.fc-hour-aqi[^{]*\{[^}]*nowrap/);
+  assert.doesNotMatch(html, /\.fc-hour-aqi(?! \.fc-aqi-word)[^{]*\{[^}]*nowrap/);   // (the hidden word aside)
   assert.match(html, /\.fc-hour-short > :empty, \.fc-hour-air > :empty \{ display: none; \}/);
   assert.match(html, /\.fc-hour-short > :empty, \.fc-hour-air > :empty \{ display: block; \}/);
   // 320 px phones: slimmer columns, and the last may shrink, so the list never scrolls sideways.
@@ -4130,7 +4130,7 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   const row = k.forecastRowExtras(parts, extras, sa);
   // Sunset leads, highlighted; sunrise follows.
   assert.match(row.sun, /^<span class="fc-sunset"><span aria-hidden="true">🌇 <\/span>Sunset 7:1\d PM<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 7:2\d AM$/);
-  assert.match(row.air, /^<span class="fc-aqi fc-aqi-2">AQI 58 Moderate<\/span> · Pressure falling sharply, 30\.12 → 29\.94 inHg$/);
+  assert.match(row.air, /^<span class="fc-aqi fc-aqi-2"><span class="fc-aqi-word">AQI <\/span>58 Moderate<\/span> · Pressure falling sharply, 30\.12 → 29\.94 inHg$/);
   // Opened: the whole day in order, twilight included; the air at its worst and why
   // (at the place's 3 PM, not UTC's); the pressure swing in both units and its low.
   assert.match(row.facts, /<p><b>Daylight:<\/b> first light 7:0\d AM · sunrise 7:2\d AM · sunset 7:1\d PM · last light 7:4\d PM \(11 h \d+ min of sun\)<\/p>/);
@@ -4344,7 +4344,12 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(week, /id="fc-wk-tab-0" data-row="0" aria-selected="true" aria-controls="fc-wk-detail" tabindex="0"/);
   assert.match(week, /id="fc-wk-tab-1" data-row="1" aria-selected="false" aria-controls="fc-wk-detail" tabindex="-1"/);
   // A column: its name (and a short one), date, high/low, sky, sunset first, rain, air.
-  assert.match(week, /<span class="fc-wk-long">Tonight<\/span><span class="fc-wk-short" aria-hidden="true">Tonight<\/span>/);
+  // ("Tonight" has a shorter form still, "Night", for a column too narrow for it at
+  // each of the name's sizes: 73, 79 and 87 px.)
+  assert.match(week, /<span class="fc-wk-long">Tonight<\/span><span class="fc-wk-short" aria-hidden="true"><span class="fc-wk-mid">Tonight<\/span><span class="fc-wk-tiny">Night<\/span><\/span>/);
+  assert.match(html, /\.fc-wk-tiny \{ display: none; \}\s*@container \(max-width: 73px\) \{\s*\.fc-wk-tiny \{ display: inline; \}\s*\.fc-wk-mid \{ display: none; \}/);
+  assert.match(html, /@media \(min-width: 960px\) \{\s*@container \(max-width: 79px\) \{\s*\.fc-wk-tiny \{ display: inline; \}/);
+  assert.match(html, /@media \(min-width: 1280px\) \{\s*@container \(max-width: 87px\) \{\s*\.fc-wk-tiny \{ display: inline; \}/);
   assert.match(week, /<span class="fc-wk-long">Sunday<\/span><span class="fc-wk-short" aria-hidden="true">Sun<\/span>/);
   // A night with a longer name has a short one too (its date is under it).
   const overnight = k.renderForecastWeek(k.forecastWeekModel(
@@ -4355,7 +4360,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(week, /<span class="fc-wk-date">Oct 4<\/span>/);
   assert.match(week, /fc-hi">[^]*?High <\/span>82°<\/span><span class="fc-lo">[^]*?Low <\/span>70°/);
   assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>7:1\d PM<\/span><span class="fc-wk-pop">[^]*?30%/);
-  assert.match(week, /<span class="fc-wk-aqi"><span class="fc-aqi fc-aqi-3">AQI 120 Unhealthy for sensitive groups<\/span>/);
+  assert.match(week, /<span class="fc-wk-aqi"><span class="fc-aqi fc-aqi-3"><span class="fc-aqi-word">AQI <\/span>120 Unhealthy for sensitive groups<\/span>/);
   // With the hours' humidity: each column's range, and each hour's in the tooltip.
   const utcKey = iso => new Date(Date.parse(iso)).toISOString().slice(0, 13);
   const humidity = new Map(hours.map(h => [utcKey(h.startTime), h.relativeHumidity.value]));
@@ -4372,7 +4377,11 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   const heat = new Map(humidModel.points.filter(h => h.feels != null)
     .map(h => [utcKey(h.period.startTime), { feels: h.feels, f: h.deg.f }]));
   const heatWeek = k.renderForecastWeek(k.forecastWeekModel(days, hours, { ...extras, humidity, heat }, point), Date.parse('2026-10-03T20:00:00-05:00'));
-  assert.match(heatWeek, /<span class="fc-wk-feels">Feels up to \d+°<\/span><span class="fc-wk-hum">/);
+  assert.match(heatWeek, /<span class="fc-wk-feels">Feels <span class="fc-wk-upto">up to <\/span>\d+°<\/span><span class="fc-wk-hum">/);
+  // In a 720–960 px window every column keeps what reads at a glance (icon, high and
+  // low, rain, "Feels 102°"); the sky's words, sunset, humidity and AQI go out of
+  // sight — still read out — so no column is a cramped stack. Wider, all show.
+  assert.match(html, /@media \(max-width: 959px\) \{\s*\.fc-wk-day \{ padding-left: 8px; padding-right: 5px; \}\s*\.fc-wk-name \{ font-size: 0\.74rem; \}\s*\.fc-wk-sky, \.fc-wk-sunset, \.fc-wk-hum, \.fc-wk-aqi, \.fc-wk-upto \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset\(50%\);/);
   // The chart's label names what its arrow-key read-out says (how hot it feels, humidity).
   assert.match(heatWeek, /aria-label="Hour by hour: temperature, how hot it feels, chance of rain, humidity, air quality and pressure\./);
   assert.match(heatWeek, /<path class="fc-wk-feels-line" d="M[^"]+"\/><path class="fc-wk-line"/);
@@ -4430,8 +4439,9 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.equal(k.weekHourIn(0.5), -1);
 });
 
-test('wide screens: the week shows from 960 × 600 up; phones keep the list', () => {
-  assert.match(html, /\.fc-week \{ display: none; \}\s*@media \(min-width: 960px\) and \(min-height: 600px\) \{[\s\S]*?#fc-days > \.fc-day \{ display: none; \}[^\n]*\n\s*\.fc-week \{ display: block; \}/);
+test('wide screens: the week shows from 720 × 600 up; phones keep the list', () => {
+  // (From 720 px: a narrow desktop window gets the week too; the dialog grows from 960.)
+  assert.match(html, /\.fc-week \{ display: none; \}\s*@media \(min-width: 720px\) and \(min-height: 600px\) \{\s*#fc-days > \.fc-day \{ display: none; \}[^\n]*\n\s*\.fc-week \{ display: block; \}\s*\}\s*@media \(min-width: 960px\) and \(min-height: 600px\) \{\s*#forecast-dialog \{/);
   // (After the phone rules, so a large touch screen gets it too.)
   assert.ok(html.indexOf('.fc-week { display: none; }') > html.indexOf('@media (pointer: coarse), (max-width: 640px)'));
   // Both are drawn; CSS shows the one that fits.
@@ -4439,15 +4449,38 @@ test('wide screens: the week shows from 960 × 600 up; phones keep the list', ()
   // Days are a tab list (arrow keys); the chart steps through hours and Enter picks the day.
   assert.match(html, /\{ ArrowRight: Math\.min\(at \+ 1, last\), ArrowLeft: Math\.max\(at - 1, 0\), Home: 0, End: last \}\[e\.key\]/);
   assert.match(html, /\{ ArrowRight: 1, ArrowLeft: -1, PageDown: 24, PageUp: -24 \}\[e\.key\]/);
-  // The hourly table's header row is for wide screens only.
+  // The hourly table (and its header row) from 820 px wide: tight columns there,
+  // roomier on wide screens.
   assert.match(html, /\.fc-hour\.fc-hour-head \{ display: none; \}/);
-  // …and its columns fit the 896 px dialog of a 960 px window (minimums + gaps + padding).
-  const cols = html.match(/grid-template-columns: (56px 26px [^;]+);\s*gap: (\d+)px; padding: 8px (\d+)px;/);
-  const widths = [...cols[1].matchAll(/(\d+)px/g)].map(m => +m[1]);
-  const least = widths.reduce((sum, w) => sum + w, 0) + (widths.length - 1) * +cols[2] + 2 * +cols[3];
-  assert.equal(widths.length, 9, 'time, icon, temperature, rain, sky, wind, humidity, air quality, pressure');
-  // (896 px less the dialog's 1 px borders and a 17 px scrollbar, where shown.)
+  const table = html.match(/@media \(min-width: 820px\) \{[\s\S]*?\r?\n  \}\r?\n/)[0];
+  assert.match(table, /\.fc-hour-short, \.fc-hour-air \{ display: contents; \}/);
+  assert.match(table, /\.fc-hour\.fc-hour-head \{\s*display: grid;/);
+  const gap = +table.match(/gap: (\d+)px; padding: 8px \d+px;/)[1];
+  const need = (list, pad) => {
+    const widths = [...list.matchAll(/(\d+)px|minmax\(0, 1fr\)/g)].map(m => +(m[1] ?? 0));   // (the sky: what's left)
+    assert.equal(widths.length, 9, 'time, icon, temperature, rain, sky, wind, humidity, air quality, pressure');
+    return widths.reduce((sum, w) => sum + w, 0) + 8 * gap + 2 * pad;
+  };
+  // At 820 px the dialog is 772 px: less its 1 px borders and a 17 px scrollbar (where
+  // shown), the sky's column keeps 140 px or more.
+  const mid = table.match(/grid-template-columns: (46px 24px [^;]+);\s*gap: \d+px; padding: 8px (\d+)px;/);
+  assert.ok(772 - 2 - 17 - need(mid[1], +mid[2]) >= 140, `sky gets ${772 - 2 - 17 - need(mid[1], +mid[2])}px`);
+  // …and the wide columns fit the 896 px dialog of a 960 px window (minimums + gaps + padding).
+  const cols = html.match(/grid-template-columns: (56px 26px [^;]+);\s*padding: 8px (\d+)px;/);
+  const least = need(cols[1], +cols[2]);
   assert.ok(least <= 896 - 2 - 17, `hourly table needs ${least}px`);
+  // The column says "Air quality": its cells show "42 Good" (screen readers hear "AQI").
+  assert.match(table, /\.fc-hour-aqi \.fc-aqi-word \{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset\(50%\);/);
+  // Between a phone and the wide layout, the dialog uses most of the window (a small
+  // box in a big window left the hours a few lines); from 720 px the head takes one line.
+  assert.match(html, /#forecast-dialog \{[^}]*width: min\(880px, calc\(100vw - 48px\)\);[^}]*max-height: min\(calc\(100dvh - 48px\), 1200px\);/);
+  const between = html.match(/@media \(min-width: 720px\) \{[\s\S]*?\r?\n  \}\r?\n/)[0];
+  assert.match(between, /\.fc-place, \.fc-now \{ display: inline-block;/);
+  assert.match(html, /max-height: min\(94dvh, 1400px\);/);
+  // Its top edge stays put (centred across only): the tabs differ in height, and a
+  // dialog centred up and down made the head and tabs jump at each switch.
+  assert.match(html, /#forecast-dialog \{[^}]*margin: 24px auto auto;/);
+  assert.match(html, /margin: 3vh auto auto; margin: 3dvh auto auto;/);
   // A tap (no pointermove first) picks the day where it landed, and shows its hour there.
   assert.match(html, /const fraction = \(e\.clientX - box\.left\) \/ box\.width;\s*selectWeekDay\(weekRowAt\(fraction\)\);\s*showWeekHour\(weekHourIn\(fraction\)\);/);
   assert.match(html, /showWeekHour\(weekHourIn\(\(e\.clientX - box\.left\) \/ box\.width\)\);/);

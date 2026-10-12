@@ -4493,6 +4493,14 @@ test('wide screens: the week shows from 720 × 600 up; phones keep the list', ()
   const between = html.match(/@media \(min-width: 720px\) \{[\s\S]*?\r?\n  \}\r?\n/)[0];
   assert.match(between, /\.fc-place, \.fc-now \{ display: inline-block;/);
   assert.match(html, /max-height: min\(94dvh, 1400px\);/);
+  // The dialog never scrolls itself — only its body does: it clips (a hidden box can
+  // still be scrolled by the page), the body anchors the visually hidden words in it
+  // (placed against the dialog, the rows far down stretched it to scroll, sliding
+  // the head and close button away), and the sheet fits inside the dialog's borders.
+  assert.match(html, /#forecast-dialog \{[^}]*overflow: hidden; overflow: clip;/);
+  assert.match(html, /\.fc-body \{ position: relative; overflow-y: auto; flex: 1; min-height: 0;/);
+  assert.match(html, /#forecast-dialog\[open\] \{ display: flex; flex-direction: column; \}\s*\.fc-sheet \{ display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; \}/);
+  assert.doesNotMatch(html, /\.fc-sheet \{[^}]*max-height: inherit/);
   // Centred on the screen, up and down too (not pinned to the top).
   assert.match(html, /#forecast-dialog \{\s*margin: auto;/);
   assert.match(html, /max-height: min\(94dvh, 1400px\);[^\n]*\n\s*margin: auto; border-radius: 10px;/);

@@ -126,6 +126,9 @@ test('a failed newer search keeps the area that is loading or shown', async () =
     function loadAlertsForArea() { log.push('alerts'); }
     function setForecastPoint() { log.push('forecast point'); }
     function clearForecastPoint() { log.push('forecast cleared'); }
+    let stationsByDistance = [];
+    function loadNowWeather() {}
+    function clearNowWeather() {}
     function clearAlertFocus() {}
     function liveSearchLanded() {}
     ${extractFunction('stationCountLabel')}
@@ -3811,6 +3814,166 @@ test('the map buttons fold away behind one small button, and the choice is remem
   assert.match(html, /if \(localStorage\.getItem\(MAP_TOOLS_FOLDED_KEY\) === '1'\) setMapToolsOpen\(false\);/);
 });
 
+test('the weather now beside FORECAST: the nearest station that has it, kept current', async () => {
+  // Beside FORECAST in the header (the space next to it), hidden until a place is known;
+  // a button: a tap or Enter opens the station the reading is from.
+  assert.match(html, /id="forecast-btn"[^>]*>FORECAST<\/button>\s*<!--[^>]*-->\s*<button type="button" id="now-wx" class="now-wx" hidden><\/button>/);
+  // From the keyboard (a click with no mouse: detail 0), focus goes into the panel, as from a
+  // marker — and closing the panel brings it back to the readout.
+  assert.match(html, /nowWx\.addEventListener\('click', e => \{\s*const r = nowWxShown;\s*if \(!r\) return;\s*openStation\(r\.id, r\.name, stationRecords\.find\(rec => rec\.el\?\.textContent === r\.id\)\?\.el \|\| null\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(e\.detail === 0\) \{ popupCloseBtn\.focus\(\); panelOpener = nowWx; \}/);
+  assert.match(extractFunction('openStation'), /panelOpener = null;/, 'any other opening forgets it');
+  {
+    const focused = [];
+    const el = name => ({ offsetParent: {}, focus: () => focused.push(name), classList: { remove() {} }, closest: () => el('marker') });
+    const close = vm.runInNewContext(`(() => {
+      let refreshTimer = null, stationOpenGeneration = 0, activeStationId = 'KSAT';
+      ${extractFunction('closeStationPanel')}
+      return (returnFocus, opener) => { panelOpener = opener; activeMarkerEl = marker(); closeStationPanel(returnFocus); return panelOpener; };
+    })()`, { popupPanel: { style: {} }, clearInterval() {}, marker: () => el('marker'), panelOpener: null, activeMarkerEl: null });
+    const readout = el('readout');
+    assert.equal(close(true, readout), null, 'forgotten once used');
+    close(true, null);
+    readout.offsetParent = null;   // hidden (or set aside by CSS) meanwhile
+    close(true, readout);   // gone from the header meanwhile: to the marker instead
+    close(false, el('readout'));   // a mouse close moves no focus
+    assert.deepEqual(focused, ['readout', 'marker', 'marker']);
+  }
+  // Its time says its zone: the place may be in another one than the viewer's clock.
+  assert.match(extractFunction('renderNowWeather'), /toLocaleTimeString\(\[\], \{ hour: 'numeric', minute: '2-digit', timeZoneName: 'short' \}\)/);
+  let now = Date.parse('2026-10-19T18:00:00Z');
+  const obs = (c, minsAgo, text = 'A Few Clouds', icon = 'https://api.weather.gov/icons/land/day/few?size=medium', lon = -98.47) =>
+    ({ geometry: { coordinates: [lon, 29.53] },
+       properties: { temperature: { value: c }, timestamp: new Date(now - minsAgo * 60_000).toISOString(),
+                     textDescription: text, icon, stationName: 'San Antonio Intl' } });
+  const fetched = [];
+  const answers = { KSAT: obs(null, 10), KSSF: obs(25, 30), KRND: obs(20, 5) };
+  const gates = {};   // a station whose answer is held back until its gate opens
+  const nowWx = { hidden: true, innerHTML: '', title: '', attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+  const timers = [];
+  const ctx = {
+    nowWx, Date: class extends Date { static now() { return now; } }, Number, String, Math,
+    fetchObservations: async id => {
+      fetched.push(id);
+      if (gates[id]) await gates[id];
+      if (!answers[id]) throw new Error('down');
+      return answers[id];
+    },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
+    document: { hidden: false }
+  };
+  const k = vm.runInNewContext(`(() => {
+    const NOW_WX_MAX_AGE_MS = 2 * 3_600_000, NOW_WX_TRIES = 3, NOW_WX_REFRESH_MS = 10 * 60_000;
+    let nowWxSeq = 0, nowWxTimer = 0, nowWxStations = [], nowWxShown = null, nowWxAskedAt = 0;
+    ${html.match(/const toFixedClean = [\s\S]*?\n\};/)[0]}
+    ${html.match(/const cToF = .*;/)[0]}
+    ${['forecastEmoji', 'nowReading', 'renderNowWeather', 'clearNowWeather'].map(extractFunction).join('\n')}
+    async ${extractFunction('loadNowWeather')}
+    return { nowReading, loadNowWeather, clearNowWeather };
+  })()`, ctx);
+  // A reading counts with a temperature, up to two hours old; night from its NWS icon,
+  // or without one from the sun's hour at the station (18:00 UTC is noon at -98°).
+  assert.equal(k.nowReading(obs(null, 10), 'KSAT', now), null, 'no temperature');
+  assert.equal(k.nowReading(obs(25, 150), 'KSAT', now), null, 'over two hours old');
+  const r = k.nowReading(obs(22.2, 30, 'Clear', 'https://api.weather.gov/icons/land/night/skc'), 'KSAT', now);
+  assert.equal(r.f, '72'); assert.equal(r.c, '22'); assert.equal(r.day, false);
+  assert.equal(k.nowReading(obs(22, 0, 'Clear', null), 'KSAT', now).day, true, 'no icon, local noon: day');
+  assert.equal(k.nowReading(obs(22, 0, 'Clear', null, 80), 'KSAT', now).day, false, 'no icon, 23:20 at 80°E: night');
+  // The nearest station without a temperature is passed over for the next nearest.
+  await k.loadNowWeather(['KSAT', 'KSSF', 'KRND', 'KHDO']);
+  assert.deepEqual(fetched, ['KSAT', 'KSSF']);
+  assert.equal(nowWx.hidden, false);
+  assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">⛅<\/span>77°F<small>25°C<\/small>$/);
+  assert.match(nowWx.title, /^A Few Clouds, 77°F \(25°C\) — San Antonio Intl \(KSSF\), [^.]+\. Open its readings\.$/);
+  // Screen readers hear that same text once: as its name (a title the same as the name isn't read again).
+  assert.equal(nowWx.attrs['aria-label'], nowWx.title);
+  // Kept current: looked at again in 10 minutes (as a refresh) — not while the page is away.
+  const tick = timers.at(-1);
+  assert.equal(tick.ms, 10 * 60_000);
+  ctx.document.hidden = true;
+  fetched.length = 0;
+  tick.fn();
+  assert.deepEqual(fetched, [], 'a tab in the background asks nothing');
+  ctx.document.hidden = false;
+  // …while on show, it asks again, keeping the reading up meanwhile (a refresh).
+  tick.fn();
+  assert.equal(nowWx.hidden, false, 'not blanked while it looks');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(fetched, ['KSAT', 'KSSF']);
+  assert.match(nowWx.innerHTML, /77°F/);
+  assert.match(html, /document\.addEventListener\('visibilitychange', \(\) => \{\s*if \(document\.visibilityState === 'visible' && nowWxStations\.length && Date\.now\(\) - nowWxAskedAt >= NOW_WX_REFRESH_MS\) \{\s*loadNowWeather\(nowWxStations, null, true\);/);
+  // A refresh that finds nothing (offline, the stations down) keeps the reading on show
+  // while it's still recent, rather than blanking the header — and drops it after.
+  const saved = { ...answers };
+  for (const id in answers) delete answers[id];
+  await k.loadNowWeather(['KSAT', 'KSSF', 'KRND', 'KHDO'], null, true);
+  assert.equal(nowWx.hidden, false, 'kept');
+  assert.match(nowWx.innerHTML, /77°F/);
+  now += 95 * 60_000;   // the kept reading turns two hours old
+  await k.loadNowWeather(['KSAT', 'KSSF', 'KRND', 'KHDO'], null, true);
+  assert.equal(nowWx.hidden, true, 'too old to keep');
+  now -= 95 * 60_000;
+  Object.assign(answers, saved);
+  // A new place starts afresh, even when its nearest station is the old one's: the old
+  // reading (from another station, maybe) isn't kept for it when its own can't be had.
+  await k.loadNowWeather(['KSAT', 'KSSF']);
+  assert.match(nowWx.innerHTML, /77°F/);
+  delete answers.KSSF;
+  await k.loadNowWeather(['KSAT', 'KBAZ']);
+  assert.equal(nowWx.hidden, true, 'not the old place\'s reading');
+  answers.KSSF = saved.KSSF;
+  // None of the nearest few has a reading: hidden (and only a few are asked).
+  fetched.length = 0;
+  await k.loadNowWeather(['KXXX', 'KYYY', 'KZZZ', 'KSSF']);
+  assert.deepEqual(fetched, ['KXXX', 'KYYY', 'KZZZ']);
+  assert.equal(nowWx.hidden, true);
+  // No sky in words: a thermometer, not a guessed sky.
+  answers.KQQQ = obs(18, 5, '', null);
+  await k.loadNowWeather(['KQQQ']);
+  assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">🌡️<\/span>64°F/);
+  // A newer place takes over from an older one's slower answer: it's dropped when it lands.
+  let open;
+  gates.KSSF = new Promise(resolve => { open = resolve; });
+  const slow = k.loadNowWeather(['KSSF']);
+  await k.loadNowWeather(['KRND']);
+  assert.match(nowWx.innerHTML, /68°F/);
+  open();
+  await slow;
+  assert.match(nowWx.innerHTML, /68°F/, 'not the older place\'s late answer');
+  // No area (cleared — as a new search starts, or one leaves none): a late answer stays out.
+  gates.KSSF = new Promise(resolve => { open = resolve; });
+  const late = k.loadNowWeather(['KSSF']);
+  k.clearNowWeather();
+  open();
+  await late;
+  assert.equal(nowWx.hidden, true, 'a cleared place stays hidden');
+  delete gates.KSSF;
+  // Wired to the search (its stations, nearest first), to a station link (its reading
+  // in hand), and gone with FORECAST when a search leaves no area.
+  assert.match(extractFunction('loadStationsAt'), /setForecastPoint\(lat, lon\);[^\n]*\n\s*loadNowWeather\(stationsByDistance\);/);
+  assert.match(extractFunction('plotStations'), /stationsByDistance = inside\.map\(\(\{ f \}\) => f\.properties\.stationIdentifier\);/);
+  assert.match(html, /setForecastPoint\(lat, lng\);[^\n]*\n\s*\/\/[^\n]*\n\s*if \(data\) loadNowWeather\(\[stationParam\], data\); else clearNowWeather\(\);/);
+  assert.match(extractFunction('clearForecastPoint'), /clearNowWeather\(\);/);
+  // A new search clears the old place's at once, with its station panel and markers —
+  // not left to be tapped open over the new place while its stations load.
+  assert.match(extractFunction('loadStationsAt'), /stationOpenGeneration\+\+;[\s\S]*clearNowWeather\(\);[\s\S]*await fetchStations\(/);
+  // A narrow phone: the routine station count gives way to it (not cut to "12 STATI…");
+  // a loading message takes the row back (the readout steps aside).
+  assert.match(html, /@media \(max-width: 420px\) \{\s*header:has\(#now-wx:not\(\[hidden\]\)\) \.status-bar\.ok \{\s*position: absolute; width: 1px;[^}]*\}\s*header:has\(\.status-bar\.loading\) #now-wx \{ display: none; \}/);
+  // A desktop window too narrow for one row (641–959 px): two, as on a phone.
+  assert.match(html, /@media \(pointer: fine\) and \(min-width: 641px\) and \(max-width: 959px\) \{\s*header \{ flex-wrap: wrap; row-gap: 10px; \}\s*\.search-bar \{ order: 3; flex-basis: 100%; max-width: 100%; \}\s*\.status-bar \{ flex: 1 1 0; min-width: 0;/);
+  // A station's own words for its sky get their icon, not a fair-weather sun.
+  const emoji = vm.runInNewContext(`(${extractFunction('forecastEmoji')})`);
+  assert.equal(emoji('A Few Clouds', true), '⛅');
+  assert.equal(emoji('Mist', true), '🌫️');
+  assert.equal(emoji('Hail', true), '🌧️');
+  assert.equal(emoji('Unknown Precipitation', false), '🌧️');
+  assert.equal(emoji('Squalls', true), '💨');
+  assert.equal(emoji('Freezing Fog', true), '🌫️', 'a fog, not snow');
+  assert.equal(emoji('Freezing Rain', true), '🌨️');
+  assert.equal(emoji('Light Snow and Freezing Fog', true), '🌨️', 'snow with it still wins');
+  assert.equal(emoji('Freezing Drizzle and Freezing Fog', true), '🌨️');
+});
+
 test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA links only', async () => {
   // Markup: a header button (hidden until an area loads) and a modal dialog with two tabs.
   assert.match(html, /<button type="button" id="forecast-btn" hidden/);
@@ -4269,7 +4432,7 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   assert.match(raw.facts, /first light 7:0\d\u00A0AM/);
   assert.doesNotMatch(raw.facts, /\d (AM|PM)/);
   // Nothing to go on (no place, or a timestamp without its offset): nothing shown.
-  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', aqi: null, humidity: null, heat: null });
+  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', sunriseAt: '', aqi: null, humidity: null, heat: null });
   assert.equal(k.forecastRowExtras([{ startTime: '2026-10-03T06:00', endTime: '2026-10-03T18:00' }], null, sa).sun, '');
   // EPA categories at their edges.
   assert.deepEqual([50, 51, 101, 151, 201, 301].map(v => k.aqiCategory(v).level), [1, 2, 3, 4, 5, 6]);
@@ -4404,7 +4567,11 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(html, /\.fc-wk-day \{ container-type: inline-size; \}\s*@container \(max-width: 139px\) \{\s*\.fc-wk-short \{ display: inline; \}/);
   assert.match(week, /<span class="fc-wk-date">Oct 4<\/span>/);
   assert.match(week, /fc-hi">[^]*?High <\/span>82°<\/span><span class="fc-lo">[^]*?Low <\/span>70°/);
-  assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>7:1\d PM<\/span><span class="fc-wk-pop">[^]*?30%/);
+  // Its sunset (bright) and sunrise (quiet) side by side, as in the phone list — for a
+  // night on its own ("Tonight"), the next morning's sunrise.
+  assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>7:1\d PM<\/span><span class="fc-wk-sunrise"><span aria-hidden="true">🌅 <\/span><span class="sr-only">Sunrise <\/span>7:[23]\d AM<\/span><span class="fc-wk-pop">[^]*?30%/);
+  assert.equal((week.match(/class="fc-wk-sunrise"/g) || []).length, model.rows.length, 'every column has its sunrise');
+  assert.match(html, /\.fc-wk-sunrise \{ font-size: 0\.7rem; color: var\(--text-muted\); \}/);
   assert.match(week, /<span class="fc-wk-aqi"><span class="fc-aqi fc-aqi-3"><span class="fc-aqi-word">AQI <\/span>120 Unhealthy for sensitive groups<\/span>/);
   // With the hours' humidity: each column's range, and each hour's in the tooltip.
   const utcKey = iso => new Date(Date.parse(iso)).toISOString().slice(0, 13);
@@ -4424,9 +4591,9 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   const heatWeek = k.renderForecastWeek(k.forecastWeekModel(days, hours, { ...extras, humidity, heat }, point), Date.parse('2026-10-03T20:00:00-05:00'));
   assert.match(heatWeek, /<span class="fc-wk-feels">Feels <span class="fc-wk-upto">up to <\/span>\d+°<\/span><span class="fc-wk-hum">/);
   // In a 720–960 px window every column keeps what reads at a glance (icon, high and
-  // low, rain, "Feels 102°"); the sky's words, sunset, humidity and AQI go out of
+  // low, rain, "Feels 102°"); the sky's words, sunset, sunrise, humidity and AQI go out of
   // sight — still read out — so no column is a cramped stack. Wider, all show.
-  assert.match(html, /@media \(max-width: 959px\) \{\s*\.fc-wk-day \{ padding-left: 8px; padding-right: 5px; \}\s*\.fc-wk-name \{ font-size: 0\.74rem; \}\s*\.fc-wk-sky, \.fc-wk-sunset, \.fc-wk-hum, \.fc-wk-aqi, \.fc-wk-upto \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset\(50%\);/);
+  assert.match(html, /@media \(max-width: 959px\) \{\s*\.fc-wk-day \{ padding-left: 8px; padding-right: 5px; \}\s*\.fc-wk-name \{ font-size: 0\.74rem; \}\s*\.fc-wk-sky, \.fc-wk-sunset, \.fc-wk-sunrise, \.fc-wk-hum, \.fc-wk-aqi, \.fc-wk-upto \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset\(50%\);/);
   // The chart's label names what its arrow-key read-out says (how hot it feels, humidity).
   assert.match(heatWeek, /aria-label="Hour by hour: temperature, how hot it feels, chance of rain, humidity, air quality and pressure\./);
   assert.match(heatWeek, /<path class="fc-wk-feels-line" d="M[^"]+"\/><path class="fc-wk-line"/);
@@ -4835,4 +5002,45 @@ test('live alerts across the date line: the view is split, and shapes land on th
   assert.deepEqual(hole.map(c => c[0]), [360, 361, 361, 360], 'the hole stays inside its polygon');
   // An empty outline is left empty (no NaN longitudes for Leaflet to throw on).
   assert.deepEqual(coords(h.placeGeometry({ type: 'Polygon', coordinates: [[]] }, -150)), [[]]);
+});
+
+test('the forecast opens on the view picked last time, after a reload too', () => {
+  // Picking a view remembers it on this device; the page opens the forecast on it again.
+  const store = {};
+  const tab = () => ({ attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, tabIndex: 0 });
+  const ctx = {
+    fcTabDays: tab(), fcTabHours: tab(), fcDays: { hidden: false }, fcHours: { hidden: true, querySelector: () => null },
+    updateHourStripNav() {},
+    localStorage: { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = String(v); } }
+  };
+  // (Each load a fresh page: its own scope, the storage and the elements kept.)
+  const load = () => vm.runInNewContext(`(() => {
+    ${html.match(/const FORECAST_TAB_KEY = .*;/)[0]}
+    ${extractFunction('selectForecastTab')}
+    ${html.match(/try \{\s*if \(localStorage\.getItem\(FORECAST_TAB_KEY\) === 'hours'\) selectForecastTab\('hours'\);\s*\} catch[^\n]*/)[0]}
+    return selectForecastTab;
+  })()`, ctx);
+  // A first visit: the 7-day view, as by default (nothing stored yet).
+  load();
+  assert.equal(ctx.fcDays.hidden, false);
+  assert.deepEqual(store, {});
+  // The hourly view picked, then the page loaded again: it opens on the hours.
+  load()('hours');
+  assert.equal(store.wxmap_forecast_tab, 'hours');
+  Object.assign(ctx.fcDays, { hidden: false }); ctx.fcHours.hidden = true;   // a fresh page
+  load();
+  assert.equal(ctx.fcDays.hidden, true);
+  assert.equal(ctx.fcHours.hidden, false);
+  assert.equal(ctx.fcTabHours.attrs['aria-selected'], 'true');
+  // …and back to the 7-day view: that's remembered as well.
+  load()('days');
+  assert.equal(store.wxmap_forecast_tab, 'days');
+  ctx.fcDays.hidden = true; ctx.fcHours.hidden = false;
+  load();
+  assert.equal(ctx.fcDays.hidden, true, 'a stored 7-day view needs nothing done: the page starts on it');
+  // Storage blocked (a private window, say): no error, the 7-day view stays the default.
+  ctx.localStorage = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } };
+  assert.doesNotThrow(() => load()('hours'));
+  // Wired to the tabs (a click, and the arrow keys go through the same function).
+  assert.match(html, /fcTabHours\.addEventListener\('click', \(\) => selectForecastTab\('hours'\)\);\s*try \{\s*if \(localStorage\.getItem\(FORECAST_TAB_KEY\) === 'hours'\)/);
 });

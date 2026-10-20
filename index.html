@@ -830,6 +830,26 @@
   #forecast-btn:hover { background: rgba(0,212,255,0.1); }
   #forecast-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   #forecast-btn:not([hidden]) ~ .status-bar { margin-left: 0; }
+  /* A desktop window too narrow for one row (641–959 px): two, as on a phone — the
+     search bar under the logo, FORECAST, the weather now and the status (the status
+     takes what's left, cut short with "…" rather than running off the edge). */
+  @media (pointer: fine) and (min-width: 641px) and (max-width: 959px) {
+    header { flex-wrap: wrap; row-gap: 10px; }
+    .search-bar { order: 3; flex-basis: 100%; max-width: 100%; }
+    .status-bar { flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+  }
+  /* The weather now beside FORECAST: an icon for the sky and the temperature, read at
+     a glance (°C in small type beside it where there's room). */
+  .now-wx {
+    flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    margin: 0; padding: 3px 6px; border: 0; border-radius: var(--radius); background: none; cursor: pointer;
+    font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.95rem; color: var(--text);
+  }
+  .now-wx:hover { background: rgba(255,255,255,0.06); }
+  .now-wx:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .now-wx[hidden] { display: none; }
+  .now-wx-icon { font-size: 1.3rem; line-height: 1; }
+  .now-wx small { margin-left: -2px; font-weight: 400; font-size: 0.68rem; color: var(--text-muted); }
 
   #forecast-dialog {
     margin: auto;   /* centred: the page's global margin reset would pin it top-left */
@@ -1333,6 +1353,28 @@
     .status-bar { flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; }
     /* Narrower type than the wide Syne, so "20 STATIONS" still fits beside it. */
     #forecast-btn { padding: 5px 8px; font-family: 'Space Mono', monospace; font-size: 0.66rem; letter-spacing: 0.04em; }
+    /* The weather now, a little smaller and in °F only, so the row keeps its room. */
+    .now-wx { font-size: 0.85rem; gap: 4px; }
+    .now-wx-icon { font-size: 1.15rem; }
+    .now-wx small { display: none; }
+    /* A narrow phone has no room for both on that row: once the weather now is shown,
+       the routine station count ("12 STATIONS", which the search circle's label on the
+       map says too) gives way to it rather than being cut to "12 STATI…" — dot and all,
+       so not even its gap is left to push a third row onto a 320 px screen; screen
+       readers still hear it. A loading message ("FETCHING STATIONS…") takes
+       the row back instead: the weather now steps aside meanwhile. */
+    @media (max-width: 420px) {
+      header:has(#now-wx:not([hidden])) .status-bar.ok {
+        position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+      }
+      header:has(.status-bar.loading) #now-wx { display: none; }
+    }
+    /* The narrowest phones (320 px): a little less space around it, so a three-digit
+       or below-zero temperature ("104°F", "-12°F") still fits beside FORECAST. */
+    @media (max-width: 360px) {
+      header { column-gap: 6px; }
+      .now-wx { padding: 3px 2px; }
+    }
     /* The forecast opens as a sheet from the bottom of the screen. */
     #forecast-dialog {
       width: 100vw; max-height: 86vh; max-height: 86dvh;
@@ -1682,18 +1724,18 @@
   @media (max-width: 1279px) {
     .fc-wk-day { padding-left: 11px; padding-right: 8px; }
     .fc-wk-name { font-size: 0.8rem; }
-    .fc-wk-sunset { font-size: 0.74rem; }
+    .fc-wk-day .fc-wk-sunset { font-size: 0.74rem; }   /* (outranks the base rule further down) */
   }
   /* A 720–960 px window: every column keeps what reads at a glance — the sky's
      icon, the high and low, the chance of rain and, on a hot day, how hot it feels
-     ("Feels 102°"). The sky in words, the sunset, the humidity and the air quality
+     ("Feels 102°"). The sky in words, the sunset and sunrise, the humidity and the air quality
      go out of sight (still read out with the day; the chart over the days and the
      picked day's details show them), so a column isn't a cramped stack. Slimmer
      padding and names keep a part-day column's name ("Tonight") whole. */
   @media (max-width: 959px) {
     .fc-wk-day { padding-left: 8px; padding-right: 5px; }
     .fc-wk-name { font-size: 0.74rem; }
-    .fc-wk-sky, .fc-wk-sunset, .fc-wk-hum, .fc-wk-aqi, .fc-wk-upto {
+    .fc-wk-sky, .fc-wk-sunset, .fc-wk-sunrise, .fc-wk-hum, .fc-wk-aqi, .fc-wk-upto {
       position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
     }
   }
@@ -1714,6 +1756,7 @@
   .fc-wk-feels { font-weight: 700; color: #ffb37a; }   /* how hot it feels: the one to notice */
   .fc-wk-hum span { white-space: nowrap; }   /* "45–84%" stays whole; the word may sit above it */
   .fc-wk-sunset { font-size: 0.8rem; font-weight: 700; color: #ffb37a; }   /* sunset: the one to spot */
+  .fc-wk-sunrise { font-size: 0.7rem; color: var(--text-muted); }
 
   /* The chart: strips stacked on one time line, nights shaded behind all of them. */
   /* The chart and, on its left, a slim column of each strip's scale numbers, level
@@ -2019,6 +2062,9 @@
 
   <!-- The NWS forecast for the area on the map (14D); shown once an area is loaded. -->
   <button type="button" id="forecast-btn" hidden title="Forecast for the searched area (National Weather Service)">FORECAST</button>
+  <!-- The weather now at the searched place (its nearest station's latest reading);
+       opens that station's readings. -->
+  <button type="button" id="now-wx" class="now-wx" hidden></button>
 
   <div class="status-bar" id="status-bar" role="status" aria-live="polite">
     <span class="dot"></span><span id="status-text">READY</span>
@@ -4093,6 +4139,7 @@ async function refreshStationData(stationId, generation) {
 async function openStation(stationId, stationName, markerEl) {
   if (refreshTimer)    { clearInterval(refreshTimer); refreshTimer = null; }
   if (activeMarkerEl)  { activeMarkerEl.classList.remove('active'); }
+  panelOpener = null;   // (set again by the caller when it isn't a marker)
 
   const generation = ++stationOpenGeneration;
 
@@ -4130,15 +4177,23 @@ async function openStation(stationId, stationName, markerEl) {
 }
 
 const popupCloseBtn = document.getElementById('popup-close');
+// What opened the panel from the keyboard, when it isn't a marker (the weather now):
+// closing it sends focus back there. Any other opening forgets it (see openStation).
+let panelOpener = null;
 
 /**
  * Close the station panel and stop its refresh timer.
  * @param {boolean} returnFocus - keyboard use: move focus back to the marker the
- *   panel was opened from instead of dropping it at the start of the page. Not for
+ *   panel was opened from (or the weather now, when it opened the panel) instead of
+ *   dropping it at the start of the page. Not for
  *   mouse/touch: focusing the marker makes Leaflet pan the map back to it.
  */
 function closeStationPanel(returnFocus) {
-  const returnFocusTo = returnFocus ? activeMarkerEl?.closest('.leaflet-marker-icon') : null;
+  // (Back to the weather now in the header, when it opened the panel and still shows —
+  // not hidden, nor set aside by a phone's CSS while a search loads: no offsetParent.)
+  const opener = panelOpener?.offsetParent ? panelOpener : null;
+  panelOpener = null;
+  const returnFocusTo = returnFocus ? opener || activeMarkerEl?.closest('.leaflet-marker-icon') : null;
   popupPanel.style.display = 'none';
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   stationOpenGeneration++;
@@ -4235,6 +4290,9 @@ function makeStationMarker(id, name, lat, lng) {
   return iconEl;
 }
 
+/** The searched place's stations shown, nearest first (plotStations). */
+let stationsByDistance = [];
+
 /**
  * Plot the stations a search found and draw the circle around them.
  *
@@ -4282,6 +4340,7 @@ function plotStations(geoJSON, lat, lon, minZoom) {
     // .alerted ring.
     stationRecords.push({ el, lat: la, lng });
   });
+  stationsByDistance = inside.map(({ f }) => f.properties.stationIdentifier);   // (for the weather now)
   // An empty list (NOAA found no stations here): no "0 stations" circle.
   if (!inside.length) return undefined;
   return drawSearchRadius(lat, lon, edgeMi, inside.length, minZoom);
@@ -4573,6 +4632,9 @@ async function loadStationsAt(lat, lon, gen) {
   stationOpenGeneration++;
   activeStationId = null;
   if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
+  // The old place's weather now goes as well (and stops refreshing): a tap on it would
+  // open its station's panel over the new place. The new one is shown once it's in.
+  clearNowWeather();
   // Remove the old area's markers now too: the map is about to fly away, so they
   // must not linger (or stay clickable and open a stale panel) during the fetch,
   // nor be left behind next to the new location if the station fetch fails.
@@ -4614,6 +4676,7 @@ async function loadStationsAt(lat, lon, gen) {
   areaLoading = null;
   const radiusBox = plotStations(data, lat, lon, userZoom);
   setForecastPoint(lat, lon);   // FORECAST now describes this area
+  loadNowWeather(stationsByDistance);   // …and the weather now there sits beside it
   liveSearchLanded();           // live alerts waiting for the opening search can load
 
   // A newer search still running owns the status bar and overlay; leave them.
@@ -7212,7 +7275,118 @@ function setForecastPoint(lat, lon) {
 function clearForecastPoint() {
   forecastPoint = null;
   forecastBtn.hidden = true;
+  clearNowWeather();
 }
+
+/* ── The weather now (beside FORECAST) ───────────────────────────────────────
+   What it's like at the searched place at a glance, without opening a station or
+   the forecast: the sky as an icon and the temperature, from the latest reading of
+   its nearest station — or the next nearest, when that one sent no temperature or
+   nothing recent. Refreshed every few minutes while the place stays on the map. */
+const nowWx = document.getElementById('now-wx');
+const NOW_WX_MAX_AGE_MS = 2 * 3_600_000;   // an older reading isn't "now"
+const NOW_WX_TRIES = 3;                      // the nearest few stations, nearest first
+const NOW_WX_REFRESH_MS = 10 * 60_000;       // stations report about hourly, some every few minutes
+let nowWxSeq = 0, nowWxTimer = 0, nowWxStations = [];
+let nowWxShown = null;   // the reading on show (kept through a failed refresh while still recent)
+let nowWxAskedAt = 0;    // when it was last looked for (to catch up after the page was away)
+
+/**
+ * The weather now from one observation, or null when it can't say (no temperature,
+ * or older than NOW_WX_MAX_AGE_MS).
+ * @param {Object} obs - a station's latest observation (GeoJSON Feature)
+ * @param {string} id  - the station
+ * @param {number} [now] - the time to judge its age by (ms)
+ */
+function nowReading(obs, id, now = Date.now()) {
+  const p = obs?.properties;
+  const c = p?.temperature?.value, at = Date.parse(p?.timestamp);
+  if (!Number.isFinite(c) || !(now - at < NOW_WX_MAX_AGE_MS)) return null;
+  // Day or night at the station: from the NWS icon's path ("…/night/sct"), or without
+  // one from the sun's hour there (UTC plus a fifteenth of the longitude, in hours).
+  const icon = String(p.icon || ''), lon = obs?.geometry?.coordinates?.[0];
+  const t = new Date(at), sunHour = (t.getUTCHours() + t.getUTCMinutes() / 60 + (Number.isFinite(lon) ? lon / 15 : 0) + 48) % 24;
+  return { f: cToF(c), c: toFixedClean(c, 0), text: String(p.textDescription || ''),
+           day: icon ? !icon.includes('/night/') : sunHour >= 6 && sunHour < 18,
+           id, name: String(p.stationName || id), at };
+}
+
+/**
+ * Show a reading beside FORECAST: the sky's icon (a thermometer when the station
+ * didn't say), °F (and °C); the sky in words, the station and when it reported are
+ * shown on hover and spoken with it — and a tap opens that station's readings.
+ */
+function renderNowWeather(r) {
+  // The viewer's clock, with its zone ("2:51 PM CDT") — the place may be in another one.
+  const when = new Date(r.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+  const icon = r.text ? forecastEmoji(r.text, r.day) : '🌡️';
+  nowWx.innerHTML = '<span class="now-wx-icon" aria-hidden="true">' + icon + '</span>' +
+    r.f + '°F<small>' + r.c + '°C</small>';
+  // One text for the hover and for screen readers (a name the same as the title is
+  // read once, not twice).
+  const label = (r.text ? r.text + ', ' : '') + r.f + '°F (' + r.c + '°C) — ' + r.name + ' (' + r.id + '), ' + when +
+    '. Open its readings.';
+  nowWx.title = label;
+  nowWx.setAttribute('aria-label', label);
+  nowWx.hidden = false;
+}
+// A tap opens the station the reading is from (its marker lit, when it's on the map).
+nowWx.addEventListener('click', e => {
+  const r = nowWxShown;
+  if (!r) return;
+  openStation(r.id, r.name, stationRecords.find(rec => rec.el?.textContent === r.id)?.el || null);
+  // From the keyboard (Enter or Space: no mouse click, so detail 0), focus moves into
+  // the panel, as from a marker: its details get read out and Escape closes it —
+  // and closing it brings focus back here, where it came from.
+  if (e.detail === 0) { popupCloseBtn.focus(); panelOpener = nowWx; }
+});
+
+/** Stop showing (and refreshing) the weather now. */
+function clearNowWeather() {
+  nowWxSeq++;
+  clearTimeout(nowWxTimer);
+  nowWxStations = [];
+  nowWxShown = null;
+  nowWx.hidden = true;
+}
+
+/**
+ * Show the weather now for a place: from the first of its nearest stations whose
+ * latest reading has a temperature and is recent; hidden when none has (a refresh
+ * that finds none keeps the reading on show while it's still recent).
+ * @param {string[]} stationIds - its stations, nearest first
+ * @param {Object} [first] - the first one's observation, when already in hand
+ * @param {boolean} [refresh] - the same place looked at again (else a new one)
+ */
+async function loadNowWeather(stationIds, first = null, refresh = false) {
+  const seq = ++nowWxSeq;
+  clearTimeout(nowWxTimer);
+  const ids = stationIds.slice(0, NOW_WX_TRIES);
+  // A new place: the old reading goes at once (a refresh keeps it until the new one).
+  if (!refresh) { nowWx.hidden = true; nowWxShown = null; }
+  nowWxStations = ids;
+  nowWxAskedAt = Date.now();
+  let reading = null;
+  for (const [i, id] of ids.entries()) {
+    let obs = i === 0 ? first : null;
+    try { obs = obs || await fetchObservations(id); } catch (_) { obs = null; }   // (a station that's down: the next)
+    if (seq !== nowWxSeq) return;   // another place (or a refresh) took over meanwhile
+    if ((reading = nowReading(obs, id))) break;
+  }
+  // None now (offline, the stations down): the one on show stays while it's still recent.
+  if (!reading && nowWxShown && Date.now() - nowWxShown.at < NOW_WX_MAX_AGE_MS) reading = nowWxShown;
+  nowWxShown = reading;
+  if (reading) renderNowWeather(reading); else nowWx.hidden = true;
+  // (Not while the page is away — a tab in the background: coming back catches up.)
+  if (ids.length) nowWxTimer = setTimeout(() => { if (!document.hidden) loadNowWeather(ids, null, true); }, NOW_WX_REFRESH_MS);
+}
+// Back to the page after a while (a phone puts the app to sleep, and its timers with
+// it): look again at once rather than show an old reading until the timer wakes.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && nowWxStations.length && Date.now() - nowWxAskedAt >= NOW_WX_REFRESH_MS) {
+    loadNowWeather(nowWxStations, null, true);
+  }
+});
 
 /**
  * Load the 7-day and hourly forecasts for a point (cached for a few minutes).
@@ -7284,14 +7458,16 @@ function forecastPlaceLabel(relativeLocation) {
 
 /** A weather symbol for an NWS short forecast ("Chance Showers And Thunderstorms"). */
 function forecastEmoji(text, isDaytime) {
-  const t = String(text || '').toLowerCase();
+  // A freezing (or ice) fog is a fog, not snow — though snow or rain with it still wins.
+  const t = String(text || '').toLowerCase().replace(/freezing fog|ice fog/g, 'fog');
   if (/thunder|t-storm/.test(t)) return '⛈️';
   if (/snow|flurr|sleet|blizzard|ice|freezing/.test(t)) return '🌨️';
-  if (/rain|shower|drizzle/.test(t)) return '🌧️';
-  if (/fog|haze|smoke|dust/.test(t)) return '🌫️';
-  if (/partly|mostly sunny|mostly clear/.test(t)) return isDaytime ? '⛅' : '☁️';
+  // (Also a station's own words for its sky: "Hail", "Unknown Precipitation", "Mist", "Squalls".)
+  if (/rain|shower|drizzle|hail|precip/.test(t)) return '🌧️';
+  if (/fog|mist|haze|smoke|dust/.test(t)) return '🌫️';
+  if (/partly|mostly sunny|mostly clear|few clouds/.test(t)) return isDaytime ? '⛅' : '☁️';
   if (/cloud|overcast/.test(t)) return '☁️';
-  if (/wind|breezy|blustery/.test(t)) return '💨';
+  if (/wind|breezy|blustery|squall/.test(t)) return '💨';
   if (/sunny|clear|fair|hot/.test(t)) return isDaytime ? '☀️' : '🌙';
   return isDaytime ? '🌤️' : '🌙';
 }
@@ -7579,15 +7755,15 @@ function hpaToInHg(hpa) {
  * @param {Object}  [extras] - fetchAirAndPressure's answer, with the NWS hourly
  *                             humidity and heat index (see openForecast)
  * @param {{lat:number, lon:number}} [point] - where the forecast is
- * @returns {{sun: string, air: string, facts: string, sunsetAt: string, aqi: ?number,
+ * @returns {{sun: string, air: string, facts: string, sunsetAt: string, sunriseAt: string, aqi: ?number,
  *            humidity: ?{low:number, high:number}, heat: ?number}} HTML ('' where
- *          nothing is known), plus the plain sunset time, worst AQI, humidity range
+ *          nothing is known), plus the plain sunset and sunrise times, worst AQI, humidity range
  *          and highest heat index the week-at-a-glance's day columns show
  */
 function forecastRowExtras(parts, extras, point) {
   const first = parts[0], last = parts[parts.length - 1];
-  // sunsetAt, aqi, humidity and heat are plain values for the week-at-a-glance's day columns.
-  const out = { sun: '', air: '', facts: '', sunsetAt: '', aqi: null, humidity: null, heat: null };
+  // sunsetAt, sunriseAt, aqi, humidity and heat are plain values for the week-at-a-glance's day columns.
+  const out = { sun: '', air: '', facts: '', sunsetAt: '', sunriseAt: '', aqi: null, humidity: null, heat: null };
   const facts = [];
 
   // Sun, on the place's own clock. A day row: that day's sunrise and sunset. A
@@ -7620,8 +7796,9 @@ function forecastRowExtras(parts, extras, point) {
     if (typeof evening.sun === 'object' && typeof morning.sun === 'object') {
       // Sunset first and brightest: the time most people look for at a glance.
       out.sunsetAt = atDusk(evening.sun.set);
+      out.sunriseAt = atDawn(morning.sun.rise);
       out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>Sunset ' + out.sunsetAt +
-                '</span> · <span aria-hidden="true">🌅 </span>Sunrise ' + atDawn(morning.sun.rise);
+                '</span> · <span aria-hidden="true">🌅 </span>Sunrise ' + out.sunriseAt;
       // Opened: in time order, twilight included ("last light" is when it gets too
       // dark to see outdoors without lights, some 25 minutes after sunset).
       const firstLight = typeof morning.light === 'object' && 'first light ' + atDawn(morning.light.rise);
@@ -7641,6 +7818,7 @@ function forecastRowExtras(parts, extras, point) {
       const dusk = typeof evening.sun === 'object';
       const dawn = typeof morning.sun === 'object';
       if (dusk) out.sunsetAt = atDusk(evening.sun.set);
+      if (dawn) out.sunriseAt = atDawn(morning.sun.rise);
       out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>' +
         (dusk ? 'Sunset ' + atDusk(evening.sun.set) : 'No sunset') + '</span> · ' +
         (dawn ? '<span aria-hidden="true">🌅 </span>Sunrise ' + atDawn(morning.sun.rise)
@@ -8364,6 +8542,9 @@ function forecastWeekDayHtml(row, index, selected) {
     '<span class="fc-wk-meta">' +
       (row.more.sunsetAt ? '<span class="fc-wk-sunset"><span aria-hidden="true">🌇 </span><span class="sr-only">Sunset </span>' +
         row.more.sunsetAt + '</span>' : '') +
+      // …and its sunrise (a night on its own: the next morning's), quieter, as in the list.
+      (row.more.sunriseAt ? '<span class="fc-wk-sunrise"><span aria-hidden="true">🌅 </span><span class="sr-only">Sunrise </span>' +
+        row.more.sunriseAt + '</span>' : '') +
       (pop != null ? '<span class="fc-wk-pop"><span aria-hidden="true">💧 </span>' + pop +
         '%<span class="sr-only"> chance of rain</span></span>' : '') +
     '</span>' +
@@ -8757,9 +8938,14 @@ function forecastErrorReason(error) {
   return reason.charAt(0).toLowerCase() + reason.slice(1);
 }
 
-/** Show the 7-day ('days') or hourly ('hours') view. */
+// The forecast's last-picked view, remembered on this device: the forecast opens on it
+// again — next time, after a reload, or with the browser opened again.
+const FORECAST_TAB_KEY = 'wxmap_forecast_tab';
+
+/** Show the 7-day ('days') or hourly ('hours') view (and remember it for next time). */
 function selectForecastTab(tab) {
   const days = tab === 'days';
+  try { localStorage.setItem(FORECAST_TAB_KEY, days ? 'days' : 'hours'); } catch (_) { /* storage blocked */ }
   fcTabDays.setAttribute('aria-selected', String(days));
   fcTabHours.setAttribute('aria-selected', String(!days));
   fcTabDays.tabIndex = days ? 0 : -1;
@@ -8868,6 +9054,9 @@ forecastBtn.addEventListener('click', openForecast);
 document.getElementById('forecast-close').addEventListener('click', () => forecastDialog.close());
 fcTabDays.addEventListener('click', () => selectForecastTab('days'));
 fcTabHours.addEventListener('click', () => selectForecastTab('hours'));
+try {
+  if (localStorage.getItem(FORECAST_TAB_KEY) === 'hours') selectForecastTab('hours');
+} catch (_) { /* storage blocked: the 7-day view, as by default */ }
 // Tabs: the arrow keys move between them (the usual tab-list keys).
 document.querySelector('.fc-tabs').addEventListener('keydown', e => {
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
@@ -9651,6 +9840,8 @@ fabLocate.addEventListener('click', () => {
       // register it for Tier-3 alert flagging by hand.
       stationRecords = [{ el: iconEl, lat, lng }];
       setForecastPoint(lat, lng);   // FORECAST describes the station's spot
+      // (Its reading is in hand already; a station with none — 404 — has no weather now to show.)
+      if (data) loadNowWeather([stationParam], data); else clearNowWeather();
       liveSearchLanded();           // live alerts waiting for this opening can load
 
       if (mayUpdateSearchUi(gen)) {

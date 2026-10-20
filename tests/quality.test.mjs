@@ -3819,7 +3819,16 @@ test('the map buttons fold away behind one small button, and the choice is remem
 test('the weather now beside FORECAST: the nearest station that has it, kept current', async () => {
   // Beside FORECAST in the header (the space next to it), hidden until a place is known;
   // a button: a tap or Enter opens the station the reading is from.
-  assert.match(html, /id="forecast-btn"[^>]*>FORECAST<\/button>\s*<!--[^>]*-->\s*<button type="button" id="now-wx" class="now-wx" hidden><\/button>/);
+  // FORECAST comes last, at the header's right edge, the weather now just before it: what
+  // loads beside it (the reading, the status) never moves the button.
+  assert.match(html, /id="status-text">READY<\/span>\s*<\/div>\s*<!--[^>]*-->\s*<button type="button" id="now-wx" class="now-wx" hidden><\/button>\s*<!--[^>]*-->\s*<button type="button" id="forecast-btn" hidden[^>]*>FORECAST<\/button>\s*<\/header>/);
+  // Nothing pushes it from the left: the status grows to fill the room before the
+  // readout and FORECAST, keeping them at the right edge (FORECAST has no auto margin).
+  assert.match(html, /#forecast-btn \{\s*flex-shrink: 0;/);
+  assert.doesNotMatch(html, /#forecast-btn[^{]*\{[^}]*margin-left: auto/);
+  assert.doesNotMatch(html, /~ \.status-bar \{ margin-left: 0; \}/);
+  // Nor does its arrival make the row taller (its big icon kept within FORECAST's height).
+  assert.match(html, /\.now-wx \{[^}]*margin: -4px 0; padding: 3px 6px;/);
   // From the keyboard (a click with no mouse: detail 0), focus goes into the panel, as from a
   // marker — and closing the panel brings it back to the readout.
   assert.match(html, /nowWx\.addEventListener\('click', e => \{\s*const r = nowWxShown;\s*if \(!r\) return;\s*openStation\(r\.id, r\.name, stationRecords\.find\(rec => rec\.el\?\.textContent === r\.id\)\?\.el \|\| null\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(e\.detail === 0\) \{ popupCloseBtn\.focus\(\); panelOpener = nowWx; \}/);
@@ -3959,10 +3968,22 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   // not left to be tapped open over the new place while its stations load.
   assert.match(extractFunction('loadStationsAt'), /stationOpenGeneration\+\+;[\s\S]*clearNowWeather\(\);[\s\S]*await fetchStations\(/);
   // A narrow phone: the routine station count gives way to it (not cut to "12 STATI…");
-  // a loading message takes the row back (the readout steps aside).
-  assert.match(html, /@media \(max-width: 420px\) \{\s*header:has\(#now-wx:not\(\[hidden\]\)\) \.status-bar\.ok \{\s*position: absolute; width: 1px;[^}]*\}\s*header:has\(\.status-bar\.loading\) #now-wx \{ display: none; \}/);
-  // A desktop window too narrow for one row (641–959 px): two, as on a phone.
-  assert.match(html, /@media \(pointer: fine\) and \(min-width: 641px\) and \(max-width: 959px\) \{\s*header \{ flex-wrap: wrap; row-gap: 10px; \}\s*\.search-bar \{ order: 3; flex-basis: 100%; max-width: 100%; \}\s*\.status-bar \{ flex: 1 1 0; min-width: 0;/);
+  // a loading message takes the row back (the readout steps aside). With the status out of
+  // the row, the readout's auto margin fills the room it left, so FORECAST stays at the
+  // right end either way.
+  assert.match(html, /@media \(max-width: 420px\) \{\s*header:has\(#now-wx:not\(\[hidden\]\)\) \.status-bar\.ok \{\s*position: absolute; width: 1px;[^}]*\}\s*\.now-wx \{ margin-left: auto; \}[^\n]*\n\s*header:has\(\.status-bar\.loading\) #now-wx \{ display: none; \}/);
+  // A desktop window too narrow for one row (641–959 px): two, as on a phone — with no
+  // gap left at a scaled display's 640.8 px.
+  // (Whatever the pointer, or none: a TV's or e-reader's browser too.)
+  assert.match(html, /@media \(min-width: 640\.02px\) and \(max-width: 959\.98px\) \{\s*header \{ flex-wrap: wrap; row-gap: 10px; \}\s*\.search-bar \{ order: 3; flex-basis: 100%; \}\s*\}/);
+  // Any two-row header keeps its first row as tall as FORECAST, shown or not, so FORECAST
+  // appearing (or going with a failed search) doesn't move the search bar under it.
+  assert.match(html, /@media \(pointer: coarse\), \(max-width: 959\.98px\) \{\s*#forecast-btn \{ height: 28px; \}\s*\.status-bar \{ line-height: 28px; \}\s*\}/);
+  // Nothing loading moves the buttons: the search bar is as wide as the window allows,
+  // whatever shows beside it (FIND stays put), and the status takes the room that's left,
+  // cut short with "…" rather than pushing the others about.
+  assert.match(html, /\.search-bar \{[^}]*flex: 0 1 auto;\s*width: clamp\(240px, calc\(100vw - 620px\), 480px\);\s*\}/);
+  assert.match(html, /\.status-bar \{\s*flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis;/);
   // A station's own words for its sky get their icon, not a fair-weather sun.
   const emoji = vm.runInNewContext(`(${extractFunction('forecastEmoji')})`);
   assert.equal(emoji('A Few Clouds', true), '⛅');
@@ -4418,6 +4439,9 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   const jan22 = polarNight('2027-01-22T18:00:00-09:00', '2027-01-23T06:00:00-09:00');   // the sun is back Jan 23
   assert.match(jan22.sun, /No sunset<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 1:1\d PM$/);
   assert.match(jan22.facts, /no sunset · first light 10:3\d AM · sunrise 1:1\d PM\./);
+  // …and the day columns say which side has none (not "no sunrise" when the sun stays up).
+  assert.deepEqual([may10.noSunset, may10.noSunrise, nov19.noSunset, nov19.noSunrise, jan22.noSunset, jan22.noSunrise],
+    [false, false, false, true, true, false]);
   // Fairbanks in June: the sunset comes after midnight, and says so.
   const fairbanks = k.forecastRowExtras([{ startTime: '2026-06-21T06:00:00-08:00', endTime: '2026-06-21T18:00:00-08:00' }], null, { lat: 64.84, lon: -147.72 });
   assert.match(fairbanks.sun, /Sunset 12:\d\d AM \(after midnight\)<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 2:\d\d AM$/);
@@ -4428,13 +4452,15 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   const dec = k.forecastRowExtras([{ startTime: '2026-12-21T06:00:00-09:00', endTime: '2026-12-21T18:00:00-09:00' }], null, pole);
   assert.match(dec.sun, /No sunrise — the sun stays down all day/);
   assert.match(dec.facts, /twilight from 11:5\d AM to 2:5\d PM/);
+  assert.deepEqual([june.sunsetAt, june.noSunset, june.noSunrise, dec.sunriseAt, dec.noSunset, dec.noSunrise],
+    ['', true, false, '', false, true]);
   // A time never breaks across lines: a no-break space before its AM/PM.
   const raw = k.rawRowExtras(parts, extras, sa);
   assert.match(raw.sun, /Sunset 7:1\d\u00A0PM/);
   assert.match(raw.facts, /first light 7:0\d\u00A0AM/);
   assert.doesNotMatch(raw.facts, /\d (AM|PM)/);
   // Nothing to go on (no place, or a timestamp without its offset): nothing shown.
-  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', sunriseAt: '', aqi: null, humidity: null, heat: null });
+  assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', sunriseAt: '', noSunset: false, noSunrise: false, aqi: null, humidity: null, heat: null });
   assert.equal(k.forecastRowExtras([{ startTime: '2026-10-03T06:00', endTime: '2026-10-03T18:00' }], null, sa).sun, '');
   // EPA categories at their edges.
   assert.deepEqual([50, 51, 101, 151, 201, 301].map(v => k.aqiCategory(v).level), [1, 2, 3, 4, 5, 6]);
@@ -4571,7 +4597,8 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(week, /fc-hi">[^]*?High <\/span>82°<\/span><span class="fc-lo">[^]*?Low <\/span>70°/);
   // Its sunset (bright) and sunrise (quiet) side by side, as in the phone list — for a
   // night on its own ("Tonight"), the next morning's sunrise.
-  assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>7:1\d PM<\/span><span class="fc-wk-sunrise"><span aria-hidden="true">🌅 <\/span><span class="sr-only">Sunrise <\/span>7:[23]\d AM<\/span><span class="fc-wk-pop">[^]*?30%/);
+  // (Its AM/PM in a span of its own: a narrow column drops it from sight.)
+  assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>7:1\d<span class="fc-wk-ampm"> PM<\/span><\/span><span class="fc-wk-sunrise"><span aria-hidden="true">🌅 <\/span><span class="sr-only">Sunrise <\/span>7:[23]\d<span class="fc-wk-ampm"> AM<\/span><\/span><span class="fc-wk-pop">[^]*?30%/);
   assert.equal((week.match(/class="fc-wk-sunrise"/g) || []).length, model.rows.length, 'every column has its sunrise');
   assert.match(html, /\.fc-wk-sunrise \{ font-size: 0\.7rem; color: var\(--text-muted\); \}/);
   assert.match(week, /<span class="fc-wk-aqi"><span class="fc-aqi fc-aqi-3"><span class="fc-aqi-word">AQI <\/span>120 Unhealthy for sensitive groups<\/span>/);
@@ -4593,9 +4620,50 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   const heatWeek = k.renderForecastWeek(k.forecastWeekModel(days, hours, { ...extras, humidity, heat }, point), Date.parse('2026-10-03T20:00:00-05:00'));
   assert.match(heatWeek, /<span class="fc-wk-feels">Feels <span class="fc-wk-upto">up to <\/span>\d+°<\/span><span class="fc-wk-hum">/);
   // In a 720–960 px window every column keeps what reads at a glance (icon, high and
-  // low, rain, "Feels 102°"); the sky's words, sunset, sunrise, humidity and AQI go out of
-  // sight — still read out — so no column is a cramped stack. Wider, all show.
-  assert.match(html, /@media \(max-width: 959px\) \{\s*\.fc-wk-day \{ padding-left: 8px; padding-right: 5px; \}\s*\.fc-wk-name \{ font-size: 0\.74rem; \}\s*\.fc-wk-sky, \.fc-wk-sunset, \.fc-wk-sunrise, \.fc-wk-hum, \.fc-wk-aqi, \.fc-wk-upto \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset\(50%\);/);
+  // low, rain, sunset and sunrise, "Feels 102°"); the sky's words, humidity and AQI go
+  // out of sight — still read out — so no column is a cramped stack. Wider, all show.
+  assert.match(html, /@media \(max-width: 959px\) \{\s*\.fc-wk-day \{ padding-left: 8px; padding-right: 5px; \}\s*\.fc-wk-name \{ font-size: 0\.74rem; \}\s*\.fc-wk-sky, \.fc-wk-hum, \.fc-wk-aqi, \.fc-wk-upto \{\s*position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset\(50%\);/);
+  assert.doesNotMatch(html.match(/@media \(max-width: 959px\) \{\s*\.fc-wk-day \{[^]*?\n  \}/)[0], /fc-wk-sun/,
+    'the sunset and sunrise show at every width');
+  // A column too narrow for "🌇 6:59 PM" shows "🌇 6:59" (the AM/PM still read out).
+  assert.match(html, /@container \(max-width: 75px\) \{\s*\.fc-wk-ampm \{ position: absolute; width: 1px;/);
+  // A four-digit time (the far north's "10:59 PM") is wider: its AM/PM gives way sooner.
+  assert.match(html, /@container \(max-width: 83px\) \{\s*\.fc-wk-ampm-wide \{ position: absolute; width: 1px;/);
+  assert.doesNotMatch(html, /@container \(max-width: 81px\)/, 'no rule for 1280 px up: columns there stay over 100 px');
+  assert.match(html, /\.fc-wk-sunday, \.fc-wk-meta > \.fc-wk-nosun \{ white-space: normal; \}/);
+  // (…in smaller, plain type, so "midnight)" fits even a 720 px window's part-day column.)
+  assert.match(html, /\.fc-wk-sunday \{ font-size: 0\.64rem; font-weight: 400; \}/);
+  // The midnight sun or polar night: the column says there's none, rather than going without.
+  const dayHtml = vm.runInNewContext(`(() => {
+    const escapeHtml = String, aqiHtml = String;
+    ${['forecastLocalTime', 'isoOffsetMinutes', 'forecastEmoji', 'forecastDegrees'].map(extractFunction).join('\n')}
+    const cToF = c => String(Math.round(c * 9 / 5 + 32));
+    ${extractFunction('forecastWeekDayHtml')}
+    return forecastWeekDayHtml;
+  })()`);
+  const polarRow = more => ({ day: { name: 'Sunday', startTime: '2026-06-21T06:00:00-08:00', shortForecast: 'Sunny',
+    temperature: 50, temperatureUnit: 'F' }, night: null, parts: [], more: { ...more } });
+  assert.match(dayHtml(polarRow({ noSunset: true }), 0, true),
+    /<span class="fc-wk-sunset fc-wk-nosun"><span aria-hidden="true">🌇 <\/span>No sunset<\/span>/);
+  // The polar night's last evening (Utqiaġvik, Jan 22): no sunset, then a sunrise —
+  // no midnight-sun icon on a dark evening.
+  const lastPolarNight = dayHtml({ day: null, night: { name: 'Tonight', startTime: '2027-01-22T18:00:00-09:00',
+    shortForecast: 'Clear', temperature: -20, temperatureUnit: 'F' }, parts: [],
+    more: { noSunset: true, sunriseAt: '1:14 PM' } }, 0, true);   // (its flags, as the "forecast rows" test checks)
+  assert.match(lastPolarNight, /<span aria-hidden="true">🌇 <\/span>No sunset<\/span><span class="fc-wk-sunrise"><span aria-hidden="true">🌅 <\/span><span class="sr-only">Sunrise <\/span>1:1\d<span class="fc-wk-ampm"> PM<\/span>/);
+  assert.doesNotMatch(lastPolarNight, /☀️/);
+  assert.match(dayHtml(polarRow({ noSunrise: true }), 0, true),
+    /<span class="fc-wk-sunrise fc-wk-nosun"><span aria-hidden="true">🌑 <\/span>No sunrise<\/span>/);
+  assert.doesNotMatch(dayHtml(polarRow({}), 0, true), /fc-wk-sun/, 'nothing known: nothing said');
+  // The far north's times: "(after midnight)" wraps under its time rather than past the
+  // edge, and a four-digit time ("10:14 AM") makes both of the column's AM/PMs give way sooner.
+  const fairbanksDay = dayHtml(polarRow({ sunsetAt: '12:47 AM (after midnight)', sunriseAt: '2:58 AM' }), 0, true);
+  assert.match(fairbanksDay, /12:47<span class="fc-wk-ampm fc-wk-ampm-wide"> AM<\/span><span class="fc-wk-sunday"> \(after midnight\)<\/span><\/span>/);
+  assert.match(fairbanksDay, /2:58<span class="fc-wk-ampm fc-wk-ampm-wide"> AM<\/span>/, 'its sunrise reads alike');
+  const lateSunrise = dayHtml(polarRow({ sunsetAt: '6:15 PM', sunriseAt: '10:09 AM' }), 0, true);
+  assert.match(lateSunrise, /6:15<span class="fc-wk-ampm fc-wk-ampm-wide"> PM<\/span>[^]*10:09<span class="fc-wk-ampm fc-wk-ampm-wide"> AM<\/span>/);
+  assert.match(dayHtml(polarRow({ sunsetAt: '6:59 PM', sunriseAt: '7:38 AM' }), 0, true),
+    /6:59<span class="fc-wk-ampm"> PM<\/span>[^]*7:38<span class="fc-wk-ampm"> AM<\/span>/, 'three digits: the usual room');
   // The chart's label names what its arrow-key read-out says (how hot it feels, humidity).
   assert.match(heatWeek, /aria-label="Hour by hour: temperature, how hot it feels, chance of rain, humidity, air quality and pressure\./);
   assert.match(heatWeek, /<path class="fc-wk-feels-line" d="M[^"]+"\/><path class="fc-wk-line"/);

@@ -138,8 +138,13 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    flex: 1;
-    max-width: 480px;
+    /* As wide as the window allows (480 px at most), never more or less for what the
+       header shows beside it: the weather now appearing, or the status text growing,
+       doesn't move FIND — the status takes the room that's left (see .status-bar).
+       620 px is the rest of a one-row header: its padding, the logo, the gaps, FORECAST,
+       the weather now and about 100 px for the status ("23 STATIONS"). */
+    flex: 0 1 auto;
+    width: clamp(240px, calc(100vw - 620px), 480px);
   }
 
   /* ── Address suggestions: a list hanging under the whole search bar ── */
@@ -248,8 +253,11 @@
   }
 
   /* ── Status bar (right side of header) ── */
+  /* It takes the room between the search bar and the weather now (its text to the
+     right), so nothing else moves when it changes; a long status ("FETCHING
+     STATIONS…") is cut short with "…" rather than pushing the others about. */
   .status-bar {
-    margin-left: auto;
+    flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis;
     font-size: 0.7rem;
     color: var(--text-muted);
     letter-spacing: 0.04em;
@@ -820,29 +828,38 @@
   /* ════════════════════════════════════════════════════════════════════════════
      FORECAST  (header button + dialog with the NWS 7-day and hourly forecast)
      ════════════════════════════════════════════════════════════════════════════ */
-  /* Shown once an area is loaded; sits just before the status text on the right. */
+  /* Shown once an area is loaded; it stays put at the header's right edge, the status
+     and the weather now before it (the status fills the room up to them). */
   #forecast-btn {
-    margin-left: auto; flex-shrink: 0;
+    flex-shrink: 0;
     background: transparent; color: var(--accent); border: 1px solid var(--accent);
     border-radius: var(--radius); padding: 6px 12px; cursor: pointer;
     font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.68rem; letter-spacing: 0.1em;
   }
   #forecast-btn:hover { background: rgba(0,212,255,0.1); }
   #forecast-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
-  #forecast-btn:not([hidden]) ~ .status-bar { margin-left: 0; }
-  /* A desktop window too narrow for one row (641–959 px): two, as on a phone — the
-     search bar under the logo, FORECAST, the weather now and the status (the status
-     takes what's left, cut short with "…" rather than running off the edge). */
-  @media (pointer: fine) and (min-width: 641px) and (max-width: 959px) {
+  /* A window too narrow for one row (641–959 px): two, as on a phone — the search bar
+     under the logo, the status, the weather now and FORECAST. (Any pointer, or none:
+     a touch screen gets the same from the phone rules too. The odd limits leave no
+     gap with those at a scaled display's 640.8 px.) */
+  @media (min-width: 640.02px) and (max-width: 959.98px) {
     header { flex-wrap: wrap; row-gap: 10px; }
-    .search-bar { order: 3; flex-basis: 100%; max-width: 100%; }
-    .status-bar { flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+    .search-bar { order: 3; flex-basis: 100%; }
+  }
+  /* Any two-row header (this one, or a phone's): the first row is as tall as FORECAST
+     whether or not it's shown yet, so its appearing after the first search (or going
+     with a failed one) never moves the search bar on the row under it. */
+  @media (pointer: coarse), (max-width: 959.98px) {
+    #forecast-btn { height: 28px; }
+    .status-bar { line-height: 28px; }
   }
   /* The weather now beside FORECAST: an icon for the sky and the temperature, read at
      a glance (°C in small type beside it where there's room). */
   .now-wx {
     flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-    margin: 0; padding: 3px 6px; border: 0; border-radius: var(--radius); background: none; cursor: pointer;
+    /* (The negative margin keeps its big icon from making the row taller than FORECAST
+       does, so its showing up never nudges the header's buttons; it still taps as big.) */
+    margin: -4px 0; padding: 3px 6px; border: 0; border-radius: var(--radius); background: none; cursor: pointer;
     font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.95rem; color: var(--text);
   }
   .now-wx:hover { background: rgba(255,255,255,0.06); }
@@ -1344,13 +1361,11 @@
       flex-shrink: 0;
     }
 
-    /* Status bar moves to the right on the first row, beside the logo */
+    /* Status bar on the first row, beside the logo, sharing it with the weather now and
+       FORECAST (at its right end): it takes the space between (see .status-bar). */
     .status-bar {
       font-size: 0.65rem;
     }
-    /* …and shares that row with FORECAST: it takes the space left and a long
-       status ("FETCHING STATIONS…") is cut short with "…" rather than wrapping. */
-    .status-bar { flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; }
     /* Narrower type than the wide Syne, so "20 STATIONS" still fits beside it. */
     #forecast-btn { padding: 5px 8px; font-family: 'Space Mono', monospace; font-size: 0.66rem; letter-spacing: 0.04em; }
     /* The weather now, a little smaller and in °F only, so the row keeps its room. */
@@ -1362,11 +1377,14 @@
        map says too) gives way to it rather than being cut to "12 STATI…" — dot and all,
        so not even its gap is left to push a third row onto a 320 px screen; screen
        readers still hear it. A loading message ("FETCHING STATIONS…") takes
-       the row back instead: the weather now steps aside meanwhile. */
+       the row back instead: the weather now steps aside meanwhile. Either way FORECAST
+       stays at the row's right end (an auto margin takes the room the status leaves),
+       so nothing that loads moves it. */
     @media (max-width: 420px) {
       header:has(#now-wx:not([hidden])) .status-bar.ok {
         position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
       }
+      .now-wx { margin-left: auto; }   /* (none to take while the status fills the row) */
       header:has(.status-bar.loading) #now-wx { display: none; }
     }
     /* The narrowest phones (320 px): a little less space around it, so a three-digit
@@ -1391,7 +1409,6 @@
     .search-bar {
       order: 3;           /* push below logo + status */
       flex-basis: 100%;
-      max-width: 100%;
       gap: 6px;
     }
 
@@ -1727,15 +1744,15 @@
     .fc-wk-day .fc-wk-sunset { font-size: 0.74rem; }   /* (outranks the base rule further down) */
   }
   /* A 720–960 px window: every column keeps what reads at a glance — the sky's
-     icon, the high and low, the chance of rain and, on a hot day, how hot it feels
-     ("Feels 102°"). The sky in words, the sunset and sunrise, the humidity and the air quality
-     go out of sight (still read out with the day; the chart over the days and the
-     picked day's details show them), so a column isn't a cramped stack. Slimmer
+     icon, the high and low, the chance of rain, the sunset and sunrise and, on a hot
+     day, how hot it feels ("Feels 102°"). The sky in words, the humidity and the air
+     quality go out of sight (still read out with the day; the chart over the days and
+     the picked day's details show them), so a column isn't a cramped stack. Slimmer
      padding and names keep a part-day column's name ("Tonight") whole. */
   @media (max-width: 959px) {
     .fc-wk-day { padding-left: 8px; padding-right: 5px; }
     .fc-wk-name { font-size: 0.74rem; }
-    .fc-wk-sky, .fc-wk-sunset, .fc-wk-sunrise, .fc-wk-hum, .fc-wk-aqi, .fc-wk-upto {
+    .fc-wk-sky, .fc-wk-hum, .fc-wk-aqi, .fc-wk-upto {
       position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
     }
   }
@@ -1757,6 +1774,21 @@
   .fc-wk-hum span { white-space: nowrap; }   /* "45–84%" stays whole; the word may sit above it */
   .fc-wk-sunset { font-size: 0.8rem; font-weight: 700; color: #ffb37a; }   /* sunset: the one to spot */
   .fc-wk-sunrise { font-size: 0.7rem; color: var(--text-muted); }
+  /* "(after midnight)" may wrap under its time, and "No sunset" onto two lines. */
+  .fc-wk-sunday, .fc-wk-meta > .fc-wk-nosun { white-space: normal; }
+  /* (…in smaller, plain type: a side note, and "midnight)" fits the narrowest column.) */
+  .fc-wk-sunday { font-size: 0.64rem; font-weight: 400; }
+  /* A column too narrow for "🌇 6:59 PM" (about 74 px at the 0.74rem sunset under
+     1280 px) — the narrowest windows (about 720–730 px), or a part-day column — shows
+     "🌇 6:59", the AM/PM out of sight (still read out). A four-digit time, as the far
+     north has ("🌇 10:59 PM", about 82 px), needs a little more room. (From 1280 px,
+     where the sunset is 0.8rem, the narrowest column is still over 100 px.) */
+  @container (max-width: 75px) {
+    .fc-wk-ampm { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  }
+  @container (max-width: 83px) {
+    .fc-wk-ampm-wide { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  }
 
   /* The chart: strips stacked on one time line, nights shaded behind all of them. */
   /* The chart and, on its left, a slim column of each strip's scale numbers, level
@@ -2060,15 +2092,17 @@
     <button id="search-btn">FIND</button>
   </div>
 
-  <!-- The NWS forecast for the area on the map (14D); shown once an area is loaded. -->
-  <button type="button" id="forecast-btn" hidden title="Forecast for the searched area (National Weather Service)">FORECAST</button>
-  <!-- The weather now at the searched place (its nearest station's latest reading);
-       opens that station's readings. -->
-  <button type="button" id="now-wx" class="now-wx" hidden></button>
-
   <div class="status-bar" id="status-bar" role="status" aria-live="polite">
     <span class="dot"></span><span id="status-text">READY</span>
   </div>
+
+  <!-- The weather now at the searched place (its nearest station's latest reading);
+       opens that station's readings. -->
+  <button type="button" id="now-wx" class="now-wx" hidden></button>
+  <!-- The NWS forecast for the area on the map (14D); shown once an area is loaded.
+       Last, at the header's right edge: what loads beside it (the weather now, the
+       status) never moves it. -->
+  <button type="button" id="forecast-btn" hidden title="Forecast for the searched area (National Weather Service)">FORECAST</button>
 </header>
 
 <!-- Ghost pin that follows the mouse cursor during a drag operation -->
@@ -7755,15 +7789,19 @@ function hpaToInHg(hpa) {
  * @param {Object}  [extras] - fetchAirAndPressure's answer, with the NWS hourly
  *                             humidity and heat index (see openForecast)
  * @param {{lat:number, lon:number}} [point] - where the forecast is
- * @returns {{sun: string, air: string, facts: string, sunsetAt: string, sunriseAt: string, aqi: ?number,
+ * @returns {{sun: string, air: string, facts: string, sunsetAt: string, sunriseAt: string,
+ *            noSunset: boolean, noSunrise: boolean, aqi: ?number,
  *            humidity: ?{low:number, high:number}, heat: ?number}} HTML ('' where
- *          nothing is known), plus the plain sunset and sunrise times, worst AQI, humidity range
- *          and highest heat index the week-at-a-glance's day columns show
+ *          nothing is known), plus the plain sunset and sunrise times (or that there is
+ *          none: the midnight sun, polar night), worst AQI, humidity range and highest
+ *          heat index the week-at-a-glance's day columns show
  */
 function forecastRowExtras(parts, extras, point) {
   const first = parts[0], last = parts[parts.length - 1];
-  // sunsetAt, sunriseAt, aqi, humidity and heat are plain values for the week-at-a-glance's day columns.
-  const out = { sun: '', air: '', facts: '', sunsetAt: '', sunriseAt: '', aqi: null, humidity: null, heat: null };
+  // sunsetAt, sunriseAt, noSunset, noSunrise, aqi, humidity and heat are plain values
+  // for the week-at-a-glance's day columns.
+  const out = { sun: '', air: '', facts: '', sunsetAt: '', sunriseAt: '', noSunset: false, noSunrise: false,
+                aqi: null, humidity: null, heat: null };
   const facts = [];
 
   // Sun, on the place's own clock. A day row: that day's sunrise and sunset. A
@@ -7819,6 +7857,10 @@ function forecastRowExtras(parts, extras, point) {
       const dawn = typeof morning.sun === 'object';
       if (dusk) out.sunsetAt = atDusk(evening.sun.set);
       if (dawn) out.sunriseAt = atDawn(morning.sun.rise);
+      // (A missing side said so in the day's column too — but not "no sunrise" when
+      // the sun is simply up from then on.)
+      out.noSunset = !dusk;
+      out.noSunrise = !dawn && morning.sun !== 'up';
       out.sun = '<span class="fc-sunset"><span aria-hidden="true">🌇 </span>' +
         (dusk ? 'Sunset ' + atDusk(evening.sun.set) : 'No sunset') + '</span> · ' +
         (dawn ? '<span aria-hidden="true">🌅 </span>Sunrise ' + atDawn(morning.sun.rise)
@@ -7837,9 +7879,11 @@ function forecastRowExtras(parts, extras, point) {
     } else {
       // Midnight sun or polar night (all day, or on both sides of the night).
       if (evening.sun === 'up') {
+        out.noSunset = true;
         out.sun = '<span class="fc-sunset"><span aria-hidden="true">☀️ </span>No sunset</span> — the sun stays up all day';
         facts.push('<p><b>Daylight:</b> the sun stays up all day.</p>');
       } else {
+        out.noSunrise = true;
         out.sun = '<span aria-hidden="true">🌑 </span>No sunrise — the sun stays down all day';
         facts.push('<p><b>Daylight:</b> the sun stays down all day' + (typeof evening.light === 'object'
           ? '; twilight from ' + atDusk(evening.light.rise) + ' to ' + atDusk(evening.light.set) : '') + '.</p>');
@@ -8527,6 +8571,14 @@ function forecastWeekDayHtml(row, index, selected) {
   const temps = temp('hi', 'High', row.day && forecastDegrees(row.day)) + temp('lo', 'Low', row.night && forecastDegrees(row.night));
   const pops = row.parts.map(p => p.probabilityOfPrecipitation?.value).filter(v => v != null);
   const pop = pops.length ? Math.round(Math.max(...pops)) : null;
+  // A sun time ("6:59 PM"): its AM/PM may go out of sight in a narrow column (the
+  // icon tells sunset from sunrise; it's still read out), and the far north's
+  // "(after midnight)" may wrap under it rather than run past the column's edge.
+  // (A four-digit time, "10:14 AM", is wider: the column's AM/PMs give way sooner —
+  // both together, so its sunset and sunrise read alike.)
+  const wide = /^1\d:/.test(row.more.sunsetAt || '') || /^1\d:/.test(row.more.sunriseAt || '');
+  const sunClock = t => t.replace(/ ([AP]M)/, '<span class="fc-wk-ampm' + (wide ? ' fc-wk-ampm-wide' : '') + '"> $1</span>')
+    .replace(/ (\(.+\))$/, '<span class="fc-wk-sunday"> $1</span>');
   return '<button type="button" role="tab" class="fc-wk-day" id="fc-wk-tab-' + index + '" data-row="' + index + '"' +
       ' aria-selected="' + selected + '" aria-controls="fc-wk-detail" tabindex="' + (selected ? 0 : -1) + '">' +
     // The full name, and a short one ("Wed") the CSS swaps in where columns are narrow.
@@ -8541,10 +8593,14 @@ function forecastWeekDayHtml(row, index, selected) {
     '<span class="fc-wk-sky">' + escapeHtml(main.shortForecast || '') + '</span>' +
     '<span class="fc-wk-meta">' +
       (row.more.sunsetAt ? '<span class="fc-wk-sunset"><span aria-hidden="true">🌇 </span><span class="sr-only">Sunset </span>' +
-        row.more.sunsetAt + '</span>' : '') +
+        sunClock(row.more.sunsetAt) + '</span>'
+        // (None — the midnight sun, or the polar night's last evening: said, rather than
+        // the column just going without. The sunset's own icon, as the list's, fits both.)
+        : row.more.noSunset ? '<span class="fc-wk-sunset fc-wk-nosun"><span aria-hidden="true">🌇 </span>No sunset</span>' : '') +
       // …and its sunrise (a night on its own: the next morning's), quieter, as in the list.
       (row.more.sunriseAt ? '<span class="fc-wk-sunrise"><span aria-hidden="true">🌅 </span><span class="sr-only">Sunrise </span>' +
-        row.more.sunriseAt + '</span>' : '') +
+        sunClock(row.more.sunriseAt) + '</span>'
+        : row.more.noSunrise ? '<span class="fc-wk-sunrise fc-wk-nosun"><span aria-hidden="true">🌑 </span>No sunrise</span>' : '') +
       (pop != null ? '<span class="fc-wk-pop"><span aria-hidden="true">💧 </span>' + pop +
         '%<span class="sr-only"> chance of rain</span></span>' : '') +
     '</span>' +

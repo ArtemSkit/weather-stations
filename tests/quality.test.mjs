@@ -3872,10 +3872,11 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
       return answers[id];
     },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
-    document: { hidden: false }
+    document: { hidden: false },
+    navigator: { onLine: true }
   };
   const k = vm.runInNewContext(`(() => {
-    const NOW_WX_MAX_AGE_MS = 2 * 3_600_000, NOW_WX_TRIES = 3, NOW_WX_REFRESH_MS = 10 * 60_000;
+    const NOW_WX_MAX_AGE_MS = 2 * 3_600_000, NOW_WX_BATCH = 3, NOW_WX_REFRESH_MS = 10 * 60_000;
     let nowWxSeq = 0, nowWxTimer = 0, nowWxStations = [], nowWxShown = null, nowWxAskedAt = 0;
     ${html.match(/const toFixedClean = [\s\S]*?\n\};/)[0]}
     ${html.match(/const cToF = .*;/)[0]}
@@ -3891,9 +3892,10 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   assert.equal(r.f, '72'); assert.equal(r.c, '22'); assert.equal(r.day, false);
   assert.equal(k.nowReading(obs(22, 0, 'Clear', null), 'KSAT', now).day, true, 'no icon, local noon: day');
   assert.equal(k.nowReading(obs(22, 0, 'Clear', null, 80), 'KSAT', now).day, false, 'no icon, 23:20 at 80°E: night');
-  // The nearest station without a temperature is passed over for the next nearest.
+  // The nearest station without a temperature is passed over for the next nearest (asked
+  // three at a time, nearest first: the nearest with both the sky and a temperature wins).
   await k.loadNowWeather(['KSAT', 'KSSF', 'KRND', 'KHDO']);
-  assert.deepEqual(fetched, ['KSAT', 'KSSF']);
+  assert.deepEqual(fetched, ['KSAT', 'KSSF', 'KRND']);
   assert.equal(nowWx.hidden, false);
   assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">⛅<\/span>77°F<small>25°C<\/small>$/);
   assert.match(nowWx.title, /^A Few Clouds, 77°F \(25°C\) — San Antonio Intl \(KSSF\), [^.]+\. Open its readings\.$/);
@@ -3911,7 +3913,7 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   tick.fn();
   assert.equal(nowWx.hidden, false, 'not blanked while it looks');
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(fetched, ['KSAT', 'KSSF']);
+  assert.deepEqual(fetched, ['KSAT', 'KSSF', 'KRND']);
   assert.match(nowWx.innerHTML, /77°F/);
   assert.match(html, /document\.addEventListener\('visibilitychange', \(\) => \{\s*if \(document\.visibilityState === 'visible' && nowWxStations\.length && Date\.now\(\) - nowWxAskedAt >= NOW_WX_REFRESH_MS\) \{\s*loadNowWeather\(nowWxStations, null, true\);/);
   // A refresh that finds nothing (offline, the stations down) keeps the reading on show
@@ -3934,15 +3936,78 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   await k.loadNowWeather(['KSAT', 'KBAZ']);
   assert.equal(nowWx.hidden, true, 'not the old place\'s reading');
   answers.KSSF = saved.KSSF;
-  // None of the nearest few has a reading: hidden (and only a few are asked).
+  // None of the nearest few has a reading: on down the list, a few at a time, until one has
+  // (and no further than that).
   fetched.length = 0;
-  await k.loadNowWeather(['KXXX', 'KYYY', 'KZZZ', 'KSSF']);
-  assert.deepEqual(fetched, ['KXXX', 'KYYY', 'KZZZ']);
+  await k.loadNowWeather(['KXXX', 'KYYY', 'KZZZ', 'KSSF', 'KRND', 'KHDO', 'KBAZ']);
+  assert.deepEqual(fetched, ['KXXX', 'KYYY', 'KZZZ', 'KSSF', 'KRND', 'KHDO']);
+  assert.match(nowWx.title, /\(KSSF\)/);
+  // None in the whole area has one: hidden, every station asked once.
+  fetched.length = 0;
+  await k.loadNowWeather(['KXXX', 'KYYY', 'KZZZ', 'KBAZ']);
+  assert.deepEqual(fetched, ['KXXX', 'KYYY', 'KZZZ', 'KBAZ']);
   assert.equal(nowWx.hidden, true);
-  // No sky in words: a thermometer, not a guessed sky.
+  // A nearer station with a temperature but no sky is passed over for a farther one with
+  // both — even in a later batch…
   answers.KQQQ = obs(18, 5, '', null);
-  await k.loadNowWeather(['KQQQ']);
+  answers.KTMP = obs(19, 5, '', null);
+  answers.KFAR = obs(15, 20, 'Light Rain', 'https://api.weather.gov/icons/land/day/rain');
+  await k.loadNowWeather(['KQQQ', 'KXXX', 'KTMP', 'KYYY', 'KFAR']);
+  assert.match(nowWx.title, /^Light Rain, 59°F \(15°C\) — San Antonio Intl \(KFAR\)/);
+  assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">🌧️<\/span>59°F/);
+  // …and within one, the nearer with both wins, whatever answers first.
+  answers.KNEAR = obs(21, 5, 'Cloudy', null);
+  let release;
+  gates.KNEAR = new Promise(resolve => { release = resolve; });
+  const nearFirst = k.loadNowWeather(['KQQQ', 'KNEAR', 'KFAR']);
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  await nearFirst;
+  assert.match(nowWx.title, /\(KNEAR\)/);
+  delete gates.KNEAR;
+  // A refresh that finds only a bare temperature keeps the recent reading on show that
+  // tells the sky (no thermometer in its place) — a new place doesn't keep the old one.
+  await k.loadNowWeather(['KNEAR']);
+  const savedNear = answers.KNEAR;
+  delete answers.KNEAR;
+  await k.loadNowWeather(['KNEAR', 'KQQQ'], null, true);
+  assert.match(nowWx.title, /^Cloudy, 70°F \(21°C\) — San Antonio Intl \(KNEAR\)/, 'kept, with its sky');
+  await k.loadNowWeather(['KNEAR', 'KQQQ']);
+  assert.match(nowWx.title, /\(KQQQ\)/, 'a new place: its own temperature');
+  answers.KNEAR = savedNear;
+  // Offline (the browser says so): no station is asked, and the recent reading stays.
+  await k.loadNowWeather(['KNEAR']);
+  fetched.length = 0;
+  ctx.navigator.onLine = false;
+  await k.loadNowWeather(['KNEAR', 'KFAR', 'KQQQ', 'KTMP'], null, true);
+  assert.deepEqual(fetched, [], 'nothing asked while offline');
+  assert.match(nowWx.title, /\(KNEAR\)/, 'the recent reading kept');
+  ctx.navigator.onLine = true;
+  // …and back online, it looks again at once (not at the next refresh).
+  assert.match(html, /window\.addEventListener\('online', \(\) => \{\s*if \(nowWxStations\.length\) loadNowWeather\(nowWxStations, null, true\);\s*\}\);/);
+  // A station link's reading, already in hand, isn't asked for again; a bare temperature
+  // there shows with the thermometer (the link has no other station to try).
+  fetched.length = 0;
+  await k.loadNowWeather(['KLNK'], obs(20, 5, 'Clear'));
+  assert.deepEqual(fetched, []);
+  assert.match(nowWx.title, /^Clear, 68°F \(20°C\) — San Antonio Intl \(KLNK\)/);
+  await k.loadNowWeather(['KLNK'], obs(20, 5, '', null));
+  assert.deepEqual(fetched, []);
+  assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">🌡️<\/span>68°F/);
+  // A sky of only spaces is no sky: on to the next station that tells it.
+  answers.KBLANK = obs(22, 5, '   ', null);
+  await k.loadNowWeather(['KBLANK', 'KNEAR']);
+  assert.match(nowWx.title, /\(KNEAR\)/);
+  // A nearer one with both isn't held up by a farther one that's slow to answer (or never does).
+  gates.KFAR = new Promise(() => {});
+  await k.loadNowWeather(['KNEAR', 'KFAR']);
+  assert.match(nowWx.title, /\(KNEAR\)/);
+  delete gates.KFAR;
+  // No station in the area tells the sky: the nearest temperature, with a thermometer
+  // (not a guessed sky).
+  await k.loadNowWeather(['KXXX', 'KQQQ', 'KTMP']);
   assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">🌡️<\/span>64°F/);
+  assert.match(nowWx.title, /\(KQQQ\)/);
   // A newer place takes over from an older one's slower answer: it's dropped when it lands.
   let open;
   gates.KSSF = new Promise(resolve => { open = resolve; });

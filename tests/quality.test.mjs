@@ -2409,6 +2409,7 @@ test('a station that never reports says so and is not polled; the old time is cl
       let refreshTimer = null, activeMarkerEl = null, stationOpenGeneration = 0, activeStationId = null,
           activeStationName = null, stationRefreshRequest = null, stationRefreshMissed = false,
           stationNoDataGeneration = 0, refreshInterval = 60000;
+      function syncNowWxExpanded() {}   // (the weather now's state: not under test here)
       ${escapeHtmlSource}
       ${extractFunction('isActiveStation')}
       async ${extractFunction('refreshStationData')}
@@ -3825,7 +3826,7 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   // a button: a tap or Enter opens the station the reading is from.
   // FORECAST comes last, at the header's right edge, the weather now just before it: what
   // loads beside it (the reading, the status) never moves the button.
-  assert.match(html, /id="status-text">READY<\/span>\s*<\/div>\s*<!--[^>]*-->\s*<button type="button" id="now-wx" class="now-wx" hidden><\/button>\s*<!--[^>]*-->\s*<button type="button" id="forecast-btn" hidden[^>]*>FORECAST<\/button>\s*<\/header>/);
+  assert.match(html, /id="status-text">READY<\/span>\s*<\/div>\s*<!--[^>]*-->\s*<button type="button" id="now-wx" class="now-wx" aria-controls="popup-panel" aria-expanded="false" hidden><\/button>\s*<!--[^>]*-->\s*<button type="button" id="forecast-btn" hidden[^>]*>FORECAST<\/button>\s*<\/header>/);
   // Nothing pushes it from the left: the status grows to fill the room before the
   // readout and FORECAST, keeping them at the right edge (FORECAST has no auto margin).
   assert.match(html, /#forecast-btn \{\s*flex-shrink: 0;/);
@@ -3833,10 +3834,134 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   assert.doesNotMatch(html, /~ \.status-bar \{ margin-left: 0; \}/);
   // Nor does its arrival make the row taller (its big icon kept within FORECAST's height).
   assert.match(html, /\.now-wx \{[^}]*margin: -4px 0; padding: 3px 6px;/);
-  // From the keyboard (a click with no mouse: detail 0), focus goes into the panel, as from a
-  // marker — and closing the panel brings it back to the readout.
-  assert.match(html, /nowWx\.addEventListener\('click', e => \{\s*const r = nowWxShown;\s*if \(!r\) return;\s*openStation\(r\.id, r\.name, stationRecords\.find\(rec => rec\.el\?\.textContent === r\.id\)\?\.el \|\| null\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(e\.detail === 0\) \{ popupCloseBtn\.focus\(\); panelOpener = nowWx; \}/);
-  assert.match(extractFunction('openStation'), /panelOpener = null;/, 'any other opening forgets it');
+  // A tap opens the reading's station; a tap again closes it (not a reload that flickers).
+  // From the keyboard (a click with no mouse: detail 0), focus goes into the panel, as from
+  // a marker — and closing the panel brings it back to the readout. On a phone (the panel a
+  // sheet over the map), a panel it opened also closes on a tap anywhere outside it.
+  {
+    const code = html.match(/\/\/ A tap opens the station the reading is from[\s\S]*?window\.addEventListener\('click', \(\) => \{ if \(awayTimer\) closeForTapAway\(\); \}, true\);/)[0];
+    const log = [], handlers = {}, timers = [];
+    let layout = 'fixed';   // a phone's sheet ('absolute': the desktop side panel)
+    const page = vm.runInNewContext(`(() => {
+      let panelOpener = null, panelFromNowWx = false, activeStationId = null;
+      const nowWxShown = { id: 'KDEN', name: 'Denver' };
+      const stationRecords = [], popupCloseBtn = { focus: () => log.push('focus ×') };
+      function openStation(id) { log.push('open ' + id); popupPanel.style.display = 'block'; activeStationId = id; panelOpener = null; panelFromNowWx = false; }
+      function closeStationPanel(rf) { log.push('close ' + rf); popupPanel.style.display = 'none'; activeStationId = null; panelOpener = null; panelFromNowWx = false; }
+      ${code}
+      return { state: () => ({ opener: panelOpener?.name || null, fromReadout: panelFromNowWx }), openMarker: openStation };
+    })()`, {
+      log,
+      nowWx: { name: 'readout', addEventListener: (type, fn) => { handlers.readout = fn; }, contains: t => t.name === 'readout' },
+      document: { addEventListener: (type, fn, capture) => { if (capture) handlers[type] = fn; } },
+      // (The tap's click is heard on window: ahead of every document listener.)
+      window: { addEventListener: (type, fn, capture) => { if (capture) handlers['window ' + type] = fn; } },
+      popupPanel: { style: { display: 'none' }, contains: t => t.name === 'panel' },
+      getComputedStyle: () => ({ position: layout }),
+      Math,
+      // (Timers run by hand: `flush` stands for the moment passing.)
+      setTimeout: fn => { timers.push(fn); return timers.length; },
+      clearTimeout: id => { if (id) timers[id - 1] = null; }
+    });
+    const flush = () => { const due = timers.splice(0); due.forEach(fn => fn && fn()); };
+    // A tap: a press and its release (seen by the page first), then its click (the page's
+    // capture listener first, then the target's own). An iPhone's tap on a plain part of
+    // the page brings no click: `click: false`.
+    const target = name => ({ name, closest: sel => (sel === 'dialog' && name.startsWith('dialog') ? {} : null) });
+    const press = (name, { id = 1, x = 100, y = 100, isPrimary = true, pointerType = 'touch', button = 0 } = {}) =>
+      handlers.pointerdown({ target: target(name), pointerId: id, clientX: x, clientY: y, isPrimary, pointerType, button });
+    const release = ({ id = 1, x = 100, y = 100 } = {}) => handlers.pointerup({ pointerId: id, clientX: x, clientY: y });
+    const tap = (name, { detail = 1, click = true } = {}) => {
+      press(name); release();
+      if (!click) return;
+      handlers['window click']({ target: target(name) });
+      if (name === 'readout') handlers.readout({ detail });
+    };
+    tap('readout');
+    assert.deepEqual(log, ['open KDEN']);
+    tap('readout');
+    assert.deepEqual(log, ['open KDEN', 'close false'], 'a tap again closes it — no reopening flicker');
+    // On a phone: a tap inside the sheet leaves it open; one on the map (or anywhere else) closes it.
+    log.length = 0;
+    tap('readout');
+    tap('panel');
+    tap('map');
+    assert.deepEqual(log, ['open KDEN', 'close false']);
+    // A tap on a plain part of the page closes it too: an iPhone sends no click there, so a
+    // moment later (not at once, nor never).
+    log.length = 0;
+    tap('readout');
+    tap('logo', { click: false });
+    assert.deepEqual(log, ['open KDEN'], 'waiting for its click');
+    flush();
+    assert.deepEqual(log, ['open KDEN', 'close false']);
+    // With a click, the sheet goes at it — after the browser picked what was tapped, so a
+    // control that moves as the sheet goes (Locate Me) still gets its own tap; and only once.
+    log.length = 0;
+    tap('readout');
+    tap('locate');
+    assert.deepEqual(log, ['open KDEN', 'close false']);
+    flush();
+    assert.deepEqual(log, ['open KDEN', 'close false'], 'the timer, cleared, closes nothing more');
+    // A tap away's timer never closes a sheet opened after it: reopened from the readout
+    // (its click came) or by a marker (a click-less tap's timer still running).
+    log.length = 0;
+    tap('readout');
+    tap('map');
+    tap('readout');
+    flush();
+    assert.deepEqual(log, ['open KDEN', 'close false', 'open KDEN'], 'reopened: it stays');
+    log.length = 0;
+    tap('logo', { click: false });
+    page.openMarker('KBKF');   // (a marker opened by keyboard, through Leaflet: no click)
+    flush();
+    assert.deepEqual(log, ['open KBKF'], "a marker's panel is not the readout's to close");
+    // A tap inside a dialog over the sheet (the forecast, its backdrop) isn't one away from it.
+    log.length = 0;
+    tap('readout');
+    tap('dialog-day');
+    flush();
+    assert.deepEqual(log, ['open KDEN']);
+    tap('readout');
+    // A pan (the press moves) or a pinch (a second finger) isn't a tap: the sheet stays.
+    log.length = 0;
+    tap('readout');
+    press('map'); release({ x: 160, y: 130 });
+    press('map'); press('map', { id: 2, isPrimary: false }); release({ id: 2 }); release();
+    press('map', { pointerType: 'mouse', button: 2 }); release();   // a right-click
+    press('map'); handlers.pointercancel({ pointerId: 1 }); release();   // the browser took it over (a scroll)
+    flush();   // (none of those sends a click: had one counted, its timer would close the sheet now)
+    assert.deepEqual(log, ['open KDEN']);
+    // …a few pixels of jitter still taps; and a new gesture after a lost release starts afresh.
+    press('map', { id: 7 });   // its release never comes
+    press('map', { id: 8 }); release({ id: 8, x: 106, y: 104 });
+    flush();
+    assert.deepEqual(log, ['open KDEN', 'close false']);
+    // A desktop side panel isn't closed by a click on the map (only by the readout or ×).
+    layout = 'absolute';
+    log.length = 0;
+    tap('readout');
+    tap('map');
+    tap('readout');
+    assert.deepEqual(log, ['open KDEN', 'close false']);
+    // A panel a marker opened isn't closed by a tap away (that's the readout's).
+    layout = 'fixed';
+    log.length = 0;
+    page.openMarker('KBKF');
+    tap('map');
+    assert.deepEqual(log, ['open KBKF']);
+    // …but the readout, with another station's panel open, opens its own (not a close).
+    tap('readout');
+    assert.deepEqual(log, ['open KBKF', 'open KDEN']);
+    tap('map');
+    // From the keyboard: focus into the panel, remembered to come back to the readout.
+    log.length = 0;
+    tap('readout', { detail: 0 });
+    assert.deepEqual(log, ['open KDEN', 'focus ×']);
+    assert.deepEqual({ ...page.state() }, { opener: 'readout', fromReadout: true });
+  }
+  assert.match(extractFunction('openStation'), /panelOpener = null;[^\n]*\n\s*panelFromNowWx = false;/, 'any other opening forgets it');
+  assert.match(extractFunction('closeStationPanel'), /panelOpener = null;\s*panelFromNowWx = false;/, 'and so does closing');
   {
     const focused = [];
     const el = name => ({ offsetParent: {}, focus: () => focused.push(name), classList: { remove() {} }, closest: () => el('marker') });
@@ -3844,7 +3969,7 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
       let refreshTimer = null, stationOpenGeneration = 0, activeStationId = 'KDEN';
       ${extractFunction('closeStationPanel')}
       return (returnFocus, opener) => { panelOpener = opener; activeMarkerEl = marker(); closeStationPanel(returnFocus); return panelOpener; };
-    })()`, { popupPanel: { style: {} }, clearInterval() {}, marker: () => el('marker'), panelOpener: null, activeMarkerEl: null });
+    })()`, { popupPanel: { style: {} }, clearInterval() {}, syncNowWxExpanded() {}, marker: () => el('marker'), panelOpener: null, activeMarkerEl: null });
     const readout = el('readout');
     assert.equal(close(true, readout), null, 'forgotten once used');
     close(true, null);
@@ -3875,16 +4000,17 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
     },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
     document: { hidden: false },
-    navigator: { onLine: true }
+    navigator: { onLine: true },
+    popupPanel: { style: { display: 'none' } }, activeStationId: null
   };
   const k = vm.runInNewContext(`(() => {
     const NOW_WX_MAX_AGE_MS = 2 * 3_600_000, NOW_WX_BATCH = 3, NOW_WX_REFRESH_MS = 10 * 60_000;
     let nowWxSeq = 0, nowWxTimer = 0, nowWxStations = [], nowWxShown = null, nowWxAskedAt = 0;
     ${html.match(/const toFixedClean = [\s\S]*?\n\};/)[0]}
     ${html.match(/const cToF = .*;/)[0]}
-    ${['forecastEmoji', 'nowReading', 'renderNowWeather', 'clearNowWeather'].map(extractFunction).join('\n')}
+    ${['forecastEmoji', 'nowReading', 'renderNowWeather', 'clearNowWeather', 'syncNowWxExpanded'].map(extractFunction).join('\n')}
     async ${extractFunction('loadNowWeather')}
-    return { nowReading, loadNowWeather, clearNowWeather };
+    return { nowReading, loadNowWeather, clearNowWeather, syncNowWxExpanded };
   })()`, ctx);
   // A reading counts with a temperature, up to two hours old; night from its NWS icon,
   // or without one from the sun's hour at the station (18:00 UTC is noon at -98°).
@@ -3900,9 +4026,23 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   assert.deepEqual(fetched, ['KDEN', 'KBKF', 'KAPA']);
   assert.equal(nowWx.hidden, false);
   assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">⛅<\/span>77°F<small>25°C<\/small>$/);
-  assert.match(nowWx.title, /^A Few Clouds, 77°F \(25°C\) — Denver Intl \(KBKF\), [^.]+\. Open its readings\.$/);
+  assert.match(nowWx.title, /^A Few Clouds, 77°F \(25°C\) — Denver Intl \(KBKF\), [^.]+\. Its readings\.$/);
   // Screen readers hear that same text once: as its name (a title the same as the name isn't read again).
   assert.equal(nowWx.attrs['aria-label'], nowWx.title);
+  // A press opens its station's readings, or closes them when open: aria-expanded says which.
+  assert.equal(nowWx.attrs['aria-expanded'], 'false');
+  Object.assign(ctx, { activeStationId: 'KBKF' }); ctx.popupPanel.style.display = 'block';
+  k.syncNowWxExpanded();
+  assert.equal(nowWx.attrs['aria-expanded'], 'true', 'its station open');
+  ctx.activeStationId = 'KDEN';
+  k.syncNowWxExpanded();
+  assert.equal(nowWx.attrs['aria-expanded'], 'false', 'another station open');
+  ctx.popupPanel.style.display = 'none'; ctx.activeStationId = null;
+  k.syncNowWxExpanded();
+  assert.match(html, /<button type="button" id="now-wx" class="now-wx" aria-controls="popup-panel" aria-expanded="false" hidden>/);
+  assert.match(extractFunction('openStation'), /popupPanel\.style\.display = 'block';\s*syncNowWxExpanded\(\);/);
+  assert.match(extractFunction('closeStationPanel'), /syncNowWxExpanded\(\);\s*returnFocusTo\?\.focus\(\);/);
+  assert.match(extractFunction('clearNowWeather'), /syncNowWxExpanded\(\);/);
   // Kept current: looked at again in 10 minutes (as a refresh) — not while the page is away.
   const tick = timers.at(-1);
   assert.equal(tick.ms, 10 * 60_000);

@@ -2098,7 +2098,7 @@
 
   <!-- The weather now at the searched place (its nearest station's latest reading);
        opens that station's readings. -->
-  <button type="button" id="now-wx" class="now-wx" hidden></button>
+  <button type="button" id="now-wx" class="now-wx" aria-controls="popup-panel" aria-expanded="false" hidden></button>
   <!-- The NWS forecast for the area on the map (14D); shown once an area is loaded.
        Last, at the header's right edge: what loads beside it (the weather now, the
        status) never moves it. -->
@@ -4174,6 +4174,7 @@ async function openStation(stationId, stationName, markerEl) {
   if (refreshTimer)    { clearInterval(refreshTimer); refreshTimer = null; }
   if (activeMarkerEl)  { activeMarkerEl.classList.remove('active'); }
   panelOpener = null;   // (set again by the caller when it isn't a marker)
+  panelFromNowWx = false;
 
   const generation = ++stationOpenGeneration;
 
@@ -4187,6 +4188,7 @@ async function openStation(stationId, stationName, markerEl) {
   document.getElementById('update-dot').classList.remove('refreshing', 'stale');
   document.getElementById('update-indicator').style.display = '';   // shown again after a no-data station
   popupPanel.style.display = 'block';
+  syncNowWxExpanded();   // (the weather now's station, or another one)
   document.getElementById('popup-id').textContent    = stationId;
   document.getElementById('popup-name').textContent  = stationName || '—';
   // Clear the previous station's observation time until this one's arrives.
@@ -4214,6 +4216,9 @@ const popupCloseBtn = document.getElementById('popup-close');
 // What opened the panel from the keyboard, when it isn't a marker (the weather now):
 // closing it sends focus back there. Any other opening forgets it (see openStation).
 let panelOpener = null;
+// The panel was opened from the weather now (by any means): where it's a bottom sheet,
+// a tap anywhere outside it closes it again (see the weather now). Reset like panelOpener.
+let panelFromNowWx = false;
 
 /**
  * Close the station panel and stop its refresh timer.
@@ -4227,12 +4232,14 @@ function closeStationPanel(returnFocus) {
   // not hidden, nor set aside by a phone's CSS while a search loads: no offsetParent.)
   const opener = panelOpener?.offsetParent ? panelOpener : null;
   panelOpener = null;
+  panelFromNowWx = false;
   const returnFocusTo = returnFocus ? opener || activeMarkerEl?.closest('.leaflet-marker-icon') : null;
   popupPanel.style.display = 'none';
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   stationOpenGeneration++;
   activeStationId = null;
   if (activeMarkerEl) { activeMarkerEl.classList.remove('active'); activeMarkerEl = null; }
+  syncNowWxExpanded();
   returnFocusTo?.focus();
 }
 
@@ -7360,22 +7367,83 @@ function renderNowWeather(r) {
     r.f + '°F<small>' + r.c + '°C</small>';
   // One text for the hover and for screen readers (a name the same as the title is
   // read once, not twice).
+  // ("Its readings": a press opens them — or, open already, closes them; aria-expanded
+  // tells screen readers which.)
   const label = (r.text ? r.text + ', ' : '') + r.f + '°F (' + r.c + '°C) — ' + r.name + ' (' + r.id + '), ' + when +
-    '. Open its readings.';
+    '. Its readings.';
   nowWx.title = label;
   nowWx.setAttribute('aria-label', label);
   nowWx.hidden = false;
+  syncNowWxExpanded();   // (another station's reading: its panel may not be the one open)
 }
-// A tap opens the station the reading is from (its marker lit, when it's on the map).
+/** Tell screen readers whether the reading's station panel is open (a press closes it then). */
+function syncNowWxExpanded() {
+  nowWx.setAttribute('aria-expanded', String(popupPanel.style.display === 'block' && activeStationId === nowWxShown?.id));
+}
+// A tap opens the station the reading is from (its marker lit, when it's on the map);
+// a tap again, while that station's panel is open, closes it.
 nowWx.addEventListener('click', e => {
   const r = nowWxShown;
   if (!r) return;
+  if (popupPanel.style.display === 'block' && activeStationId === r.id) {
+    closeStationPanel(false);   // (focus stays here, on the button pressed)
+    return;
+  }
   openStation(r.id, r.name, stationRecords.find(rec => rec.el?.textContent === r.id)?.el || null);
+  panelFromNowWx = true;
   // From the keyboard (Enter or Space: no mouse click, so detail 0), focus moves into
   // the panel, as from a marker: its details get read out and Escape closes it —
   // and closing it brings focus back here, where it came from.
   if (e.detail === 0) { popupCloseBtn.focus(); panelOpener = nowWx; }
 });
+// Where the panel is a bottom sheet over the map (touch screens, and any window up to
+// 640 px), a panel the weather now opened also closes on a tap anywhere outside it —
+// the map, the header. Told by the press and its release rather than by "click" alone:
+// an iPhone sends no click for a tap on a plain part of the page (the logo, the
+// header's gaps), and a mouse drag that pans the map ends in one. So a press that moved
+// (a pan) or took two fingers (a pinch) isn't a tap; and a tap inside a dialog (the
+// forecast, open over the sheet) isn't one "away" from it. The sheet closes at the tap's
+// click — after the browser has picked what was tapped, so nothing that moves as the
+// sheet goes (Locate Me rides above it) slips from under the finger — and that tapped
+// thing then does its own job: a marker opens its station, Locate Me locates. A tap that
+// brings no click (that iPhone case) closes it a moment later instead.
+// (The weather now itself is left to its own toggle above.)
+const TAP_SLOP_PX = 10;          // how far a press may move and still be a tap
+const TAP_CLICK_WAIT_MS = 300;   // how long a tap's click may take before closing without it
+let awayPress = null;            // { id, x, y, multi, away } — the press being watched
+let awayTimer = 0;               // a tap away seen, waiting for its click (0: none)
+/** Close the sheet for a tap away, if it's still the weather now's (nothing reopened it). */
+function closeForTapAway() {
+  clearTimeout(awayTimer);
+  awayTimer = 0;
+  if (panelFromNowWx && popupPanel.style.display === 'block') closeStationPanel(false);
+}
+document.addEventListener('pointerdown', e => {
+  // A second finger (not the gesture's primary pointer) makes it a pinch; the first one
+  // of a gesture always starts afresh, so a press whose release went missing can't linger.
+  if (!e.isPrimary) { if (awayPress) awayPress.multi = true; return; }
+  // Away or not is told now, at the press: by the release, what was pressed may be gone
+  // (the sheet's readings, or the weather now, redrawn by a refresh meanwhile).
+  const t = e.target;
+  awayPress = e.pointerType === 'mouse' && e.button !== 0 ? null   // (only the main button taps)
+    : { id: e.pointerId, x: e.clientX, y: e.clientY, multi: false,
+        away: !popupPanel.contains(t) && !nowWx.contains(t) && !t.closest?.('dialog') };
+}, true);
+document.addEventListener('pointercancel', e => { if (awayPress?.id === e.pointerId) awayPress = null; }, true);
+document.addEventListener('pointerup', e => {
+  if (awayPress?.id !== e.pointerId) return;
+  const press = awayPress;
+  awayPress = null;
+  if (press.multi || Math.hypot(e.clientX - press.x, e.clientY - press.y) > TAP_SLOP_PX) return;
+  if (!press.away || !panelFromNowWx || popupPanel.style.display !== 'block') return;
+  if (getComputedStyle(popupPanel).position !== 'fixed') return;   // a desktop side panel stays
+  clearTimeout(awayTimer);
+  awayTimer = setTimeout(closeForTapAway, TAP_CLICK_WAIT_MS);   // (its click, next, closes it sooner)
+}, true);
+// The tap's click: the sheet goes now, before anything else hears that click — on
+// window, so ahead of the document's own listeners too (an alert area tapped sizes its
+// popup for the map as it is then, without the sheet).
+window.addEventListener('click', () => { if (awayTimer) closeForTapAway(); }, true);
 
 /** Stop showing (and refreshing) the weather now. */
 function clearNowWeather() {
@@ -7384,6 +7452,7 @@ function clearNowWeather() {
   nowWxStations = [];
   nowWxShown = null;
   nowWx.hidden = true;
+  syncNowWxExpanded();
 }
 
 /**

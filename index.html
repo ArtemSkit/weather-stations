@@ -929,6 +929,15 @@
   .fc-day summary:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
   .fc-icon { grid-area: icon; align-self: center; font-size: 1.4rem; line-height: 1; text-align: center; }
   .fc-name { grid-area: name; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.8rem; }
+  .fc-name-day { display: block; line-height: 1.3rem; }   /* (as tall as the °F line beside it) */
+  /* The date on the line under the name, level with the temperatures' °C line. */
+  .fc-date { margin-right: 4px; font-family: 'Space Mono', monospace; font-weight: 400; font-size: 0.66rem; color: var(--text-muted); }
+  /* A holiday: a gold tag, so it stands out from the white of the days' names. */
+  .fc-holiday {
+    display: inline-block; padding: 0 6px; border-radius: var(--radius);
+    background: rgba(255,215,0,0.14); color: var(--yellow);
+    font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.66rem; line-height: 1.5;
+  }
   .fc-temp { grid-area: temp; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 0.9rem; color: var(--accent); white-space: nowrap; }
   .fc-temp small { margin-left: 4px; font-size: 0.65rem; font-weight: 400; color: var(--text-muted); }
   .fc-short { grid-area: short; font-size: 0.74rem; }
@@ -1757,6 +1766,17 @@
     }
   }
   .fc-wk-date { margin-top: -4px; font-size: 0.64rem; color: var(--text-muted); }
+  /* At the column's foot (the columns are one height). A long word ("Thanksgiving", about
+     66 px at 0.56rem) in a narrow column: smaller type — and in the narrowest (a part-day
+     column in a window under about 890 px), the room of the column's side padding too, so it
+     stays whole. A longer one still breaks rather than being cut off at the edge. */
+  .fc-wk-holiday { margin-top: auto; max-width: 100%; overflow-wrap: anywhere; }
+  @container (max-width: 95px) {
+    .fc-wk-holiday { padding: 0 3px; font-size: 0.56rem; }
+  }
+  @container (max-width: 73px) {
+    .fc-wk-holiday { margin-left: -6px; margin-right: -4px; padding: 0 1px; max-width: calc(100% + 10px); }
+  }
   .fc-wk-main { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 2px; }
   .fc-wk-icon { font-size: 1.8rem; line-height: 1; }
   .fc-wk-temps {
@@ -7683,6 +7703,38 @@ function forecastLocalTime(iso) {
   };
 }
 
+/**
+ * The US federal holiday on a date ("2026-11-11" → "Veterans Day"), or ''. On the date
+ * itself, not the day off when it falls on a weekend: this labels the weather's days.
+ */
+function usHoliday(dayKey) {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();   // 0 is Sunday
+  const nth = Math.ceil(day / 7);   // the 3rd Monday, and so on
+  if (month === 5 && weekday === 1 && day >= 25) return 'Memorial Day';   // May's last Monday
+  return {
+    '1-1': "New Year's Day", '6-19': 'Juneteenth', '7-4': 'Independence Day',
+    '11-11': 'Veterans Day', '12-25': 'Christmas Day'
+  }[month + '-' + day] || {
+    '1-1-3': 'Martin Luther King Jr. Day', '2-1-3': "Washington's Birthday", '9-1-1': 'Labor Day',
+    '10-1-2': 'Columbus Day', '11-4-4': 'Thanksgiving Day'
+  }[month + '-' + weekday + '-' + nth] || '';
+}
+
+/**
+ * The holiday a forecast row falls on, or ''. The NWS names a holiday in place of its
+ * weekday ("Veterans Day"), so a daytime name that isn't a weekday or part of today is
+ * one; a holiday that is today ("This Afternoon") or a night on its own is told by date.
+ * @param {Object}  main  - the row's main NWS period
+ * @param {boolean} isDay - it's a daytime period
+ */
+function forecastHoliday(main, isDay) {
+  const everyday = /\b(?:today|tonight|overnight|morning|afternoon|evening|night|(?:sun|mon|tues|wednes|thurs|fri|satur)day)\b/i;
+  if (isDay && main.name && !everyday.test(main.name)) return main.name;
+  const when = forecastLocalTime(main.startTime);
+  return when ? usHoliday(when.dayKey) : '';
+}
+
 /** "3 PM" for hour 15. */
 function forecastHourLabel(hour) {
   return `${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'}`;
@@ -8075,9 +8127,9 @@ function forecastRowExtras(parts, extras, point) {
 }
 
 /**
- * The 7-day forecast as one row per day: the day's sky, its high and the night's
- * low (↑ 73° ↓ 63°, with °C below), the night's sky, the higher of the two rain
- * chances and the day's wind, then the sunset and sunrise, and the humidity, heat
+ * The 7-day forecast as one row per day: its name, date and any holiday, the day's sky,
+ * its high and the night's low (↑ 73° ↓ 63°, with °C below), the night's sky, the higher
+ * of the two rain chances and the day's wind, then the sunset and sunrise, and the humidity, heat
  * index, air quality and pressure where known. Each row opens to the forecaster's
  * full wording for the day and the night, then the daylight, humidity, heat, air
  * and pressure in detail.
@@ -8106,9 +8158,17 @@ function renderForecastDays(periods, extras, point) {
     const words = [day, night].filter(Boolean).map(p =>
       '<p><b>' + escapeHtml(p.name || '') + ':</b> ' + escapeHtml(p.detailedForecast || '') + '</p>').join('');
     const more = forecastRowExtras([day, night].filter(Boolean), extras, point);
+    // Its name, and under it (beside the °C line) the date and any holiday. A holiday
+    // the NWS names in place of the weekday still shows the weekday.
+    const [weekday, date] = (forecastLocalTime(main.startTime)?.day || '').split(', ');
+    const holiday = forecastHoliday(main, !!day);
+    const name = holiday === main.name ? weekday || main.name : main.name;
     return '<details class="fc-day' + (day ? '' : ' fc-night') + '"><summary>' +
         '<span class="fc-icon" aria-hidden="true">' + forecastEmoji(main.shortForecast, !!day) + '</span>' +
-        '<span class="fc-name">' + escapeHtml(main.name || '') + '</span>' +
+        '<span class="fc-name"><span class="fc-name-day">' + escapeHtml(name || '') + '</span>' +
+          (date ? '<span class="fc-date">' + escapeHtml(date) + '</span>' : '') +
+          // (A real space before it: screen readers hear "Nov 11 Veterans Day", not "11Veterans".)
+          (holiday ? ' <span class="fc-holiday">' + escapeHtml(holiday) + '</span>' : '') + '</span>' +
         '<span class="fc-temps">' + (temps.length ? temps.join('') + '<small>' + celsius + 'C</small>' : '—') + '</span>' +
         '<span class="fc-short">' + escapeHtml(main.shortForecast || '') + nightSky + '</span>' +
         (meta ? '<span class="fc-meta">' + meta + '</span>' : '') +
@@ -8647,7 +8707,7 @@ function smoothPath(pts) {
   return d;
 }
 
-/** A day's column: name and date, sky, high and low, rain chance, sunset, air. */
+/** A day's column: name and date, sky, high and low, rain chance, sunset, air, any holiday. */
 function forecastWeekDayHtml(row, index, selected) {
   const main = row.day || row.night;
   const when = forecastLocalTime(main.startTime);
@@ -8661,6 +8721,7 @@ function forecastWeekDayHtml(row, index, selected) {
   const temps = temp('hi', 'High', row.day && forecastDegrees(row.day)) + temp('lo', 'Low', row.night && forecastDegrees(row.night));
   const pops = row.parts.map(p => p.probabilityOfPrecipitation?.value).filter(v => v != null);
   const pop = pops.length ? Math.round(Math.max(...pops)) : null;
+  const holiday = forecastHoliday(main, !!row.day);
   // A sun time ("6:59 PM"): its AM/PM may go out of sight in a narrow column (the
   // icon tells sunset from sunrise; it's still read out), and the far north's
   // "(after midnight)" may wrap under it rather than run past the column's edge.
@@ -8699,6 +8760,8 @@ function forecastWeekDayHtml(row, index, selected) {
     (row.more.humidity ? '<span class="fc-wk-hum">Humidity <span>' + (row.more.humidity.low === row.more.humidity.high
       ? row.more.humidity.high : row.more.humidity.low + '–' + row.more.humidity.high) + '%</span></span>' : '') +
     (row.more.aqi != null ? '<span class="fc-wk-aqi">' + aqiHtml(row.more.aqi) + '</span>' : '') +
+    // A holiday at the column's foot, so its icon and temperatures stay level with the others'.
+    (holiday ? '<span class="fc-holiday fc-wk-holiday">' + escapeHtml(holiday) + '</span>' : '') +
   '</button>';
 }
 
@@ -8855,7 +8918,9 @@ function renderWeekDetail(model, index) {
   if (!row) return '';
   const main = row.day || row.night;
   const when = forecastLocalTime(main.startTime);
-  return '<div class="fc-wk-words"><h3 class="fc-wk-title">' + escapeHtml(when ? when.day : main.name || '') + '</h3>' +
+  const holiday = forecastHoliday(main, !!row.day);
+  return '<div class="fc-wk-words"><h3 class="fc-wk-title">' + escapeHtml(when ? when.day : main.name || '') +
+    (holiday ? ' <span class="fc-holiday">' + escapeHtml(holiday) + '</span>' : '') + '</h3>' +
     row.parts.map(p => '<p><b>' + escapeHtml(p.name || '') + ':</b> ' + escapeHtml(p.detailedForecast || '') + '</p>').join('') +
     '</div>' + (row.more.facts ? '<div class="fc-wk-facts">' + row.more.facts + '</div>' : '');
 }

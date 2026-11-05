@@ -4296,6 +4296,8 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     ${extractFunction('forecastDayPairs')}
     ${extractFunction('forecastLocalTime')}
     ${extractFunction('forecastHourLabel')}
+    ${extractFunction('usHoliday')}
+    ${extractFunction('forecastHoliday')}
     ${forecastExtrasSource}
     ${hourStripSource}
     ${extractFunction('renderForecastDays')}
@@ -4334,6 +4336,17 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.match(gaps[0], /<span class="fc-temps"><span class="fc-lo">[^]*?Low <\/span>61°<\/span><small>16°C<\/small><\/span>/);
   assert.doesNotMatch(gaps[0], /fc-hi/);
   assert.match(gaps[1], /<span class="fc-temps">—<\/span>/);
+  // Each row has its date on the line under its name (beside the °C line, in the room
+  // that was empty). A holiday the NWS names in place of the weekday keeps the weekday,
+  // with the holiday in a tag of its own colour — as does one that is "Today".
+  assert.match(r.renderForecastDays([day('Monday', 66, { startTime: '2026-11-09T06:00:00-06:00' })]),
+    /<span class="fc-name"><span class="fc-name-day">Monday<\/span><span class="fc-date">Nov 9<\/span><\/span>/);
+  assert.match(r.renderForecastDays([day('Veterans Day', 73, { startTime: '2026-11-11T06:00:00-06:00' })]),
+    /<span class="fc-name"><span class="fc-name-day">Wednesday<\/span><span class="fc-date">Nov 11<\/span> <span class="fc-holiday">Veterans Day<\/span><\/span>/);
+  assert.match(r.renderForecastDays([day('This Afternoon', 73, { startTime: '2026-11-11T13:00:00-06:00' })]),
+    /<span class="fc-name-day">This Afternoon<\/span><span class="fc-date">Nov 11<\/span> <span class="fc-holiday">Veterans Day<\/span>/);
+  assert.match(html, /\.fc-holiday \{[^}]*background: rgba\(255,215,0,0\.14\); color: var\(--yellow\);/);
+  assert.match(html, /\.fc-name-day \{ display: block; line-height: 1\.3rem; \}/, 'so the date sits level with the °C line');
   // Given the place and Open-Meteo's data, the sun line (sunset first) and the air
   // line close the summary, and their details follow the forecaster's words.
   const sat = r.renderForecastDays(
@@ -4688,7 +4701,7 @@ function forecastWeekKit() {
     ${['forecastDayPairs', 'forecastLocalTime', 'forecastHourLabel', 'forecastDegrees', 'forecastEmoji',
        'forecastTemp'].map(extractFunction).join('\n')}
     ${forecastExtrasSource}
-    ${['forecastWeekModel', 'weekScale', 'weekNights', 'smoothPath', 'forecastWeekDayHtml', 'weekGrid', 'weekTicks',
+    ${['usHoliday', 'forecastHoliday', 'forecastWeekModel', 'weekScale', 'weekNights', 'smoothPath', 'forecastWeekDayHtml', 'weekGrid', 'weekTicks',
        'weekTempStrip', 'weekRainStrip', 'weekAirStrip', 'weekPressureStrip', 'renderWeekDetail', 'renderForecastWeek',
        'weekHourHtml', 'weekRowAt', 'weekHourAt', 'weekRowOf', 'weekHourIn', 'weekFirstHour'].map(extractFunction).join('\n')}
     return { forecastWeekModel, weekScale, smoothPath, renderForecastWeek, renderWeekDetail, weekRowAt, weekHourAt, weekRowOf,
@@ -4847,7 +4860,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   // The midnight sun or polar night: the column says there's none, rather than going without.
   const dayHtml = vm.runInNewContext(`(() => {
     const escapeHtml = String, aqiHtml = String;
-    ${['forecastLocalTime', 'isoOffsetMinutes', 'forecastEmoji', 'forecastDegrees'].map(extractFunction).join('\n')}
+    ${['forecastLocalTime', 'isoOffsetMinutes', 'forecastEmoji', 'forecastDegrees', 'usHoliday', 'forecastHoliday'].map(extractFunction).join('\n')}
     const cToF = c => String(Math.round(c * 9 / 5 + 32));
     ${extractFunction('forecastWeekDayHtml')}
     return forecastWeekDayHtml;
@@ -4866,6 +4879,17 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(dayHtml(polarRow({ noSunrise: true }), 0, true),
     /<span class="fc-wk-sunrise fc-wk-nosun"><span aria-hidden="true">🌑 <\/span>No sunrise<\/span>/);
   assert.doesNotMatch(dayHtml(polarRow({}), 0, true), /fc-wk-sun/, 'nothing known: nothing said');
+  // A holiday's column keeps its weekday and date, with the holiday's tag at its foot.
+  const holidayColumn = dayHtml({ day: { name: 'Veterans Day', startTime: '2026-11-11T06:00:00-06:00', shortForecast: 'Sunny',
+    temperature: 73, temperatureUnit: 'F' }, night: null, parts: [], more: {} }, 0, true);
+  assert.match(holidayColumn, /<span class="fc-wk-long">Wednesday<\/span>/);
+  assert.match(holidayColumn, /<span class="fc-wk-date">Nov 11<\/span>/);
+  assert.match(holidayColumn, /<span class="fc-holiday fc-wk-holiday">Veterans Day<\/span><\/button>$/);
+  assert.doesNotMatch(dayHtml(polarRow({}), 0, true), /fc-holiday/, 'an ordinary day has none');
+  // A long word in a narrow column shrinks; in the narrowest it takes the column's side
+  // padding too, to stay whole. Longer still, it breaks rather than being cut off.
+  assert.match(html, /\.fc-wk-holiday \{ margin-top: auto; max-width: 100%; overflow-wrap: anywhere; \}\s*@container \(max-width: 95px\) \{\s*\.fc-wk-holiday \{ padding: 0 3px; font-size: 0\.56rem; \}\s*\}\s*@container \(max-width: 73px\) \{\s*\.fc-wk-holiday \{ margin-left: -6px; margin-right: -4px; padding: 0 1px; max-width: calc\(100% \+ 10px\); \}/);
+  assert.match(extractFunction('renderWeekDetail'), /<h3 class="fc-wk-title">[^\n]*\n\s*\(holiday \? ' <span class="fc-holiday">'/, "and the picked day's title says it");
   // The far north's times: "(after midnight)" wraps under its time rather than past the
   // edge, and a four-digit time ("10:14 AM") makes both of the column's AM/PMs give way sooner.
   const fairbanksDay = dayHtml(polarRow({ sunsetAt: '12:47 AM (after midnight)', sunriseAt: '2:58 AM' }), 0, true);
@@ -5324,4 +5348,34 @@ test('the forecast opens on the view picked last time, after a reload too', () =
   assert.doesNotThrow(() => load()('hours'));
   // Wired to the tabs (a click, and the arrow keys go through the same function).
   assert.match(html, /fcTabHours\.addEventListener\('click', \(\) => selectForecastTab\('hours'\)\);\s*try \{\s*if \(localStorage\.getItem\(FORECAST_TAB_KEY\) === 'hours'\)/);
+});
+
+test('holidays: the federal calendar, and the NWS naming one in place of a weekday', () => {
+  const h = vm.runInNewContext(`(() => {
+    ${['forecastLocalTime', 'usHoliday', 'forecastHoliday'].map(extractFunction).join('\n')}
+    return { usHoliday, forecastHoliday };
+  })()`);
+  // Fixed dates, and the ones that move (2026): third Mondays, May's last Monday, and so on.
+  const year = { '2026-01-01': "New Year's Day", '2026-01-19': 'Martin Luther King Jr. Day',
+    '2026-02-16': "Washington's Birthday", '2026-05-25': 'Memorial Day', '2026-06-19': 'Juneteenth',
+    '2026-07-04': 'Independence Day', '2026-09-07': 'Labor Day', '2026-10-12': 'Columbus Day',
+    '2026-11-11': 'Veterans Day', '2026-11-26': 'Thanksgiving Day', '2026-12-25': 'Christmas Day' };
+  for (const [date, name] of Object.entries(year)) assert.equal(h.usHoliday(date), name, date);
+  // The Mondays and Thursdays beside them aren't; May 31 is Memorial Day when it's the last Monday.
+  for (const date of ['2026-01-12', '2026-05-18', '2026-05-26', '2027-05-24', '2026-09-14', '2026-11-19', '2026-11-27', '2026-03-16']) {
+    assert.equal(h.usHoliday(date), '', date);
+  }
+  assert.equal(h.usHoliday('2027-05-31'), 'Memorial Day');
+  // The NWS's own name for the day counts, whatever the calendar says; everyday names don't.
+  const at = '2026-11-09T06:00:00-06:00';
+  assert.equal(h.forecastHoliday({ name: 'Christmas Eve', startTime: at }, true), 'Christmas Eve');
+  for (const name of ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+    'Today', 'This Afternoon', 'Rest of Today', 'Late Afternoon', 'Tonight', 'Overnight',
+    'Early This Morning', 'Afternoon', 'Evening', 'Morning', 'Late Tonight']) {
+    assert.equal(h.forecastHoliday({ name, startTime: at }, true), '', name);
+  }
+  // A holiday that's today, or a night on its own, is told by its date.
+  assert.equal(h.forecastHoliday({ name: 'Today', startTime: '2026-11-11T06:00:00-06:00' }, true), 'Veterans Day');
+  assert.equal(h.forecastHoliday({ name: 'Tonight', startTime: '2026-11-11T18:00:00-06:00' }, false), 'Veterans Day');
+  assert.equal(h.forecastHoliday({ name: 'Monday' }, true), '', 'no time to go on');
 });

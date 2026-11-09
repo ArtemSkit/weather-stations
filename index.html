@@ -2927,14 +2927,14 @@ function detectInputType(raw) {
   if (/^0\d{4}(?![\d.])[\d\s,+-]*$/.test(s))                       return 'badzip';
   // Each number: optional sign, at most 3 whole digits after any leading zeros (so
   // "80202 123", a mistyped ZIP+4, isn't taken as coordinates), optional decimals;
-  // ".5" and "29." are fine.
+  // ".5" and "39." are fine.
   if (/^[+-]?(0*\d{1,3}(\.\d*)?|\.\d+)(\s*,\s*|\s+)[+-]?(0*\d{1,3}(\.\d*)?|\.\d+)$/.test(s)) return 'coords';
   // "8020", "39.74-104.99" or "39.74°N 104.99°W" is a mistyped ZIP or a coordinate
   // format we don't read, not an address: Photon matches such numbers to some
   // street far away (Tacoma, WA) and loads it silently. N/S/E/W letters only count
   // with a decimal or a degree mark, so "200 S 300 E" (a real Utah address) passes.
   // (\x27 and \x22 are the ASCII minute and second marks.)
-  // A letter glued to a number ("29N 98W", "N29") is coordinate-style too; a
+  // A letter glued to a number ("39N 105W", "N39") is coordinate-style too; a
   // spaced one ("10 S 5 E") stays an address. Leftover brackets or another
   // separator (; : / | {} <>) mean a half-copied coordinate pair: also rejected
   // rather than geocoded.

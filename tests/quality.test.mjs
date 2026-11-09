@@ -3028,11 +3028,11 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
     ${extractFunction('selectStationsInRadius')}
     return selectStationsInRadius;
   })()`);
-  // Stations due north of (40, -104) at the given distances (1° of latitude ≈ 69.09 mi).
-  const at = miles => ({ geometry: { coordinates: [-104, 40 + miles / 69.09] }, properties: {} });
+  // Stations due north of (40, -105) at the given distances (1° of latitude ≈ 69.09 mi).
+  const at = miles => ({ geometry: { coordinates: [-105, 40 + miles / 69.09] }, properties: {} });
   // 10% of the radius: a 14 px marker + gap on a ~200 px circle (desktop).
   const CLEAR = 0.1;
-  const run = (list, clearance = CLEAR) => pick(40, -104, list.map(at), clearance);
+  const run = (list, clearance = CLEAR) => pick(40, -105, list.map(at), clearance);
   /** Every station inside the edge is shown, so "within N mi" is true. */
   const check = (list, r) => {
     const hiddenInside = list.filter(d => d < r.edgeMi - 0.1).length - r.inside.length;
@@ -3096,7 +3096,7 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
     prefersReducedMotion: { matches: false },
     map: { getSize: () => ({ x: 400, y: 120 }), setView: () => fitCalls.push('setView'), flyToBounds: () => fitCalls.push('fly') }
   });
-  assert.equal(fit({}, 40, -104), false);
+  assert.equal(fit({}, 40, -105), false);
   assert.deepEqual(fitCalls, ['setView']);
 
   // Never zoom OUT to fit: a user already closer in keeps their zoom (the map
@@ -3107,7 +3107,7 @@ test('search radius: nearby stations only, and the circle edge keeps clear of ma
     prefersReducedMotion: { matches: false }, L: { point: (x, y) => ({ x, y }) },
     map: { getSize: () => ({ x: 1200, y: 800 }), getBoundsZoom: () => fitZoom,
            setView: (c, z) => views.push(['setView', z]), flyToBounds: () => views.push(['fly']) }
-  })({}, 40, -104, userZoom);
+  })({}, 40, -105, userZoom);
   assert.equal(fitAt(14, 9), false);
   assert.equal(fitAt(4, 9), true);
   assert.deepEqual(views, [['setView', 14], ['fly']]);
@@ -4374,7 +4374,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   assert.match(hours, /fc-hour-time">10 PM</);
   assert.match(hours, /fc-hour-time">12 AM</);
   assert.doesNotMatch(hours, /fc-hour-air/);
-  // Each hour gets its air quality and pressure, matched by UTC hour (23:00 MDT = 04 UTC).
+  // Each hour gets its air quality and pressure, matched by UTC hour (23:00 at UTC-5 = 04 UTC).
   const aired = r.renderForecastHours([hour('2026-10-01T23:00:00-05:00', '2026-10-02T00:00:00-05:00')], now,
     { aqi: new Map([['2026-10-02T04', { value: 44, pollutant: 'ozone' }]]), pressure: new Map([['2026-10-02T04', 1013.25]]) });
   assert.match(aired, /<span class="fc-hour-air"><span class="fc-hour-aqi"><span class="fc-aqi fc-aqi-1"><span class="fc-aqi-word">AQI <\/span>44 Good<\/span><\/span><span class="fc-hour-press">29\.92 inHg<\/span><\/span>/);
@@ -5299,8 +5299,8 @@ test('live alerts across the date line: the view is split, and shapes land on th
   const crossing = h.placeGeometry({ type: 'Polygon', coordinates: [[[178, 60], [-178, 60], [-178, 62], [178, 62], [178, 60]]] }, -150);
   assert.deepEqual(coords(crossing), [[[-182, 60], [-178, 60], [-178, 62], [-182, 62], [-182, 60]]]);
   // An ordinary shape near the centre is left where it is.
-  const plainShape = h.placeGeometry({ type: 'Polygon', coordinates: [[[-104, 40], [-103, 40], [-103, 41], [-104, 40]]] }, -96);
-  assert.deepEqual(coords(plainShape), [[[-104, 40], [-103, 40], [-103, 41], [-104, 40]]]);
+  const plainShape = h.placeGeometry({ type: 'Polygon', coordinates: [[[-105, 40], [-104, 40], [-104, 41], [-105, 40]]] }, -103);
+  assert.deepEqual(coords(plainShape), [[[-105, 40], [-104, 40], [-104, 41], [-105, 40]]]);
   // A hole moves with its outer ring even when its own middle is on the other side
   // of "half a turn away" (from 179: outer middle -1 is 180° off and moves a turn,
   // hole middle +0.5 is 178.5° off and alone would stay put, outside its polygon).

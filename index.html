@@ -2058,8 +2058,8 @@
   <div class="search-bar">
     <!--
       Unified input — accepts:
-        • A 5-digit ZIP code  (e.g. "80201")
-        • Lat/lon pair        (e.g. "39.4241, -104.4936")
+        • A 5-digit ZIP code  (e.g. "80202")
+        • Lat/lon pair        (e.g. "39.7392, -104.9903")
         • Street address      (e.g. "1109 N Highland St, Arlington, VA")
       Input type is detected automatically by detectInputType().
     -->
@@ -2890,7 +2890,7 @@ intervalInput.addEventListener('change', () => {
  * Common cleanup before classifying or parsing search text: pasted minus signs
  * and dashes (Unicode minus, hyphen variants including the non-breaking one from
  * Word/Docs, en/em dash, fullwidth) become "-", and one surrounding pair of
- * brackets is dropped, so a copied "(39.42, -104.49)" or "[39.42, -104.49]" reads
+ * brackets is dropped, so a copied "(39.74, -104.99)" or "[39.74, -104.99]" reads
  * as coordinates instead of an address search that lands in Tacoma, WA.
  *
  * @param   {string} raw
@@ -2908,11 +2908,11 @@ function normalizeSearchText(raw) {
  *
  * Rules (evaluated in order):
  *  • Five digits (optionally plus "-NNNN", " NNNN" or "NNNN") → 'zip'
- *    (first, so "80201 1234" isn't read as two coordinates)
- *  • Two numbers split by a comma and/or spaces → 'coords' (e.g. "39.42, -104.49"
- *    or "39.42 -104.49")
+ *    (first, so "80202 1234" isn't read as two coordinates)
+ *  • Two numbers split by a comma and/or spaces → 'coords' (e.g. "39.74, -104.99"
+ *    or "39.74 -104.99")
  *  • Digits and punctuation only, or coordinate-style text with a decimal or a
- *    degree mark ("39.42 N, 104.49 W") → 'badzip' (a mistyped ZIP or coordinates).
+ *    degree mark ("39.74 N, 104.99 W") → 'badzip' (a mistyped ZIP or coordinates).
  *    Grid addresses such as Utah's "200 S 300 E" stay addresses.
  *  • Anything else                           → 'address'
  *
@@ -2926,10 +2926,10 @@ function detectInputType(raw) {
   // Digits and punctuation only after it: "02138 Cambridge MA" is a real address.
   if (/^0\d{4}(?![\d.])[\d\s,+-]*$/.test(s))                       return 'badzip';
   // Each number: optional sign, at most 3 whole digits after any leading zeros (so
-  // "80201 123", a mistyped ZIP+4, isn't taken as coordinates), optional decimals;
+  // "80202 123", a mistyped ZIP+4, isn't taken as coordinates), optional decimals;
   // ".5" and "29." are fine.
   if (/^[+-]?(0*\d{1,3}(\.\d*)?|\.\d+)(\s*,\s*|\s+)[+-]?(0*\d{1,3}(\.\d*)?|\.\d+)$/.test(s)) return 'coords';
-  // "8020", "39.42-104.49" or "39.42°N 104.49°W" is a mistyped ZIP or a coordinate
+  // "8020", "39.74-104.99" or "39.74°N 104.99°W" is a mistyped ZIP or a coordinate
   // format we don't read, not an address: Photon matches such numbers to some
   // street far away (Tacoma, WA) and loads it silently. N/S/E/W letters only count
   // with a decimal or a degree mark, so "200 S 300 E" (a real Utah address) passes.
@@ -3062,7 +3062,7 @@ async function zipToCoordsViaPhoton(zip5, zipAsTyped) {
   return { lat, lon };
 }
 
-/** A leading house number ("1437 Bannock" → "1437", Queens' "37-12 75th St" →
+/** A leading house number ("1437 Bannock St" → "1437", Queens' "37-12 75th St" →
     "37-12", with any dash normalizeSearchText knows), but not "3rd Street", nor
     the number that starts a road name like Detroit's "8 Mile Rd" (only "Mile
     Rd/Road", a "Mile R…" still being typed, or a bare "Mile": "45 Mile Creek
@@ -7580,11 +7580,11 @@ async function fetchAreaForecast(lat, lon) {
 
 /**
  * Where the forecast is, from the NWS's nearest named place: "8 mi NW of
- * Boulder, CO" — or "Near Denver, CO" when the spot is within a mile of it
+ * Golden, CO" — or "Near Denver, CO" when the spot is within a mile of it
  * or inside it. The NWS measures the distance to the place's edge (its limits),
  * not its centre — a spot inside a city gets 0 m — and its bearing points from
  * the place to the spot (a spot northeast of Golden gets 36°), the way the NWS's
- * own pages say "8 Miles NW Boulder CO".
+ * own pages say "8 Miles NW Golden CO".
  * @param {Object} relativeLocation - the /points answer's `relativeLocation`
  * @returns {string} '' when the NWS names no place
  */
@@ -9383,11 +9383,11 @@ async function doSearch(knownPlace) {
     } else if (type === 'zip') {
       setStatus('loading', 'LOCATING…');
       showOverlay('Geocoding ZIP code…');
-      place = await zipToCoords(normalizeSearchText(raw));   // "(80201)" → "80201"
+      place = await zipToCoords(normalizeSearchText(raw));   // "(80202)" → "80202"
 
     } else if (type === 'badzip') {
-      // Also catches malformed coordinates ("39.42-104.49").
-      throw new Error('Not a valid ZIP code or coordinates — e.g. 80201 or 39.42, -104.49');
+      // Also catches malformed coordinates ("39.74-104.99").
+      throw new Error('Not a valid ZIP code or coordinates — e.g. 80202 or 39.74, -104.99');
 
     } else if (knownPlace) {
       // A picked suggestion: already located, so straight to its stations (with
@@ -9501,7 +9501,7 @@ function suggestionFromFeature(feature, houseNumber, query) {
   const main = houseOnStreet ? houseNumber + ' ' + p.name : (p.name || address);
   if (!main) return null;
   // Photon's postcode belongs to one stretch of the street, not necessarily to the
-  // house typed (1437 Bannock is 80203; Photon's piece of it says 80204), so
+  // house typed (1437 Bannock St is 80202; Photon's piece of it may say 80204), so
   // it is left off there: never shown as the house's ZIP, nor searched with.
   const postcode = houseOnStreet ? '' : p.postcode;
   const area = [p.type === 'city' ? '' : p.city, [p.state, postcode].filter(Boolean).join(' ')];

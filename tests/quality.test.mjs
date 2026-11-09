@@ -620,7 +620,7 @@ test('service worker installs atomically, isolates cache cleanup, and allowlists
   assert.equal(routed({ method: 'GET', mode: 'cors', url: 'https://example.test/weather/private.json' }), undefined);
   assert.equal(routed({ method: 'GET', mode: 'cors', url: 'https://api.weather.gov/alerts' }), undefined);
   assert.ok(routed({ method: 'GET', mode: 'cors', url: 'https://example.test/weather/leaflet.js' }));
-  assert.ok(routed({ method: 'GET', mode: 'navigate', url: 'https://example.test/weather/index.html?zip=80201' }));
+  assert.ok(routed({ method: 'GET', mode: 'navigate', url: 'https://example.test/weather/index.html?zip=80202' }));
   assert.ok(routed({ method: 'GET', mode: 'navigate', url: 'https://example.test/weather/?lat=1&long=2' }));
   // Other pages in scope must reach the network instead of the app shell.
   assert.equal(routed({ method: 'GET', mode: 'navigate', url: 'https://example.test/weather/typo.html' }), undefined);
@@ -789,7 +789,7 @@ test('rain chance uses the hour in progress, not an hour that already ended', as
         { endTime: iso(now + hour), probabilityOfPrecipitation: { value: 30 } }
       ] } } }, forecastPoPCache);
 
-  assert.equal(await fetchForecastPoP(39.4, -104.5, 'KDEN'), 10);
+  assert.equal(await fetchForecastPoP(39.7, -105, 'KDEN'), 10);
   // Cached only until that hour ends (one minute away), not the usual 10 minutes.
   assert.ok(forecastPoPCache.get('KDEN').ttl <= 60_000);
   assert.ok(forecastPoPCache.get('KDEN').ttl > 0);
@@ -808,8 +808,8 @@ test('shared coordinate links never use exponent notation', () => {
   });
   push('coords', '0.0000001, 5');
   assert.equal(written, '/?lat=0&long=5');   // String(1e-7) would write "1e-7"
-  push('coords', '39.4241, -104.4936');
-  assert.equal(written, '/?lat=39.4241&long=-104.4936');
+  push('coords', '39.7392, -104.9903');
+  assert.equal(written, '/?lat=39.7392&long=-104.9903');
 });
 
 test('Enter that confirms an IME composition does not start a search', () => {
@@ -863,11 +863,11 @@ test('ZIP lookup falls back to Photon when Nominatim cannot be reached', async (
     if (url.includes('nominatim')) throw new TypeError('Failed to fetch');
     return { response: { ok: true }, data: { features: [
       { properties: { countrycode: 'MX' }, geometry: { coordinates: [-99, 19] } },
-      { properties: { countrycode: 'US' }, geometry: { coordinates: [-104.5, 39.4] } }
+      { properties: { countrycode: 'US' }, geometry: { coordinates: [-104.99, 39.75] } }
     ] } };
   });
-  assert.deepEqual({ ...await zipToCoords('80201-1234') }, { lat: 39.4, lon: -104.5 });
-  assert.match(requested[1], /^https:\/\/photon\.komoot\.io\/api\/\?q=80201&osm_tag=place:postcode/);
+  assert.deepEqual({ ...await zipToCoords('80202-1234') }, { lat: 39.75, lon: -104.99 });
+  assert.match(requested[1], /^https:\/\/photon\.komoot\.io\/api\/\?q=80202&osm_tag=place:postcode/);
 });
 
 test('alert popups pan clear of the banner and panel, and their × never covers text', () => {
@@ -1054,7 +1054,7 @@ test('the sky row shows the main cloud deck, not just the lowest layer', () => {
   const src = extractFunction('renderWeather');
   const pick = src.slice(src.indexOf('const coverRank'), src.indexOf('const cloudAmt'));
   const choose = layers => vm.runInNewContext(`(() => { const p = { cloudLayers: ${JSON.stringify(layers)} }; ${pick}; return layer; })()`);
-  // Live KDEN case: FEW 460 m, BKN 610 m, OVC 790 m → overcast, not "Few".
+  // A live case: FEW 460 m, BKN 610 m, OVC 790 m → overcast, not "Few".
   assert.equal(choose([{ amount: 'FEW', base: { value: 460 } }, { amount: 'BKN', base: { value: 610 } },
                        { amount: 'OVC', base: { value: 790 } }]).amount, 'OVC');
   // Tie → the lowest layer (it sets the ceiling).
@@ -1732,11 +1732,11 @@ test('nearby inline alert polygons are merged without adding unrelated regional 
     type: 'Polygon',
     coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]]
   });
-  const viewport = { west: -104.8, south: 39.2, east: -104.1, north: 39.8 };
+  const viewport = { west: -105.3, south: 39.5, east: -104.6, north: 40.1 };
   const pointWatch = { id: 'watch', properties: { event: 'Flood Watch' }, geometry: null };
   const nearbyAdvisory = {
     id: 'advisory', properties: { event: 'Flood Advisory' },
-    geometry: polygon(-104.6, 39.4, -104.3, 39.7)
+    geometry: polygon(-105.1, 39.7, -104.8, 40)
   };
   const farWarning = {
     id: 'far', properties: { event: 'Tornado Warning' },
@@ -1747,7 +1747,7 @@ test('nearby inline alert polygons are merged without adding unrelated regional 
   };
 
   assert.deepEqual(alertGeometryBounds(nearbyAdvisory.geometry), {
-    west: -104.6, south: 39.4, east: -104.3, north: 39.7
+    west: -105.1, south: 39.7, east: -104.8, north: 40
   });
   assert.equal(geometryIntersectsBounds(nearbyAdvisory.geometry, viewport), true);
   assert.equal(geometryIntersectsBounds(farWarning.geometry, viewport), false);
@@ -1853,7 +1853,7 @@ test('alert feeds discard malformed feature entries at the network boundary', as
     ] }
   }));
 
-  assert.deepEqual(await harness.fetchPointAlerts(39.4, -104.5), [validAlert]);
+  assert.deepEqual(await harness.fetchPointAlerts(39.7, -105), [validAlert]);
 });
 
 test('cancelled alerts and border points are handled like the live NWS feed', () => {
@@ -2041,22 +2041,22 @@ test('address lookup uses key-less Photon and keeps only US matches', async () =
   // A foreign candidate ranked first must be skipped in favour of the US one.
   features = [
     { properties: { countrycode: 'FR' }, geometry: { coordinates: [2.35, 48.85] } },
-    { properties: { countrycode: 'US' }, geometry: { coordinates: [-95.55, 33.66] } }
+    { properties: { countrycode: 'US' }, geometry: { coordinates: [-84.25, 38.21] } }
   ];
-  const near = { lat: 39.5, lon: -98.35 };
-  assert.deepEqual({ ...await addressViaPhoton('paris tx', near) }, { lat: 33.66, lon: -95.55 });
-  assert.match(requested[0], /^https:\/\/photon\.komoot\.io\/api\/\?q=paris%20tx&/);
+  const near = { lat: 39.74, lon: -104.99 };
+  assert.deepEqual({ ...await addressViaPhoton('paris ky', near) }, { lat: 38.21, lon: -84.25 });
+  assert.match(requested[0], /^https:\/\/photon\.komoot\.io\/api\/\?q=paris%20ky&/);
   // Results are biased toward the map, or common names return no US match at all.
   // …but only coarsely (1 decimal, about 11 km): never the exact position.
-  assert.match(requested[0], /&lat=39\.5&lon=-98\.[34]$/);
+  assert.match(requested[0], /&lat=39\.7&lon=-105\.0$/);
 
   features = [{ properties: { countrycode: 'FR' }, geometry: { coordinates: [2.35, 48.85] } }];
   assert.equal(await addressViaPhoton('paris', near), null);
 });
 
 test('house numbers go to Nominatim first, names to Photon first, each backed by the other', async () => {
-  // Photon misses most US house numbers (and drops "1437 Bannock … 80203"
-  // entirely), while Nominatim has the Census ranges; Photon ranks names better.
+  // Photon misses most US house numbers (and can drop a house such as "1437 Bannock St …
+  // 80202" entirely), while Nominatim has the Census ranges; Photon ranks names better.
   const make = ({ nominatim, photon }) => {
     const calls = [];
     const fn = new Function('fetchJsonWithTimeout', `
@@ -2073,34 +2073,34 @@ test('house numbers go to Nominatim first, names to Photon first, each backed by
     });
     return { fn, calls };
   };
-  const house  = () => ({ data: [{ lat: '39.4938247', lon: '-104.3675119' }] });
-  const street = () => ({ data: { features: [{ properties: { countrycode: 'US' }, geometry: { coordinates: [-104.37, 39.49] } }] } });
+  const house  = () => ({ data: [{ lat: '39.7392358', lon: '-104.9902510' }] });
+  const street = () => ({ data: { features: [{ properties: { countrycode: 'US' }, geometry: { coordinates: [-104.99, 39.74] } }] } });
   const none   = { nominatim: () => ({ data: [] }), photon: () => ({ data: { features: [] } }) };
-  const near   = { lat: 39.53, lon: -104.47 };
+  const near   = { lat: 39.74, lon: -104.99 };
 
   // A house number: Nominatim's exact house, and Photon isn't asked at all.
   let s = make({ nominatim: house, photon: street });
-  assert.deepEqual({ ...await s.fn('1437 Bannock, Denver, Colorado, 80203', near) },
-    { lat: 39.4938247, lon: -104.3675119 });
+  assert.deepEqual({ ...await s.fn('1437 Bannock St, Denver, Colorado, 80202', near) },
+    { lat: 39.7392358, lon: -104.990251 });
   assert.deepEqual(s.calls.map(c => c.which), ['nominatim']);
   // US and territories only; the map bias is a coarse box, never the exact position.
-  assert.match(s.calls[0].url, /&countrycodes=us,pr,vi,gu,as,mp&viewbox=-105\.5,40\.5,-103\.5,38\.5$/);
+  assert.match(s.calls[0].url, /&countrycodes=us,pr,vi,gu,as,mp&viewbox=-106\.0,40\.7,-104\.0,38\.7$/);
 
   // Nominatim ranks by fame: of its candidates, the one nearest the map wins
   // ("100 Main St" with the map on Denver: not Cambridge, MA). Bad rows are skipped.
   s = make({ nominatim: () => ({ data: [
-    { lat: '42.36', lon: '-71.08' }, { lat: 'x', lon: '-104.4' }, { lat: '28.92', lon: '-104.55' },
-    { lat: '39.70', lon: '-104.12' }] }), photon: street });
-  assert.deepEqual({ ...await s.fn('100 Main St', near) }, { lat: 39.70, lon: -104.12 });
+    { lat: '42.36', lon: '-71.08' }, { lat: 'x', lon: '-105.0' }, { lat: '40.17', lon: '-105.10' },
+    { lat: '39.61', lon: '-105.02' }] }), photon: street });
+  assert.deepEqual({ ...await s.fn('100 Main St', near) }, { lat: 39.61, lon: -105.02 });
   assert.match(s.calls[0].url, /&limit=10&/);
 
   // A plain name: Photon first.
   s = make({ nominatim: house, photon: street });
-  assert.deepEqual({ ...await s.fn('Bannock, Denver', near) }, { lat: 39.49, lon: -104.37 });
+  assert.deepEqual({ ...await s.fn('Bannock St, Denver', near) }, { lat: 39.74, lon: -104.99 });
   assert.deepEqual(s.calls.map(c => c.which), ['photon']);
   // "3rd Street" doesn't start with a house number; Queens' "37-12 75th St" does.
   s = make({ nominatim: house, photon: street });
-  await s.fn('3rd Street, Austin', near);
+  await s.fn('3rd Street, Boulder', near);
   assert.deepEqual(s.calls.map(c => c.which), ['photon']);
   s = make({ nominatim: house, photon: street });
   await s.fn('37-12 75th St, Queens, NY', near);
@@ -2127,10 +2127,10 @@ test('house numbers go to Nominatim first, names to Photon first, each backed by
 
   // Nothing at the first, or the first unreachable: the other one answers.
   s = make({ nominatim: () => ({ data: [] }), photon: street });
-  assert.deepEqual({ ...await s.fn('1109 n highlnd st arlington va', near) }, { lat: 39.49, lon: -104.37 });
+  assert.deepEqual({ ...await s.fn('1109 n highlnd st arlington va', near) }, { lat: 39.74, lon: -104.99 });
   assert.deepEqual(s.calls.map(c => c.which), ['nominatim', 'photon']);
   s = make({ nominatim: () => ({ ok: false, status: 429 }), photon: street });
-  assert.ok(await s.fn('5118 Larimer St', near));
+  assert.ok(await s.fn('1600 Glenarm Pl', near));
 
   // Neither finds it → "not found"; a failure that may have hidden it → that failure.
   await assert.rejects(make(none).fn('99999 Nowhere Rd', near), /not found/);
@@ -2139,7 +2139,7 @@ test('house numbers go to Nominatim first, names to Photon first, each backed by
 });
 
 test('address suggestions: US places from Photon, with the typed house number kept', async () => {
-  const feature = (properties, coordinates = [-104.37, 39.49]) =>
+  const feature = (properties, coordinates = [-104.99, 39.74]) =>
     ({ properties: { countrycode: 'US', ...properties }, geometry: { coordinates } });
   let features = [];
   const requested = [];
@@ -2152,31 +2152,31 @@ test('address suggestions: US places from Photon, with the typed house number ke
     async ${extractFunction('fetchSuggestions')}
     return fetchSuggestions;
   `)(async url => { requested.push(url); return { response: { ok: true }, data: { features } }; },
-     { getCenter: () => ({ wrap: () => ({ lat: 39.5312, lng: -104.4712 }) }) });
+     { getCenter: () => ({ wrap: () => ({ lat: 39.7392, lng: -104.9903 }) }) });
 
   features = [
-    feature({ type: 'street', osm_key: 'highway', name: 'Bannock', city: 'Denver', state: 'Colorado', postcode: '80204' }),
+    feature({ type: 'street', osm_key: 'highway', name: 'Bannock Street', city: 'Denver', state: 'Colorado', postcode: '80204' }),
     // Photon lists one street per piece of road: shown once.
-    feature({ type: 'street', osm_key: 'highway', name: 'Bannock', city: 'Denver', state: 'Colorado', postcode: '80204' }),
-    feature({ type: 'house', osm_key: 'highway', osm_value: 'bus_stop', name: 'Bannock at Main' }),   // stop: noise
-    feature({ type: 'street', name: 'Bannock', countrycode: 'MX' }),                                   // not US
+    feature({ type: 'street', osm_key: 'highway', name: 'Bannock Street', city: 'Denver', state: 'Colorado', postcode: '80204' }),
+    feature({ type: 'house', osm_key: 'highway', osm_value: 'bus_stop', name: 'Bannock at 14th' }),        // stop: noise
+    feature({ type: 'street', name: 'Bannock Street', countrycode: 'MX' }),                                // not US
     feature({ type: 'house', osm_key: 'tourism', name: 'Denver Zoo', housenumber: '2300',
-      street: "Steele Street", city: 'Denver', state: 'Colorado', postcode: '80205' }, [-104.47, 39.46]),
-    feature({ type: 'city', osm_key: 'place', name: 'Golden', state: 'Colorado' }, [-104.73, 39.79])
+      street: 'Steele Street', city: 'Denver', state: 'Colorado', postcode: '80205' }, [-104.95, 39.75]),
+    feature({ type: 'city', osm_key: 'place', name: 'Golden', state: 'Colorado' }, [-105.22, 39.76])
   ];
   const list = await fetchSuggestions('1437 Bann');
   // The house number stays out of the request (it drowns Photon's street match);
   // the bias is coarse and the search box is the US.
-  assert.match(requested[0], /\?q=Bann&limit=10&lang=en&lat=39\.5&lon=-104\.5&bbox=-180,15,-64,72$/);
+  assert.match(requested[0], /\?q=Bann&limit=10&lang=en&lat=39\.7&lon=-105\.0&bbox=-180,15,-64,72$/);
   assert.deepEqual(list.map(s => s.text), [
     // Photon's postcode is for its piece of the street, not the house: left off.
-    '1437 Bannock, Denver, Colorado',
-    "Denver Zoo, 2300 Steele Street, Denver, Colorado 80205",
+    '1437 Bannock Street, Denver, Colorado',
+    'Denver Zoo, 2300 Steele Street, Denver, Colorado 80205',
     'Golden, Colorado'
   ]);
   // The street still needs its house found (by the normal search); the rest are placed.
   assert.equal(list[0].place, null);
-  assert.deepEqual({ ...list[1].place }, { lat: 39.46, lon: -104.47 });
+  assert.deepEqual({ ...list[1].place }, { lat: 39.75, lon: -104.95 });
 
   // "8 Mile" is the road's own name: the whole of it is asked for.
   features = [];
@@ -2205,11 +2205,11 @@ test('address suggestions: US places from Photon, with the typed house number ke
   assert.equal(onRoad.place, null);
 
   // Without a house number a street is placed directly; too little text asks nothing.
-  features = [feature({ type: 'street', name: 'Larimer Street', city: 'Denver', state: 'Colorado' })];
-  assert.equal((await fetchSuggestions('Larimer'))[0].main, 'Larimer Street');
-  assert.ok((await fetchSuggestions('Larimer'))[0].place);
+  features = [feature({ type: 'street', name: 'Glenarm Place', city: 'Denver', state: 'Colorado' })];
+  assert.equal((await fetchSuggestions('Glenarm'))[0].main, 'Glenarm Place');
+  assert.ok((await fetchSuggestions('Glenarm'))[0].place);
   requested.length = 0;
-  assert.deepEqual(await fetchSuggestions('12 El'), []);
+  assert.deepEqual(await fetchSuggestions('12 Gl'), []);
   assert.equal(requested.length, 0);
 });
 
@@ -2338,7 +2338,7 @@ test('address suggestions: a typing session, run for real', async () => {
   // leaves nothing pending (so Esc isn't held back).
   type('Pine');
   assert.equal(state().pending, true);
-  type('80203');
+  type('80202');
   assert.deepEqual(state(), { pending: false, rows: 0, active: -1 });
   assert.equal(timers.size, 0);
 });
@@ -2718,31 +2718,31 @@ test('dismissing an update cannot schedule an automatic reload', () => {
 // timeout: a backtracking regex would hang the suite instead of failing it.
 test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are not addresses', { timeout: 5000 }, () => {
   const detect = vm.runInNewContext(`(() => { ${extractFunction('normalizeSearchText')} ${extractFunction('detectInputType')} return detectInputType; })()`);
-  assert.equal(detect('80201'), 'zip');
+  assert.equal(detect('80202'), 'zip');
   assert.equal(detect('90210-1234'), 'zip');
   assert.equal(detect(' 902101234 '), 'zip');
-  assert.equal(detect('80201 1234'), 'zip');
+  assert.equal(detect('80202 1234'), 'zip');
   // "8020" as an address matches some house number far away — reject it instead.
   assert.equal(detect('8020'), 'badzip');
-  assert.equal(detect('802011'), 'badzip');
+  assert.equal(detect('802021'), 'badzip');
   assert.equal(detect('123-45-6789'), 'badzip');
   // Coordinates typed with a space instead of a comma are coordinates (as an
-  // address, "39.42 -104.49" matched a street in Tacoma, WA).
-  assert.equal(detect('39.42 -104.49'), 'coords');
-  assert.equal(detect('39 -104'), 'coords');
-  assert.equal(detect('39.42-104.49'), 'badzip');
+  // address, such a pair matched a street in Tacoma, WA).
+  assert.equal(detect('39.74 -104.99'), 'coords');
+  assert.equal(detect('39 -105'), 'coords');
+  assert.equal(detect('39.74-104.99'), 'badzip');
   // A mistyped ZIP+4 is not a coordinate pair; signed / dot-first numbers are.
-  assert.equal(detect('80201 123'), 'badzip');
+  assert.equal(detect('80202 123'), 'badzip');
   assert.equal(detect('8020 1234'), 'badzip');
-  assert.equal(detect('+39.4 -104.5'), 'coords');
+  assert.equal(detect('+39.7 -105.0'), 'coords');
   assert.equal(detect('.5 .5'), 'coords');
-  assert.equal(detect('29., -98.'), 'coords');
-  assert.equal(detect('0039.4, -104.5'), 'coords');      // leading zeros, as before
-  assert.equal(detect('39.42 −104.49'), 'coords');  // pasted Unicode minus
-  assert.equal(detect('39.42, –104.49'), 'coords'); // en dash
+  assert.equal(detect('39., -105.'), 'coords');
+  assert.equal(detect('0039.7, -105.0'), 'coords');      // leading zeros, as before
+  assert.equal(detect('39.74 −104.99'), 'coords');  // pasted Unicode minus
+  assert.equal(detect('39.74, –104.99'), 'coords'); // en dash
   // Degree-style coordinates went to Photon and loaded Tacoma, WA: reject instead.
-  assert.equal(detect('39.42°N 104.49°W'), 'badzip');
-  assert.equal(detect('39.42 N, 104.49 W'), 'badzip');
+  assert.equal(detect('39.74°N 104.99°W'), 'badzip');
+  assert.equal(detect('39.74 N, 104.99 W'), 'badzip');
   assert.equal(detect('news'), 'address');            // N/S/E/W letters need a digit
   // Utah-style grid addresses are real addresses, not coordinates.
   assert.equal(detect('200 S 300 E'), 'address');
@@ -2754,22 +2754,22 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   assert.equal(detect('02138 Cambridge MA'), 'address');   // ZIP + city is an address
   assert.equal(detect('02138, MA'), 'address');
   // Copied tuples / arrays are coordinates, not an address that lands in Tacoma.
-  assert.equal(detect('(39.42, -104.49)'), 'coords');
-  assert.equal(detect('[39.42, -104.49]'), 'coords');
-  assert.equal(detect('( 39.42 , -104.49 )'), 'coords');
+  assert.equal(detect('(39.74, -104.99)'), 'coords');
+  assert.equal(detect('[39.74, -104.99]'), 'coords');
+  assert.equal(detect('( 39.74 , -104.99 )'), 'coords');
   // Half-copied brackets or a ";" separator: rejected, not geocoded to Tacoma.
-  assert.equal(detect('(39.42, -104.49'), 'badzip');
-  assert.equal(detect('39.42;-104.49'), 'badzip');
-  for (const t of ['39.42/-104.49', '39.42:-104.49', '{39.42, -104.49}']) assert.equal(detect(t), 'badzip', t);
+  assert.equal(detect('(39.74, -104.99'), 'badzip');
+  assert.equal(detect('39.74;-104.99'), 'badzip');
+  for (const t of ['39.74/-104.99', '39.74:-104.99', '{39.74, -104.99}']) assert.equal(detect(t), 'badzip', t);
   for (const a of ['1/2 Main St', '24/7 Market', '4-H Club Rd']) assert.equal(detect(a), 'address', a);
   // Whole-degree coordinates with glued letters; spaced grid addresses stay.
-  assert.equal(detect('29N 98W'), 'badzip');
-  assert.equal(detect('N29 W98'), 'badzip');
-  for (const a of ['1300 S', '33 W', '10 S 5 E', '100 N 200 W', '80201 Denver CO']) {
+  assert.equal(detect('39N 105W'), 'badzip');
+  assert.equal(detect('N39 W105'), 'badzip');
+  for (const a of ['1300 S', '33 W', '10 S 5 E', '100 N 200 W', '80202 Denver CO']) {
     assert.equal(detect(a), 'address', a);
   }
-  assert.equal(detect('(80201)'), 'zip');
-  assert.equal(detect('00039.4, -104.5'), 'coords');
+  assert.equal(detect('(80202)'), 'zip');
+  assert.equal(detect('00039.7, -105.0'), 'coords');
   // Linear time: a crafted deep link with a huge bracketed input must not hang.
   const norm = vm.runInNewContext(`(() => { ${extractFunction('normalizeSearchText')} return normalizeSearchText; })()`);
   const t0 = Date.now();
@@ -2777,13 +2777,13 @@ test('search input classification: ZIP+4 without hyphen, and mistyped ZIPs are n
   assert.ok(Date.now() - t0 < 200, 'normalizeSearchText must not backtrack');
   assert.match(extractFunction('doSearch'), /zipToCoords\(normalizeSearchText\(raw\)\)/);
   // Non-breaking hyphen pasted from Word/Docs works as a minus.
-  assert.equal(detect('39.42 ‑104.49'), 'coords');
+  assert.equal(detect('39.74 ‑104.99'), 'coords');
   const parse = vm.runInNewContext(`(() => { ${extractFunction('normalizeSearchText')} ${extractFunction('parseCoords')} return parseCoords; })()`);
-  assert.deepEqual({ ...parse(' 39.42   -104.49 ') }, { lat: 39.42, lon: -104.49 });
-  assert.deepEqual({ ...parse('39.42 , -104.49') }, { lat: 39.42, lon: -104.49 });
-  assert.deepEqual({ ...parse('[39.42, -104.49]') }, { lat: 39.42, lon: -104.49 });
-  assert.deepEqual({ ...parse('39.42 −104.49') }, { lat: 39.42, lon: -104.49 });
-  assert.equal(detect('39.4, -104.5'), 'coords');
+  assert.deepEqual({ ...parse(' 39.74   -104.99 ') }, { lat: 39.74, lon: -104.99 });
+  assert.deepEqual({ ...parse('39.74 , -104.99') }, { lat: 39.74, lon: -104.99 });
+  assert.deepEqual({ ...parse('[39.74, -104.99]') }, { lat: 39.74, lon: -104.99 });
+  assert.deepEqual({ ...parse('39.74 −104.99') }, { lat: 39.74, lon: -104.99 });
+  assert.equal(detect('39.7, -105.0'), 'coords');
   assert.equal(detect('1600 Pennsylvania Ave'), 'address');
   assert.match(extractFunction('doSearch'), /type === 'badzip'\) \{\s*(\/\/.*\s*)?throw new Error\('Not a valid ZIP code/);
 });
@@ -2794,7 +2794,7 @@ test('a station inside a warning says so to screen readers, not just with a red 
   const badge = { title: 'KDEN — Denver', dataset: { label: 'KDEN — Denver' },
                   classList: { on: false, toggle(c, v) { this.on = v; } }, closest: () => outer };
   const flag = inside => vm.runInNewContext(`(() => { ${extractFunction('flagStationsInAlerts')} return flagStationsInAlerts; })()`, {
-    stationRecords: [{ el: badge, lat: 39.5, lng: -104.5 }],
+    stationRecords: [{ el: badge, lat: 39.7, lng: -105 }],
     alertPolygons: () => [[]], pointInAlertPolygon: () => inside
   })([{ properties: { event: 'Flood Warning' } }]);
   flag(true);
@@ -2952,7 +2952,7 @@ test('a slow rain-chance lookup never holds up the next refresh', async () => {
   let observation = 1;
   const ctx = vm.createContext({
     document: { getElementById: id => (id === 'update-dot' ? dot : { classList: { add() {}, remove() {} }, textContent: '' }) },
-    fetchObservations: async () => ({ obs: observation++, geometry: { coordinates: [-104.5, 39.5] } }),
+    fetchObservations: async () => ({ obs: observation++, geometry: { coordinates: [-105, 39.7] } }),
     fetchForecastPoP: () => { forecastCalls++; return new Promise(r => { resolveForecast = r; }); },   // hangs
     renderWeather: (data, id, name, pop) => shown.push([data.obs, pop]),
     forecastPoPCache: new Map(), Set, Array, Number, Date
@@ -2985,7 +2985,7 @@ test('a late rain chance reaches a reopened panel and keeps an "update failed" n
   const timeEl = { textContent: '' };
   const ctx = vm.createContext({
     document: { getElementById: id => (id === 'update-time' ? timeEl : { classList: { add() {}, remove() {} }, textContent: '' }) },
-    fetchObservations: async () => ({ geometry: { coordinates: [-104.5, 39.5] } }),
+    fetchObservations: async () => ({ geometry: { coordinates: [-105, 39.7] } }),
     fetchForecastPoP: () => new Promise(r => { resolveForecast = r; }),
     renderWeather: (data, id, name, pop) => { shown.push(pop); timeEl.textContent = 'OBS: 1'; },
     forecastPoPCache: new Map(), Set, Array, Number, Date
@@ -3205,7 +3205,7 @@ test('live alert chips: one for neighbouring alerts of a type, the most serious 
     alert('h1', 'Heat Advisory', 'Y', 40, -124, 43, -121),     // (the largest, h1, gets their chip)
     alert('h2', 'Heat Advisory', 'Y', 37, -122, 40, -120),
     alert('h5', 'Heat Advisory', 'Y', 43.5, -110, 45, -108),   // not touching them: its own
-    alert('h4', 'Heat Advisory', 'Y', 30, -96, 32, -94),       // far away (Colorado): its own
+    alert('h4', 'Heat Advisory', 'Y', 30, -96, 32, -94),       // far away: its own
     alert('f1', 'Flood Warning', 'W', 39.5, -121, 40, -115),   // another kind overlapping h2: its own
     // An alert's zones far apart, and another of its kind between them touching
     // neither: two areas, two chips (a box round the first would swallow it).
@@ -3917,9 +3917,9 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
     assert.deepEqual(log, ['open KDEN', 'close false', 'open KDEN'], 'reopened: it stays');
     log.length = 0;
     tap('logo', { click: false });
-    page.openMarker('KBKF');   // (a marker opened by keyboard, through Leaflet: no click)
+    page.openMarker('KAPA');   // (a marker opened by keyboard, through Leaflet: no click)
     flush();
-    assert.deepEqual(log, ['open KBKF'], "a marker's panel is not the readout's to close");
+    assert.deepEqual(log, ['open KAPA'], "a marker's panel is not the readout's to close");
     // A tap inside a dialog over the sheet (the forecast, its backdrop) isn't one away from it.
     log.length = 0;
     tap('readout');
@@ -3951,12 +3951,12 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
     // A panel a marker opened isn't closed by a tap away (that's the readout's).
     layout = 'fixed';
     log.length = 0;
-    page.openMarker('KBKF');
+    page.openMarker('KAPA');
     tap('map');
-    assert.deepEqual(log, ['open KBKF']);
+    assert.deepEqual(log, ['open KAPA']);
     // …but the readout, with another station's panel open, opens its own (not a close).
     tap('readout');
-    assert.deepEqual(log, ['open KBKF', 'open KDEN']);
+    assert.deepEqual(log, ['open KAPA', 'open KDEN']);
     tap('map');
     // From the keyboard: focus into the panel, remembered to come back to the readout.
     log.length = 0;
@@ -3985,12 +3985,12 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   // Its time says its zone: the place may be in another one than the viewer's clock.
   assert.match(extractFunction('renderNowWeather'), /toLocaleTimeString\(\[\], \{ hour: 'numeric', minute: '2-digit', timeZoneName: 'short' \}\)/);
   let now = Date.parse('2026-10-19T18:00:00Z');
-  const obs = (c, minsAgo, text = 'A Few Clouds', icon = 'https://api.weather.gov/icons/land/day/few?size=medium', lon = -104.47) =>
-    ({ geometry: { coordinates: [lon, 39.53] },
+  const obs = (c, minsAgo, text = 'A Few Clouds', icon = 'https://api.weather.gov/icons/land/day/few?size=medium', lon = -104.66) =>
+    ({ geometry: { coordinates: [lon, 39.85] },
        properties: { temperature: { value: c }, timestamp: new Date(now - minsAgo * 60_000).toISOString(),
-                     textDescription: text, icon, stationName: 'Denver Intl' } });
+                     textDescription: text, icon, stationName: 'Denver International Airport' } });
   const fetched = [];
-  const answers = { KDEN: obs(null, 10), KBKF: obs(25, 30), KAPA: obs(20, 5) };
+  const answers = { KDEN: obs(null, 10), KAPA: obs(25, 30), KBKF: obs(20, 5) };
   const gates = {};   // a station whose answer is held back until its gate opens
   const nowWx = { hidden: true, innerHTML: '', title: '', attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
   const timers = [];
@@ -4017,25 +4017,25 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
     return { nowReading, loadNowWeather, clearNowWeather, syncNowWxExpanded };
   })()`, ctx);
   // A reading counts with a temperature, up to two hours old; night from its NWS icon,
-  // or without one from the sun's hour at the station (18:00 UTC is noon at -98°).
+  // or without one from the sun's hour at the station (18:00 UTC is 11 AM by the sun at -105°).
   assert.equal(k.nowReading(obs(null, 10), 'KDEN', now), null, 'no temperature');
   assert.equal(k.nowReading(obs(25, 150), 'KDEN', now), null, 'over two hours old');
   const r = k.nowReading(obs(22.2, 30, 'Clear', 'https://api.weather.gov/icons/land/night/skc'), 'KDEN', now);
   assert.equal(r.f, '72'); assert.equal(r.c, '22'); assert.equal(r.day, false);
-  assert.equal(k.nowReading(obs(22, 0, 'Clear', null), 'KDEN', now).day, true, 'no icon, local noon: day');
+  assert.equal(k.nowReading(obs(22, 0, 'Clear', null), 'KDEN', now).day, true, 'no icon, late morning there: day');
   assert.equal(k.nowReading(obs(22, 0, 'Clear', null, 80), 'KDEN', now).day, false, 'no icon, 23:20 at 80°E: night');
   // The nearest station without a temperature is passed over for the next nearest (asked
   // three at a time, nearest first: the nearest with both the sky and a temperature wins).
-  await k.loadNowWeather(['KDEN', 'KBKF', 'KAPA', 'KFNL']);
-  assert.deepEqual(fetched, ['KDEN', 'KBKF', 'KAPA']);
+  await k.loadNowWeather(['KDEN', 'KAPA', 'KBKF', 'KBJC']);
+  assert.deepEqual(fetched, ['KDEN', 'KAPA', 'KBKF']);
   assert.equal(nowWx.hidden, false);
   assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">⛅<\/span>77°F<small>25°C<\/small>$/);
-  assert.match(nowWx.title, /^A Few Clouds, 77°F \(25°C\) — Denver Intl \(KBKF\), [^.]+\. Its readings\.$/);
+  assert.match(nowWx.title, /^A Few Clouds, 77°F \(25°C\) — Denver International Airport \(KAPA\), [^.]+\. Its readings\.$/);
   // Screen readers hear that same text once: as its name (a title the same as the name isn't read again).
   assert.equal(nowWx.attrs['aria-label'], nowWx.title);
   // A press opens its station's readings, or closes them when open: aria-expanded says which.
   assert.equal(nowWx.attrs['aria-expanded'], 'false');
-  Object.assign(ctx, { activeStationId: 'KBKF' }); ctx.popupPanel.style.display = 'block';
+  Object.assign(ctx, { activeStationId: 'KAPA' }); ctx.popupPanel.style.display = 'block';
   k.syncNowWxExpanded();
   assert.equal(nowWx.attrs['aria-expanded'], 'true', 'its station open');
   ctx.activeStationId = 'KDEN';
@@ -4059,39 +4059,39 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   tick.fn();
   assert.equal(nowWx.hidden, false, 'not blanked while it looks');
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(fetched, ['KDEN', 'KBKF', 'KAPA']);
+  assert.deepEqual(fetched, ['KDEN', 'KAPA', 'KBKF']);
   assert.match(nowWx.innerHTML, /77°F/);
   assert.match(html, /document\.addEventListener\('visibilitychange', \(\) => \{\s*if \(document\.visibilityState === 'visible' && nowWxStations\.length && Date\.now\(\) - nowWxAskedAt >= NOW_WX_REFRESH_MS\) \{\s*loadNowWeather\(nowWxStations, null, true\);/);
   // A refresh that finds nothing (offline, the stations down) keeps the reading on show
   // while it's still recent, rather than blanking the header — and drops it after.
   const saved = { ...answers };
   for (const id in answers) delete answers[id];
-  await k.loadNowWeather(['KDEN', 'KBKF', 'KAPA', 'KFNL'], null, true);
+  await k.loadNowWeather(['KDEN', 'KAPA', 'KBKF', 'KBJC'], null, true);
   assert.equal(nowWx.hidden, false, 'kept');
   assert.match(nowWx.innerHTML, /77°F/);
   now += 95 * 60_000;   // the kept reading turns two hours old
-  await k.loadNowWeather(['KDEN', 'KBKF', 'KAPA', 'KFNL'], null, true);
+  await k.loadNowWeather(['KDEN', 'KAPA', 'KBKF', 'KBJC'], null, true);
   assert.equal(nowWx.hidden, true, 'too old to keep');
   now -= 95 * 60_000;
   Object.assign(answers, saved);
   // A new place starts afresh, even when its nearest station is the old one's: the old
   // reading (from another station, maybe) isn't kept for it when its own can't be had.
-  await k.loadNowWeather(['KDEN', 'KBKF']);
+  await k.loadNowWeather(['KDEN', 'KAPA']);
   assert.match(nowWx.innerHTML, /77°F/);
-  delete answers.KBKF;
-  await k.loadNowWeather(['KDEN', 'KBJC']);
+  delete answers.KAPA;
+  await k.loadNowWeather(['KDEN', 'KCFO']);
   assert.equal(nowWx.hidden, true, 'not the old place\'s reading');
-  answers.KBKF = saved.KBKF;
+  answers.KAPA = saved.KAPA;
   // None of the nearest few has a reading: on down the list, a few at a time, until one has
   // (and no further than that).
   fetched.length = 0;
-  await k.loadNowWeather(['KXXX', 'KYYY', 'KZZZ', 'KBKF', 'KAPA', 'KFNL', 'KBJC']);
-  assert.deepEqual(fetched, ['KXXX', 'KYYY', 'KZZZ', 'KBKF', 'KAPA', 'KFNL']);
-  assert.match(nowWx.title, /\(KBKF\)/);
+  await k.loadNowWeather(['KXXX', 'KYYY', 'KZZZ', 'KAPA', 'KBKF', 'KBJC', 'KCFO']);
+  assert.deepEqual(fetched, ['KXXX', 'KYYY', 'KZZZ', 'KAPA', 'KBKF', 'KBJC']);
+  assert.match(nowWx.title, /\(KAPA\)/);
   // None in the whole area has one: hidden, every station asked once.
   fetched.length = 0;
-  await k.loadNowWeather(['KXXX', 'KYYY', 'KZZZ', 'KBJC']);
-  assert.deepEqual(fetched, ['KXXX', 'KYYY', 'KZZZ', 'KBJC']);
+  await k.loadNowWeather(['KXXX', 'KYYY', 'KZZZ', 'KCFO']);
+  assert.deepEqual(fetched, ['KXXX', 'KYYY', 'KZZZ', 'KCFO']);
   assert.equal(nowWx.hidden, true);
   // A nearer station with a temperature but no sky is passed over for a farther one with
   // both — even in a later batch…
@@ -4099,7 +4099,7 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   answers.KTMP = obs(19, 5, '', null);
   answers.KFAR = obs(15, 20, 'Light Rain', 'https://api.weather.gov/icons/land/day/rain');
   await k.loadNowWeather(['KQQQ', 'KXXX', 'KTMP', 'KYYY', 'KFAR']);
-  assert.match(nowWx.title, /^Light Rain, 59°F \(15°C\) — Denver Intl \(KFAR\)/);
+  assert.match(nowWx.title, /^Light Rain, 59°F \(15°C\) — Denver International Airport \(KFAR\)/);
   assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">🌧️<\/span>59°F/);
   // …and within one, the nearer with both wins, whatever answers first.
   answers.KNEAR = obs(21, 5, 'Cloudy', null);
@@ -4117,7 +4117,7 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   const savedNear = answers.KNEAR;
   delete answers.KNEAR;
   await k.loadNowWeather(['KNEAR', 'KQQQ'], null, true);
-  assert.match(nowWx.title, /^Cloudy, 70°F \(21°C\) — Denver Intl \(KNEAR\)/, 'kept, with its sky');
+  assert.match(nowWx.title, /^Cloudy, 70°F \(21°C\) — Denver International Airport \(KNEAR\)/, 'kept, with its sky');
   await k.loadNowWeather(['KNEAR', 'KQQQ']);
   assert.match(nowWx.title, /\(KQQQ\)/, 'a new place: its own temperature');
   answers.KNEAR = savedNear;
@@ -4136,7 +4136,7 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   fetched.length = 0;
   await k.loadNowWeather(['KLNK'], obs(20, 5, 'Clear'));
   assert.deepEqual(fetched, []);
-  assert.match(nowWx.title, /^Clear, 68°F \(20°C\) — Denver Intl \(KLNK\)/);
+  assert.match(nowWx.title, /^Clear, 68°F \(20°C\) — Denver International Airport \(KLNK\)/);
   await k.loadNowWeather(['KLNK'], obs(20, 5, '', null));
   assert.deepEqual(fetched, []);
   assert.match(nowWx.innerHTML, /^<span class="now-wx-icon" aria-hidden="true">🌡️<\/span>68°F/);
@@ -4156,21 +4156,21 @@ test('the weather now beside FORECAST: the nearest station that has it, kept cur
   assert.match(nowWx.title, /\(KQQQ\)/);
   // A newer place takes over from an older one's slower answer: it's dropped when it lands.
   let open;
-  gates.KBKF = new Promise(resolve => { open = resolve; });
-  const slow = k.loadNowWeather(['KBKF']);
-  await k.loadNowWeather(['KAPA']);
+  gates.KAPA = new Promise(resolve => { open = resolve; });
+  const slow = k.loadNowWeather(['KAPA']);
+  await k.loadNowWeather(['KBKF']);
   assert.match(nowWx.innerHTML, /68°F/);
   open();
   await slow;
   assert.match(nowWx.innerHTML, /68°F/, 'not the older place\'s late answer');
   // No area (cleared — as a new search starts, or one leaves none): a late answer stays out.
-  gates.KBKF = new Promise(resolve => { open = resolve; });
-  const late = k.loadNowWeather(['KBKF']);
+  gates.KAPA = new Promise(resolve => { open = resolve; });
+  const late = k.loadNowWeather(['KAPA']);
   k.clearNowWeather();
   open();
   await late;
   assert.equal(nowWx.hidden, true, 'a cleared place stays hidden');
-  delete gates.KBKF;
+  delete gates.KAPA;
   // Wired to the search (its stations, nearest first), to a station link (its reading
   // in hand), and gone with FORECAST when a search leaves no area.
   assert.match(extractFunction('loadStationsAt'), /setForecastPoint\(lat, lon\);[^\n]*\n\s*loadNowWeather\(stationsByDistance\);/);
@@ -4224,13 +4224,13 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   let extrasAsked = 0;
   const extrasHad = [];
   const answers = {
-    'https://api.weather.gov/points/32.7600,-97.8000': { properties: {
-      forecast: 'https://api.weather.gov/gridpoints/FWD/52,104/forecast',
-      forecastHourly: 'https://api.weather.gov/gridpoints/FWD/52,104/forecast/hourly',
-      relativeLocation: { properties: { city: 'Weatherford', state: 'CO',
-        distance: { unitCode: 'wmoUnit:m', value: 13500 }, bearing: { unitCode: 'wmoUnit:degree_(angle)', value: 36 } } } } },
-    'https://api.weather.gov/gridpoints/FWD/52,104/forecast': { properties: { updateTime: 'u', periods: [{ name: 'Tonight' }] } },
-    'https://api.weather.gov/gridpoints/FWD/52,104/forecast/hourly': { properties: { periods: [{ number: 1 }, { number: 2 }] } }
+    'https://api.weather.gov/points/40.0000,-104.4000': { properties: {
+      forecast: 'https://api.weather.gov/gridpoints/BOU/84,72/forecast',
+      forecastHourly: 'https://api.weather.gov/gridpoints/BOU/84,72/forecast/hourly',
+      relativeLocation: { properties: { city: 'Keenesburg', state: 'CO',
+        distance: { unitCode: 'wmoUnit:m', value: 11463 }, bearing: { unitCode: 'wmoUnit:degree_(angle)', value: 141 } } } } },
+    'https://api.weather.gov/gridpoints/BOU/84,72/forecast': { properties: { updateTime: 'u', periods: [{ name: 'Tonight' }] } },
+    'https://api.weather.gov/gridpoints/BOU/84,72/forecast/hourly': { properties: { periods: [{ number: 1 }, { number: 2 }] } }
   };
   const load = vm.runInNewContext(`(() => {
     const FORECAST_VIEW_TTL_MS = 600000, FORECAST_VIEW_CACHE_LIMIT = 20;
@@ -4252,20 +4252,20 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
     return extrasAsked === 1 ? { aqi: new Map(), pressure: new Map(), aqiNow: null }
       : { aqi: new Map(), pressure: new Map([['2026-10-03T20', 1015]]), aqiNow: 12 };
   } });
-  const forecast = await load(32.76, -97.8);
+  const forecast = await load(40, -104.4);
   assert.equal(forecast.extras.aqiNow, null, 'air and pressure ride along (here: unavailable)');
   // Where it is: distance and direction from the NWS's nearest named place.
-  assert.equal(forecast.place, '8 mi NE of Weatherford, CO');
+  assert.equal(forecast.place, '7 mi SE of Keenesburg, CO');
   assert.equal(forecast.days.length, 1);
   assert.equal(forecast.hours.length, 2);
-  await load(32.76, -97.8);
+  await load(40, -104.4);
   assert.equal(requested.length, 3, 'a second open within minutes reuses the answer');
   // …but air and pressure missing last time are asked for again, not kept missing
   // (handing over what there is, so only the missing part is fetched).
   assert.equal(extrasAsked, 2);
   assert.equal(extrasHad[1].aqiNow, null);
   assert.equal(forecast.extras.aqiNow, 12);
-  await load(32.76, -97.8);
+  await load(40, -104.4);
   assert.equal(extrasAsked, 2, 'once they are in, they are reused too');
   const label = vm.runInNewContext(`(() => { ${extractFunction('degToCompass')} ${extractFunction('forecastPlaceLabel')} return forecastPlaceLabel; })()`);
   const at = (value, bearing, unitCode = 'wmoUnit:m') => ({ properties: { city: 'Golden', state: 'CO',
@@ -4352,10 +4352,10 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   // Given the place and Open-Meteo's data, the sun line (sunset first) and the air
   // line close the summary, and their details follow the forecaster's words.
   const sat = r.renderForecastDays(
-    [day('Saturday', 90, { startTime: '2026-10-03T06:00:00-05:00', endTime: '2026-10-03T18:00:00-05:00' })],
-    { aqi: new Map(Array.from({ length: 12 }, (_, i) => ['2026-10-03T' + (11 + i), { value: 120, pollutant: 'ozone' }])), pressure: new Map() },
-    { lat: 39.42, lon: -104.49 });
-  assert.match(sat.replace(/\u00A0/g, ' '), /<span class="fc-sun"><span class="fc-sunset">[^<]*<span aria-hidden="true">🌇 <\/span>Sunset 7:1\d PM<\/span>[^]*?<\/span><span class="fc-air"><span class="fc-aqi fc-aqi-3"><span class="fc-aqi-word">AQI <\/span>120 Unhealthy for sensitive groups<\/span><\/span><\/summary><p><b>Saturday:<\/b> Saturday details\.<\/p><p><b>Daylight:<\/b>/);
+    [day('Saturday', 90, { startTime: '2026-10-03T06:00:00-06:00', endTime: '2026-10-03T18:00:00-06:00' })],
+    { aqi: new Map(Array.from({ length: 12 }, (_, i) => ['2026-10-03T' + (12 + i), { value: 120, pollutant: 'ozone' }])), pressure: new Map() },
+    { lat: 39.74, lon: -104.99 });
+  assert.match(sat.replace(/\u00A0/g, ' '), /<span class="fc-sun"><span class="fc-sunset">[^<]*<span aria-hidden="true">🌇 <\/span>Sunset 6:(?:3[89]|40) PM<\/span>[^]*?<\/span><span class="fc-air"><span class="fc-aqi fc-aqi-3"><span class="fc-aqi-word">AQI <\/span>120 Unhealthy for sensitive groups<\/span><\/span><\/summary><p><b>Saturday:<\/b> Saturday details\.<\/p><p><b>Daylight:<\/b>/);
   // Without them (no place, no data) a row is as before.
   assert.doesNotMatch(days, /fc-sun|fc-air|Daylight/);
   const now = Date.parse('2026-10-01T22:30:00-05:00');
@@ -4427,7 +4427,7 @@ test('forecast: NWS 7-day and hourly forecasts for the searched area, from NOAA 
   const panels = { days: { innerHTML: 'old' }, hours: { innerHTML: 'old' } };
   const fctx = { forecastPoint: null, forecastSeq: 3, forecastDialog: { open: true },
                  fcDays: panels.days, fcHours: panels.hours, forecastNow: { hidden: false },
-                 forecastPlace: { textContent: 'Near Weatherford, CO' }, forecastFoot: { textContent: 'updated' } };
+                 forecastPlace: { textContent: 'Near Keenesburg, CO' }, forecastFoot: { textContent: 'updated' } };
   await vm.runInNewContext(`(async ${extractFunction('openForecast')})`, fctx)();
   assert.match(panels.days.innerHTML, /no area on the map anymore — search for a place first/);
   assert.equal(fctx.forecastPlace.textContent, '', 'no "Near …" for a place that is gone');
@@ -4530,9 +4530,9 @@ test('sun times match the US Naval Observatory to within a minute', () => {
     const [H, M] = hhmm.split(':').map(Number);
     assert.ok(Math.abs(got - (H * 60 + M)) <= 1, `${what}: ${k.clockLabel(ms, offset)} vs ${hhmm}`);
   };
-  let s = k.sunTimes('2026-10-03', 39.42, -104.49);   // Denver, MDT
-  near(s.light.rise, -300, '07:05', 'first light'); near(s.sun.rise, -300, '07:28', 'sunrise');
-  near(s.sun.set, -300, '19:17', 'sunset');          near(s.light.set, -300, '19:41', 'last light');
+  let s = k.sunTimes('2026-10-03', 39.74, -104.99);   // Denver, MDT
+  near(s.light.rise, -360, '06:31', 'first light'); near(s.sun.rise, -360, '06:58', 'sunrise');
+  near(s.sun.set, -360, '18:39', 'sunset');          near(s.light.set, -360, '19:06', 'last light');
   s = k.sunTimes('2026-03-08', 40.71, -74.01);       // New York, the day daylight saving starts
   near(s.sun.rise, -240, '07:19', 'sunrise'); near(s.sun.set, -240, '18:55', 'sunset');
   near(s.light.set, -240, '19:23', 'last light');
@@ -4547,7 +4547,7 @@ test('sun times match the US Naval Observatory to within a minute', () => {
   s = k.sunTimes('2026-10-03', -14.28, -170.7);
   assert.equal(new Date(s.sun.rise - 660 * 60_000).toISOString().slice(0, 10), '2026-10-03');
   assert.equal(new Date(s.sun.set - 660 * 60_000).toISOString().slice(0, 10), '2026-10-03');
-  assert.equal(k.sunTimes('soon', 39, -104), null);
+  assert.equal(k.sunTimes('soon', 39, -105), null);
   assert.equal(k.isoOffsetMinutes('2026-10-03T06:00:00-05:00'), -300);
   assert.equal(k.isoOffsetMinutes('2026-10-03T06:00:00+05:30'), 330);
   assert.equal(k.isoOffsetMinutes('2026-10-03T06:00:00Z'), 0);
@@ -4557,43 +4557,43 @@ test('sun times match the US Naval Observatory to within a minute', () => {
 
 test('forecast rows: sunset first at a glance, then air quality and pressure', () => {
   const k = forecastExtrasKit();
-  const sa = { lat: 39.42, lon: -104.49 };
+  const denver = { lat: 39.74, lon: -104.99 };
   const parts = [
-    { startTime: '2026-10-03T06:00:00-05:00', endTime: '2026-10-03T18:00:00-05:00' },
-    { startTime: '2026-10-03T18:00:00-05:00', endTime: '2026-10-04T06:00:00-05:00' }
+    { startTime: '2026-10-03T06:00:00-06:00', endTime: '2026-10-03T18:00:00-06:00' },
+    { startTime: '2026-10-03T18:00:00-06:00', endTime: '2026-10-04T06:00:00-06:00' }
   ];
   // Open-Meteo's hours are UTC keys: the row (06:00 MDT to 06:00 MDT next day) is
-  // 2026-10-03T11 … 2026-10-04T10. `hours(n, from, value)` fills n of them.
+  // 2026-10-03T12 … 2026-10-04T11. `hours(n, from, value)` fills n of them.
   const hours = (n, from, value) => new Map(Array.from({ length: n }, (_, i) =>
     [new Date(Date.parse(from + ':00:00Z') + i * 3600e3).toISOString().slice(0, 13), value(i)]));
-  const aqi = hours(24, '2026-10-03T11', () => ({ value: 30, pollutant: 'fine particles (PM2.5)' }));
-  aqi.set('2026-10-03T20', { value: 58, pollutant: 'ozone' });     // 3 PM MDT
-  aqi.set('2026-10-03T10', { value: 200, pollutant: 'ozone' });    // 5 AM: before the row
-  aqi.set('2026-10-04T11', { value: 300, pollutant: 'ozone' });    // the next row's
-  const pressure = hours(24, '2026-10-03T11', i => 1020 - i * 0.27);   // 1020 → ~1013.8
-  pressure.set('2026-10-04T08', 1013.4);                             // 3 AM MDT: the low
-  pressure.set('2026-10-04T11', 990);                                // the next row's
+  const aqi = hours(24, '2026-10-03T12', () => ({ value: 30, pollutant: 'fine particles (PM2.5)' }));
+  aqi.set('2026-10-03T21', { value: 58, pollutant: 'ozone' });     // 3 PM MDT
+  aqi.set('2026-10-03T11', { value: 200, pollutant: 'ozone' });    // 5 AM: before the row
+  aqi.set('2026-10-04T12', { value: 300, pollutant: 'ozone' });    // the next row's
+  const pressure = hours(24, '2026-10-03T12', i => 1020 - i * 0.27);   // 1020 → ~1013.8
+  pressure.set('2026-10-04T09', 1013.4);                             // 3 AM MDT: the low
+  pressure.set('2026-10-04T12', 990);                                // the next row's
   const extras = { aqi, pressure };
-  const row = k.forecastRowExtras(parts, extras, sa);
+  const row = k.forecastRowExtras(parts, extras, denver);
   // Sunset leads, highlighted; sunrise follows.
-  assert.match(row.sun, /^<span class="fc-sunset"><span aria-hidden="true">🌇 <\/span>Sunset 7:1\d PM<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 7:2\d AM$/);
+  assert.match(row.sun, /^<span class="fc-sunset"><span aria-hidden="true">🌇 <\/span>Sunset 6:(?:3[89]|40) PM<\/span> · <span aria-hidden="true">🌅 <\/span>Sunrise 6:5\d AM$/);
   assert.match(row.air, /^<span class="fc-aqi fc-aqi-2"><span class="fc-aqi-word">AQI <\/span>58 Moderate<\/span> · Pressure falling sharply, 30\.12 → 29\.94 inHg$/);
   // Opened: the whole day in order, twilight included; the air at its worst and why
   // (at the place's 3 PM, not UTC's); the pressure swing in both units and its low.
-  assert.match(row.facts, /<p><b>Daylight:<\/b> first light 7:0\d AM · sunrise 7:2\d AM · sunset 7:1\d PM · last light 7:4\d PM \(11 h \d+ min of sun\)<\/p>/);
+  assert.match(row.facts, /<p><b>Daylight:<\/b> first light 6:3\d AM · sunrise 6:5\d AM · sunset 6:(?:3[89]|40) PM · last light 7:0\d PM \(11 h \d+ min of sun\)<\/p>/);
   assert.match(row.facts, /<p><b>Air quality:<\/b> up to 58, moderate — mostly ozone, worst around 3 PM\. Unusually sensitive people/);
   assert.match(row.facts, /<p><b>Pressure:<\/b> 30\.12 → 29\.94 inHg \(1020 → 1014 hPa\), falling sharply by 6 hPa; lowest 29\.93 inHg around 3 AM\.<\/p>/);
   // Humidity, from the hourly forecast's hours (the 7-day one has none): the day's
   // range at a glance, and when it's most and least humid, on the place's clock.
-  const humidity = hours(24, '2026-10-03T11', i => (i === 9 ? 45 : i === 20 ? 92 : 70));   // 3 PM low, 2 AM high (MDT)
-  const humid = k.forecastRowExtras(parts, { aqi: new Map(), pressure: new Map(), humidity }, sa);
+  const humidity = hours(24, '2026-10-03T12', i => (i === 9 ? 45 : i === 20 ? 92 : 70));   // 3 PM low, 2 AM high (MDT)
+  const humid = k.forecastRowExtras(parts, { aqi: new Map(), pressure: new Map(), humidity }, denver);
   assert.equal(humid.air, 'Humidity 45–92%');
   assert.deepEqual({ ...humid.humidity }, { low: 45, high: 92 });
   assert.match(humid.facts, /<p><b>Humidity:<\/b> 45% to 92% — most humid around 2 AM, driest around 3 PM\.<\/p>/);
   // The heat index, from the same hours: how hot the day feels at worst, first at a
   // glance (it matters most), and in full with the NWS's level and what it means.
-  const heat = new Map([['2026-10-03T19', { feels: 96, f: 88 }], ['2026-10-03T20', { feels: 98, f: 89 }], ['2026-10-04T11', { feels: 120, f: 99 }]]);
-  const hot = k.forecastRowExtras(parts, { humidity, heat }, sa);
+  const heat = new Map([['2026-10-03T20', { feels: 96, f: 88 }], ['2026-10-03T21', { feels: 98, f: 89 }], ['2026-10-04T12', { feels: 120, f: 99 }]]);
+  const hot = k.forecastRowExtras(parts, { humidity, heat }, denver);
   assert.equal(hot.air, 'Feels like up to 98°F · Humidity 45–92%');
   assert.equal(hot.heat, 98);
   assert.match(hot.facts, /<p><b>Humidity:[^]*<\/p><p><b>Heat index:<\/b> feels like up to 98°F around 3 PM \(when it is 89°F\) — extreme caution: heat cramps or heat exhaustion are possible with long exposure or activity\.<\/p>/);
@@ -4601,44 +4601,44 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   assert.equal(humid.heat, null);
   assert.doesNotMatch(humid.facts, /Heat index/);
   // After air quality and pressure at a glance; one number when it holds all day.
-  assert.match(k.forecastRowExtras(parts, { ...extras, humidity }, sa).air, /inHg · Humidity 45–92%$/);
-  const flat = k.forecastRowExtras(parts, { humidity: hours(24, '2026-10-03T11', () => 80) }, sa);
+  assert.match(k.forecastRowExtras(parts, { ...extras, humidity }, denver).air, /inHg · Humidity 45–92%$/);
+  const flat = k.forecastRowExtras(parts, { humidity: hours(24, '2026-10-03T12', () => 80) }, denver);
   assert.equal(flat.air, 'Humidity 80%');
   assert.match(flat.facts, /<p><b>Humidity:<\/b> about 80% throughout\.<\/p>/);
   // Hours that run out early in the row say so (half the row or more is needed).
-  assert.match(k.forecastRowExtras(parts, { humidity: hours(14, '2026-10-03T11', () => 60) }, sa).facts, /the hourly forecast runs to 8 PM\./);
+  assert.match(k.forecastRowExtras(parts, { humidity: hours(14, '2026-10-03T12', () => 60) }, denver).facts, /the hourly forecast runs to 8 PM\./);
 
   // An air-quality forecast ending inside the row: with half the row or more it is
   // shown and says where it stops; with less, it isn't passed off as the whole day.
-  const half = k.forecastRowExtras(parts, { aqi: hours(13, '2026-10-03T11', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, sa);
+  const half = k.forecastRowExtras(parts, { aqi: hours(13, '2026-10-03T12', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, denver);
   assert.match(half.facts, /worst around 6 AM; the air-quality forecast runs to 7 PM\./);   // (to the end of its last hour, 6–7 PM)
   // The night the clocks fall back (2 AM MDT → 1 AM MST): hours after the change
-  // are told on the new clock — 10:00 UTC is 4 AM MST, not 5 AM.
-  const fallBackNight = [{ isDaytime: false, startTime: '2026-10-31T18:00:00-05:00', endTime: '2026-11-01T06:00:00-06:00' }];
-  const dstAir = hours(13, '2026-10-31T23', i => ({ value: i === 11 ? 90 : 30, pollutant: 'ozone' }));   // the worst at 10Z
-  const dstPressure = hours(13, '2026-10-31T23', i => (i === 7 ? 1000 : 1010));                         // the low at 06Z
-  const dst = k.forecastRowExtras(fallBackNight, { aqi: dstAir, pressure: dstPressure }, sa);
+  // are told on the new clock — 11:00 UTC is 4 AM MST, not 5 AM.
+  const fallBackNight = [{ isDaytime: false, startTime: '2026-10-31T18:00:00-06:00', endTime: '2026-11-01T06:00:00-07:00' }];
+  const dstAir = hours(13, '2026-11-01T00', i => ({ value: i === 11 ? 90 : 30, pollutant: 'ozone' }));   // the worst at 11Z
+  const dstPressure = hours(13, '2026-11-01T00', i => (i === 7 ? 1000 : 1010));                         // the low at 07Z
+  const dst = k.forecastRowExtras(fallBackNight, { aqi: dstAir, pressure: dstPressure }, denver);
   assert.match(dst.facts, /worst around 4 AM\./);
-  assert.match(dst.facts, /lowest 29\.53 inHg around 1 AM\./);   // 06Z: still 1 AM MDT
+  assert.match(dst.facts, /lowest 29\.53 inHg around 1 AM\./);   // 07Z: still 1 AM MDT
   // Hours missing at the row's start (data that begins later) are no "runs to".
-  const late = k.forecastRowExtras(parts, { aqi: hours(20, '2026-10-03T15', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, sa);
+  const late = k.forecastRowExtras(parts, { aqi: hours(20, '2026-10-03T16', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, denver);
   assert.match(late.facts, /Air quality:<\/b> up to 40/);
   assert.doesNotMatch(late.facts, /runs to/);
-  const few = k.forecastRowExtras(parts, { aqi: hours(3, '2026-10-03T11', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, sa);
+  const few = k.forecastRowExtras(parts, { aqi: hours(3, '2026-10-03T12', () => ({ value: 40, pollutant: 'ozone' })), pressure: new Map() }, denver);
   assert.equal(few.air, '');
   assert.doesNotMatch(few.facts, /Air quality/);
   // A small change is "steady", shown as one value; no air data, no air line.
-  const calm = k.forecastRowExtras(parts, { aqi: new Map(), pressure: hours(24, '2026-10-03T11', i => 1016 + i / 23) }, sa);
+  const calm = k.forecastRowExtras(parts, { aqi: new Map(), pressure: hours(24, '2026-10-03T12', i => 1016 + i / 23) }, denver);
   assert.equal(calm.air, 'Pressure steady, 30.02 inHg');
   assert.match(calm.facts, /\(1016 → 1017 hPa\), steady; lowest/);
   // The change adds up with the rounded ends shown beside it (2.2 hPa, shown 1013 → 1016).
-  const up = k.forecastRowExtras(parts, { aqi: new Map(), pressure: hours(24, '2026-10-03T11', i => 1013.4 + i * 2.2 / 23) }, sa);
+  const up = k.forecastRowExtras(parts, { aqi: new Map(), pressure: hours(24, '2026-10-03T12', i => 1013.4 + i * 2.2 / 23) }, denver);
   assert.match(up.facts, /\(1013 → 1016 hPa\), rising by 3 hPa;/);
-  // The fall-back day: the hours after 2 AM are on MST, so 3 PM MST is 21:00 UTC.
-  const fallBack = [{ startTime: '2026-11-01T06:00:00-06:00', endTime: '2026-11-01T18:00:00-06:00' }];
-  const nov = hours(12, '2026-11-01T12', () => ({ value: 20, pollutant: 'ozone' }));
-  nov.set('2026-11-01T21', { value: 70, pollutant: 'ozone' });
-  assert.match(k.forecastRowExtras(fallBack, { aqi: nov, pressure: new Map() }, sa).facts, /up to 70, moderate — mostly ozone, worst around 3 PM/);
+  // The fall-back day: the hours after 2 AM are on MST, so 3 PM MST is 22:00 UTC.
+  const fallBack = [{ startTime: '2026-11-01T06:00:00-07:00', endTime: '2026-11-01T18:00:00-07:00' }];
+  const nov = hours(12, '2026-11-01T13', () => ({ value: 20, pollutant: 'ozone' }));
+  nov.set('2026-11-01T22', { value: 70, pollutant: 'ozone' });
+  assert.match(k.forecastRowExtras(fallBack, { aqi: nov, pressure: new Map() }, denver).facts, /up to 70, moderate — mostly ozone, worst around 3 PM/);
   // A night on its own: the sunset it starts with and the NEXT morning's sunrise
   // (Minneapolis: Oct 3's sunrise was 7:13 AM, Oct 4's is 7:15 AM) — the same for
   // "Tonight" (from 6 PM) and "Overnight" (from midnight). Opened: in time order.
@@ -4681,13 +4681,13 @@ test('forecast rows: sunset first at a glance, then air quality and pressure', (
   assert.deepEqual([june.sunsetAt, june.noSunset, june.noSunrise, dec.sunriseAt, dec.noSunset, dec.noSunrise],
     ['', true, false, '', false, true]);
   // A time never breaks across lines: a no-break space before its AM/PM.
-  const raw = k.rawRowExtras(parts, extras, sa);
-  assert.match(raw.sun, /Sunset 7:1\d\u00A0PM/);
-  assert.match(raw.facts, /first light 7:0\d\u00A0AM/);
+  const raw = k.rawRowExtras(parts, extras, denver);
+  assert.match(raw.sun, /Sunset 6:(?:3[89]|40)\u00A0PM/);
+  assert.match(raw.facts, /first light 6:3\d\u00A0AM/);
   assert.doesNotMatch(raw.facts, /\d (AM|PM)/);
   // Nothing to go on (no place, or a timestamp without its offset): nothing shown.
   assert.deepEqual({ ...k.forecastRowExtras(parts, null, null) }, { sun: '', air: '', facts: '', sunsetAt: '', sunriseAt: '', noSunset: false, noSunrise: false, aqi: null, humidity: null, heat: null });
-  assert.equal(k.forecastRowExtras([{ startTime: '2026-10-03T06:00', endTime: '2026-10-03T18:00' }], null, sa).sun, '');
+  assert.equal(k.forecastRowExtras([{ startTime: '2026-10-03T06:00', endTime: '2026-10-03T18:00' }], null, denver).sun, '');
   // EPA categories at their edges.
   assert.deepEqual([50, 51, 101, 151, 201, 301].map(v => k.aqiCategory(v).level), [1, 2, 3, 4, 5, 6]);
 });
@@ -4716,13 +4716,13 @@ function sampleWeek() {
   const period = (name, isDaytime, start, end, temperature, extra = {}) => ({ name, isDaytime, temperature,
     temperatureUnit: 'F', startTime: start, endTime: end, shortForecast: 'Sunny', detailedForecast: name + ' <words>.', ...extra });
   const days = [
-    period('Tonight', false, '2026-10-03T18:00:00-05:00', '2026-10-04T06:00:00-05:00', 71, { shortForecast: 'Mostly Cloudy' }),
-    period('Sunday', true, '2026-10-04T06:00:00-05:00', '2026-10-04T18:00:00-05:00', 82, { probabilityOfPrecipitation: { value: 30 } }),
-    period('Sunday Night', false, '2026-10-04T18:00:00-05:00', '2026-10-05T06:00:00-05:00', 70),
-    period('Monday', true, '2026-10-05T06:00:00-05:00', '2026-10-05T18:00:00-05:00', 85)
+    period('Tonight', false, '2026-10-03T18:00:00-06:00', '2026-10-04T06:00:00-06:00', 71, { shortForecast: 'Mostly Cloudy' }),
+    period('Sunday', true, '2026-10-04T06:00:00-06:00', '2026-10-04T18:00:00-06:00', 82, { probabilityOfPrecipitation: { value: 30 } }),
+    period('Sunday Night', false, '2026-10-04T18:00:00-06:00', '2026-10-05T06:00:00-06:00', 70),
+    period('Monday', true, '2026-10-05T06:00:00-06:00', '2026-10-05T18:00:00-06:00', 85)
   ];
-  const t0 = Date.parse('2026-10-03T18:00:00-05:00');
-  const iso = ms => new Date(ms - 5 * 3600e3).toISOString().slice(0, 19) + '-05:00';
+  const t0 = Date.parse('2026-10-03T18:00:00-06:00');
+  const iso = ms => new Date(ms - 6 * 3600e3).toISOString().slice(0, 19) + '-06:00';
   const hours = Array.from({ length: 42 }, (_, i) => {
     const start = t0 + i * 3600e3, local = (18 + i) % 24;
     return { startTime: iso(start), endTime: iso(start + 3600e3), isDaytime: local >= 7 && local < 19,
@@ -4737,7 +4737,7 @@ function sampleWeek() {
     aqi: new Map(hours.slice(0, 30).map((h, i) => [utc(Date.parse(h.startTime)), { value: i === 20 ? 120 : 40, pollutant: 'ozone' }])),
     pressure: new Map(hours.map((h, i) => [utc(Date.parse(h.startTime)), 1018 - i * 0.2]))
   };
-  return { days, hours, extras, point: { lat: 39.42, lon: -104.49 } };
+  return { days, hours, extras, point: { lat: 39.74, lon: -104.99 } };
 }
 
 test('wide screens: the week laid out on one time line, nights from the sun', () => {
@@ -4774,7 +4774,7 @@ test('wide screens: the week laid out on one time line, nights from the sun', ()
   assert.deepEqual(Array.from(k.weekScale(58, 105, [1, 2, 5, 10, 20], 6).ticks), [50, 60, 70, 80, 90, 100, 110]);
   assert.deepEqual(Array.from(k.weekScale(29.85, 30.42, [0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1], 3).ticks), [29.75, 30, 30.25, 30.5]);
   assert.deepEqual(Array.from(k.weekScale(72, 72, [1, 2, 5, 10, 20], 6).ticks), [71, 72, 73]);
-  // The nights: dusk after sunset (7:17 PM), dark from last light, dawn before
+  // The nights: dusk after sunset (6:39 PM), dark from last light, dawn before
   // sunrise; the first night's dusk starts after the forecast does (at 6 PM).
   const kinds = Array.from(model.nights, b => b.kind);
   assert.deepEqual(kinds.slice(0, 3), ['dusk', 'night', 'dawn']);
@@ -4799,7 +4799,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   const k = forecastWeekKit();
   const { days, hours, extras, point } = sampleWeek();
   const model = k.forecastWeekModel(days, hours, extras, point);
-  const week = k.renderForecastWeek(model, Date.parse('2026-10-03T20:00:00-05:00'));
+  const week = k.renderForecastWeek(model, Date.parse('2026-10-03T20:00:00-06:00'));
   // The days are a tab list that drives the detail panel; the first is picked.
   assert.equal((week.match(/role="tab"/g) || []).length, 3);
   assert.match(week, /<div class="fc-wk-days" role="tablist" aria-label="Days" style="grid-template-columns:minmax\(0,0\.3125fr\) minmax\(0,0\.3750fr\) minmax\(0,0\.3125fr\)">/);
@@ -4815,7 +4815,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(week, /<span class="fc-wk-long">Sunday<\/span><span class="fc-wk-short" aria-hidden="true">Sun<\/span>/);
   // A night with a longer name has a short one too (its date is under it).
   const overnight = k.renderForecastWeek(k.forecastWeekModel(
-    [{ ...days[0], name: 'Overnight' }, ...days.slice(1)], hours, extras, point), Date.parse('2026-10-03T20:00:00-05:00'));
+    [{ ...days[0], name: 'Overnight' }, ...days.slice(1)], hours, extras, point), Date.parse('2026-10-03T20:00:00-06:00'));
   assert.match(overnight, /<span class="fc-wk-long">Overnight<\/span><span class="fc-wk-short" aria-hidden="true">Night<\/span>/);
   // Short names go by each column's width (window size and day count both matter).
   assert.match(html, /\.fc-wk-day \{ container-type: inline-size; \}\s*@container \(max-width: 139px\) \{\s*\.fc-wk-short \{ display: inline; \}/);
@@ -4824,7 +4824,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   // Its sunset (bright) and sunrise (quiet) side by side, as in the phone list — for a
   // night on its own ("Tonight"), the next morning's sunrise.
   // (Its AM/PM in a span of its own: a narrow column drops it from sight.)
-  assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>7:1\d<span class="fc-wk-ampm"> PM<\/span><\/span><span class="fc-wk-sunrise"><span aria-hidden="true">🌅 <\/span><span class="sr-only">Sunrise <\/span>7:[23]\d<span class="fc-wk-ampm"> AM<\/span><\/span><span class="fc-wk-pop">[^]*?30%/);
+  assert.match(week, /<span class="fc-wk-meta"><span class="fc-wk-sunset"><span aria-hidden="true">🌇 <\/span><span class="sr-only">Sunset <\/span>6:3\d<span class="fc-wk-ampm"> PM<\/span><\/span><span class="fc-wk-sunrise"><span aria-hidden="true">🌅 <\/span><span class="sr-only">Sunrise <\/span>(?:6:5\d|7:0\d)<span class="fc-wk-ampm"> AM<\/span><\/span><span class="fc-wk-pop">[^]*?30%/);
   assert.equal((week.match(/class="fc-wk-sunrise"/g) || []).length, model.rows.length, 'every column has its sunrise');
   assert.match(html, /\.fc-wk-sunrise \{ font-size: 0\.7rem; color: var\(--text-muted\); \}/);
   assert.match(week, /<span class="fc-wk-aqi"><span class="fc-aqi fc-aqi-3"><span class="fc-aqi-word">AQI <\/span>120 Unhealthy for sensitive groups<\/span>/);
@@ -4832,7 +4832,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   const utcKey = iso => new Date(Date.parse(iso)).toISOString().slice(0, 13);
   const humidity = new Map(hours.map(h => [utcKey(h.startTime), h.relativeHumidity.value]));
   const humidModel = k.forecastWeekModel(days, hours, { ...extras, humidity }, point);
-  const humidWeek = k.renderForecastWeek(humidModel, Date.parse('2026-10-03T20:00:00-05:00'));
+  const humidWeek = k.renderForecastWeek(humidModel, Date.parse('2026-10-03T20:00:00-06:00'));
   assert.match(humidWeek, /<span class="fc-wk-hum">Humidity <span>\d+–\d+%<\/span><\/span><span class="fc-wk-aqi">/);
   assert.equal((humidWeek.match(/class="fc-wk-hum"/g) || []).length, 3);
   assert.match(humidModel.rows[1].more.facts, /<p><b>Humidity:<\/b> \d+% to \d+% — most humid around \d+\s(AM|PM)/);
@@ -4843,7 +4843,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   assert.match(k.weekHourHtml(hotHour), /<span class="fc-wk-tip-temp">[^]*?<\/span><span>Feels like \d+°F<\/span>/);
   const heat = new Map(humidModel.points.filter(h => h.feels != null)
     .map(h => [utcKey(h.period.startTime), { feels: h.feels, f: h.deg.f }]));
-  const heatWeek = k.renderForecastWeek(k.forecastWeekModel(days, hours, { ...extras, humidity, heat }, point), Date.parse('2026-10-03T20:00:00-05:00'));
+  const heatWeek = k.renderForecastWeek(k.forecastWeekModel(days, hours, { ...extras, humidity, heat }, point), Date.parse('2026-10-03T20:00:00-06:00'));
   assert.match(heatWeek, /<span class="fc-wk-feels">Feels <span class="fc-wk-upto">up to <\/span>\d+°<\/span><span class="fc-wk-hum">/);
   // In a 720–960 px window every column keeps what reads at a glance (icon, high and
   // low, rain, sunset and sunrise, "Feels 102°"); the sky's words, humidity and AQI go
@@ -4981,7 +4981,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   k.use(model);
   // Sunday's column runs 6 AM to 6 AM: 6½ hours in is 12:30 PM, the middle of the noon hour.
   const h = k.weekHourAt(0.3125 + 0.375 * 6.5 / 24);
-  assert.equal(model.points[h].period.startTime, '2026-10-04T12:00:00-05:00');
+  assert.equal(model.points[h].period.startTime, '2026-10-04T12:00:00-06:00');
   assert.equal(k.weekRowOf(model.points[h]), 1);
   assert.equal(k.weekHourAt(0), 0);
   assert.equal(k.weekHourAt(1), 41);
@@ -4998,7 +4998,7 @@ test('wide screens: day columns, chart strips and the picked day', () => {
   short.selected = 2;
   assert.equal(k.weekFirstHour(), short.points.length - 1);
   short.selected = 1;
-  assert.equal(short.points[k.weekFirstHour()].period.startTime, '2026-10-04T06:00:00-05:00');
+  assert.equal(short.points[k.weekFirstHour()].period.startTime, '2026-10-04T06:00:00-06:00');
   // A single hour is no hourly forecast (the strips say so): no cursor either.
   k.use(k.forecastWeekModel(days, hours.slice(13, 14), extras, point));
   assert.equal(k.weekHourAt(0.5), -1);
@@ -5086,7 +5086,7 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   const { hours, extras, point } = sampleWeek();   // from 6 PM Saturday, Denver
   hours[1].windDirection = 'NNE'; hours[1].windSpeed = '5 to 10 mph';
   hours[2].windDirection = 'Variable';
-  const now = Date.parse('2026-10-03T18:20:00-05:00');
+  const now = Date.parse('2026-10-03T18:20:00-06:00');
   const strip = k.renderHourStrip(hours.slice(0, 30), now, extras, point);
   // One column per hour; the first hour is "Now"; midnight shows the day's name.
   assert.equal((strip.match(/class="fc-strip-col[ "]/g) || []).length, 30);
@@ -5109,8 +5109,8 @@ test('hourly: the next hours at a glance — temperature curve, rain, wind, air,
   assert.equal((tempGraph.match(/<circle /g) || []).length, 30);
   assert.match(strip, /<path class="fc-strip-line" d="M28,/);
   assert.match(strip, /<span class="fc-strip-band fc-wk-night" style="left:[\d.]+px;width:[\d.]+px">/);
-  assert.match(strip, /title="Sunset">🌇 7:1\d PM<\/span>/);
-  assert.match(strip, /title="Sunrise">🌅 7:2\d AM<\/span>/);
+  assert.match(strip, /title="Sunset">🌇 6:(?:3[89]|40) PM<\/span>/);
+  assert.match(strip, /title="Sunrise">🌅 (?:6:5\d|7:0\d) AM<\/span>/);
   // Row names stay on the left; air and pressure rows named only when there is data.
   assert.match(strip, /<div class="fc-strip-labels"><span><\/span><span class="fc-strip-unit">°F<\/span><span class="fc-strip-scale">(?:<i style="top:[\d.]+px">\d+°<\/i>)+<\/span><span class="fc-strip-key"><i><\/i>feels<\/span><span>Rain<\/span><span>Wind mph<\/span><span>Humidity<\/span><span>Air AQI<\/span><span>Pressure inHg<\/span><\/div>/);
   // The heat index: a dashed line on the temperature graph where it feels hotter,
@@ -5214,12 +5214,12 @@ test('air quality and pressure: Open-Meteo, rounded position, never fatal', asyn
         time: ['2026-10-03T00:00', '2026-10-03T01:00', '2026-10-03T02:00'],
         us_aqi: [42, null, 61], us_aqi_pm2_5: [42, null, 20], us_aqi_ozone: [30, null, 61] } } }
     : { ok: true, data: { hourly: { time: ['2026-10-03T00:00', '2026-10-03T01:00'], pressure_msl: [1016.2, null] } } };
-  const got = await fetchAirAndPressure(39.5312, -104.4712);
+  const got = await fetchAirAndPressure(39.7392, -104.9903);
   // About 11 km of rounding: never the exact spot.
   // …and in UTC hours, which line up with the NWS's across daylight-saving changes
   // and time-zone lines (the rounded point may fall in the next zone).
-  assert.match(requested[0], /^https:\/\/air-quality-api\.open-meteo\.com\/v1\/air-quality\?latitude=39\.5&longitude=-104\.5&timezone=GMT&/);
-  assert.match(requested[1], /^https:\/\/api\.open-meteo\.com\/v1\/forecast\?latitude=39\.5&longitude=-104\.5&timezone=GMT&past_days=1&forecast_days=8&hourly=pressure_msl$/);
+  assert.match(requested[0], /^https:\/\/air-quality-api\.open-meteo\.com\/v1\/air-quality\?latitude=39\.7&longitude=-105\.0&timezone=GMT&/);
+  assert.match(requested[1], /^https:\/\/api\.open-meteo\.com\/v1\/forecast\?latitude=39\.7&longitude=-105\.0&timezone=GMT&past_days=1&forecast_days=8&hourly=pressure_msl$/);
   assert.equal(got.aqiNow, 36);
   assert.deepEqual([...got.aqi.keys()], ['2026-10-03T00', '2026-10-03T02'], 'hours without a value are left out');
   assert.equal(got.aqi.get('2026-10-03T00').pollutant, 'fine particles (PM2.5)');
@@ -5244,14 +5244,14 @@ test('air quality and pressure: Open-Meteo, rounded position, never fatal', asyn
   // Given an earlier answer that has the pressure, only the air quality is asked
   // for again, and the pressure is kept as it was.
   requested.length = 0;
-  const again = await fetchAirAndPressure(39.5, -104.5, { aqi: new Map(), aqiNow: null, pressure: got.pressure });
+  const again = await fetchAirAndPressure(39.7, -105, { aqi: new Map(), aqiNow: null, pressure: got.pressure });
   assert.equal(requested.length, 1);
   assert.match(requested[0], /air-quality/);
   assert.equal(again.pressure, got.pressure);
   assert.equal(again.aqiNow, 36);
   // A part that fails is simply empty; nothing throws.
   answer = url => (url.includes('air-quality') ? new TypeError('Failed to fetch') : { ok: false });
-  const none = await fetchAirAndPressure(39.5, -104.5);
+  const none = await fetchAirAndPressure(39.7, -105);
   assert.equal(none.aqi.size + none.pressure.size, 0);
   assert.equal(none.aqiNow, null);
 });
